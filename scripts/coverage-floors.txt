@@ -1,0 +1,5 @@
+# Line-coverage floors enforced by scripts/coverage.sh: <group> <percent>.
+# Each is the measured value minus 2 points; raise them when coverage grows, never lower them.
+# Set 2026-11-09 (T88) from core 93.97%, cli-logic 93.85%.
+core 91.9
+cli-logic 91.8
