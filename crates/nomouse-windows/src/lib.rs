@@ -14,8 +14,7 @@ mod keys;
 mod native;
 mod render;
 mod scope;
-
-pub use backend::{Backend, System};
+pub use backend::{Backend, ScanLimits, System, Truncation};
 #[cfg(windows)]
 pub use native::{NativeSystem, WindowsPlatform, doctor, platform, platform_with};
 pub use nomouse_sys_windows::{WindowHandle, WindowInfo};

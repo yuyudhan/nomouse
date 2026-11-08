@@ -1,12 +1,12 @@
 //! The real Win32 [`System`], and the constructors the binary calls.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nomouse_core::{Config, Platform, PlatformError};
 use nomouse_sys_windows as sys;
 use nomouse_sys_windows::{
     Activation, Automation, Bitmap, Edges, EventPump, HotkeyModifiers, InputStep, OverlayWindow,
-    RawElement, SysError, SysEvent, WindowHandle, WindowInfo,
+    Snapshot, SysError, SysEvent, WindowHandle, WindowInfo,
 };
 
 use crate::backend::{Backend, System};
@@ -69,8 +69,18 @@ impl System for NativeSystem {
         self.automation.clear();
     }
 
-    fn snapshot(&mut self, window: WindowHandle) -> Result<Vec<RawElement>, SysError> {
-        self.automation.snapshot(window)
+    fn snapshot(&mut self, window: WindowHandle, limit: usize) -> Result<Snapshot, SysError> {
+        self.automation.snapshot(window, limit)
+    }
+
+    fn set_call_timeout(&mut self, timeout: Duration) {
+        // Without IUIAutomation2 (pre-Windows 8) or on rejection, the system's own timeouts
+        // stay in force; the scan budget still bounds the number of windows queried.
+        let _ = self.automation.set_timeouts(timeout, timeout);
+    }
+
+    fn now(&mut self) -> Instant {
+        Instant::now()
     }
 
     fn activate(&mut self, index: usize, activation: Activation) -> Result<(), SysError> {

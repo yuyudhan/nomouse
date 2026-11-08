@@ -4,7 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
 use nomouse_core::{Element, Rect, Role, assign_hints};
-use nomouse_sys_windows::{Button, Patterns, control_type as ct};
+use nomouse_sys_windows::{Button, Patterns, RawElement, control_type as ct};
 
 use super::*;
 use crate::render::{find_font, system_font_dir};
@@ -25,6 +25,11 @@ struct Fake {
     taken: Vec<u32>,
     events: VecDeque<SysEvent>,
     snapshots: usize,
+    queried: Vec<isize>,
+    snapshot_cost: Duration,
+    elapsed: Duration,
+    epoch: Option<Instant>,
+    call_timeout: Option<Duration>,
 }
 
 impl System for Fake {
@@ -57,11 +62,26 @@ impl System for Fake {
     fn begin_snapshot(&mut self) {
         self.snapshots += 1;
     }
-    fn snapshot(&mut self, window: WindowHandle) -> Result<Vec<RawElement>, SysError> {
-        self.trees
+    fn snapshot(&mut self, window: WindowHandle, limit: usize) -> Result<Snapshot, SysError> {
+        self.queried.push(window.0);
+        self.elapsed += self.snapshot_cost;
+        let mut elements = self
+            .trees
             .get(&window.0)
             .cloned()
-            .unwrap_or_else(|| Ok(Vec::new()))
+            .unwrap_or_else(|| Ok(Vec::new()))?;
+        let truncated = elements.len() > limit;
+        elements.truncate(limit);
+        Ok(Snapshot {
+            elements,
+            truncated,
+        })
+    }
+    fn set_call_timeout(&mut self, timeout: Duration) {
+        self.call_timeout = Some(timeout);
+    }
+    fn now(&mut self) -> Instant {
+        *self.epoch.get_or_insert_with(Instant::now) + self.elapsed
     }
     fn activate(&mut self, index: usize, activation: Activation) -> Result<(), SysError> {
         if self.activate_fails {
@@ -255,6 +275,78 @@ fn screen_scope_skips_occluded_elements() {
     let ids: Vec<u64> = elements.iter().map(|e| e.id.0).collect();
     // Link 4 sits under window 1; link 5 is visible.
     assert_eq!(ids, vec![0, 1, 5]);
+}
+
+#[test]
+fn scans_are_unbounded_only_up_to_the_default_limits() {
+    let Some(mut backend) = make(app()) else {
+        return;
+    };
+    assert_eq!(backend.scan_limits(), ScanLimits::default());
+    assert_eq!(backend.scan_limits().max_nodes, 5000);
+    assert_eq!(
+        backend.system.call_timeout,
+        Some(Duration::from_millis(1500))
+    );
+    backend.elements(Scope::Screen).unwrap();
+    assert_eq!(backend.last_truncation(), None);
+    assert_eq!(backend.system.queried, vec![1, 2]);
+}
+
+#[test]
+fn node_cap_truncates_a_window_and_stops_the_scan() {
+    let Some(mut backend) = make(app()) else {
+        return;
+    };
+    backend.set_scan_limits(ScanLimits {
+        max_nodes: 3,
+        budget: Duration::from_secs(60),
+    });
+    assert_eq!(backend.system.call_timeout, Some(Duration::from_secs(60)));
+    let ids: Vec<u64> = backend
+        .elements(Scope::Screen)
+        .unwrap()
+        .iter()
+        .map(|e| e.id.0)
+        .collect();
+    // Window 1 matched four elements; only three were read and window 2 was never queried.
+    assert_eq!(ids, vec![0, 1]);
+    assert_eq!(backend.last_truncation(), Some(Truncation::Nodes));
+    assert_eq!(backend.system.queried, vec![1]);
+
+    // Exactly filling the cap stops before the next window too.
+    backend.set_scan_limits(ScanLimits {
+        max_nodes: 4,
+        budget: Duration::from_secs(60),
+    });
+    backend.system.queried.clear();
+    backend.elements(Scope::Screen).unwrap();
+    assert_eq!(backend.last_truncation(), Some(Truncation::Nodes));
+    assert_eq!(backend.system.queried, vec![1]);
+
+    // A later scan within the limits clears the mark.
+    backend.set_scan_limits(ScanLimits::default());
+    backend.elements(Scope::Screen).unwrap();
+    assert_eq!(backend.last_truncation(), None);
+}
+
+#[test]
+fn time_budget_stops_querying_further_windows() {
+    let mut fake = app();
+    fake.snapshot_cost = Duration::from_secs(2);
+    let Some(mut backend) = make(fake) else {
+        return;
+    };
+    let ids: Vec<u64> = backend
+        .elements(Scope::Screen)
+        .unwrap()
+        .iter()
+        .map(|e| e.id.0)
+        .collect();
+    // The first window is always read; the 1.5 s budget is spent after it.
+    assert_eq!(ids, vec![0, 1]);
+    assert_eq!(backend.last_truncation(), Some(Truncation::Time));
+    assert_eq!(backend.system.queried, vec![1]);
 }
 
 #[test]

@@ -158,6 +158,15 @@ pub struct RawElement {
     pub patterns: Patterns,
 }
 
+/// The result of one bounded window query.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Snapshot {
+    /// The elements read, at most the requested limit.
+    pub elements: Vec<RawElement>,
+    /// Whether the query matched more elements than the limit allowed.
+    pub truncated: bool,
+}
+
 /// A semantic activation performed through a control pattern instead of synthetic input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Activation {

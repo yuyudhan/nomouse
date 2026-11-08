@@ -12,6 +12,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 
+pub mod key_filter;
 pub mod types;
 
 #[cfg(windows)]

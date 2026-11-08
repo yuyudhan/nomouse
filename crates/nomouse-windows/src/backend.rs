@@ -3,14 +3,14 @@
 
 use std::path::Path;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nomouse_core::{
     Action, Config, Element, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource, InputEvent,
     InputInjector, Modifiers, MouseButton, Overlay, Platform, PlatformError, Point, Scope,
 };
 use nomouse_sys_windows::{
-    Activation, Bitmap, Edges, HotkeyModifiers, InputStep, RawElement, SysError, SysErrorKind,
+    Activation, Bitmap, Edges, HotkeyModifiers, InputStep, Snapshot, SysError, SysErrorKind,
     SysEvent, WindowHandle, WindowInfo,
 };
 
@@ -42,11 +42,15 @@ pub trait System {
     fn window_info(&mut self, window: WindowHandle) -> Result<WindowInfo, SysError>;
     /// Starts a new element snapshot, dropping retained elements.
     fn begin_snapshot(&mut self);
-    /// Appends the matching elements of a window's subtree to the snapshot.
+    /// Appends up to `limit` matching elements of a window's subtree to the snapshot.
     ///
     /// # Errors
     /// When the subtree cannot be read.
-    fn snapshot(&mut self, window: WindowHandle) -> Result<Vec<RawElement>, SysError>;
+    fn snapshot(&mut self, window: WindowHandle, limit: usize) -> Result<Snapshot, SysError>;
+    /// Bounds how long each accessibility call may wait for an unresponsive app.
+    fn set_call_timeout(&mut self, timeout: Duration);
+    /// The current instant (a seam so tests control the scan budget).
+    fn now(&mut self) -> Instant;
     /// Activates a snapshot element through a control pattern.
     ///
     /// # Errors
@@ -103,6 +107,34 @@ fn backend_error(error: &SysError) -> PlatformError {
     }
 }
 
+/// Bounds on one element scan, the same as the Linux backend's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ScanLimits {
+    /// Most elements read per scan, across all windows.
+    pub max_nodes: usize,
+    /// Whole-scan time budget; no further window is queried once it is spent, and each UI
+    /// Automation call times out after it.
+    pub budget: Duration,
+}
+
+impl Default for ScanLimits {
+    fn default() -> Self {
+        Self {
+            max_nodes: 5000,
+            budget: Duration::from_millis(1500),
+        }
+    }
+}
+
+/// Which limit cut a scan short.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Truncation {
+    /// [`ScanLimits::max_nodes`] elements were read.
+    Nodes,
+    /// [`ScanLimits::budget`] ran out.
+    Time,
+}
+
 /// One labelled element remembered for semantic clicks.
 #[derive(Debug, Clone)]
 struct Known {
@@ -118,6 +150,8 @@ pub struct Backend<S: System> {
     renderer: Renderer,
     options: ScopeOptions,
     semantic_click: bool,
+    limits: ScanLimits,
+    truncation: Option<Truncation>,
     snapshot: Vec<Known>,
     next_hotkey: u32,
     hotkeys: Vec<(HotkeyId, Hotkey)>,
@@ -155,16 +189,21 @@ impl<S: System> Backend<S> {
         config: &Config,
         options: ScopeOptions,
     ) -> Self {
-        Self {
+        let limits = ScanLimits::default();
+        let mut backend = Self {
             system,
             renderer,
             options,
             semantic_click: config.hints.semantic_click,
+            limits,
+            truncation: None,
             snapshot: Vec::new(),
             next_hotkey: 1,
             hotkeys: Vec::new(),
             shown: false,
-        }
+        };
+        backend.system.set_call_timeout(limits.budget);
+        backend
     }
 
     /// The scope options in effect.
@@ -195,6 +234,23 @@ impl<S: System> Backend<S> {
         self.collect(&[target], Some(window))
     }
 
+    /// The scan limits in effect.
+    pub const fn scan_limits(&self) -> ScanLimits {
+        self.limits
+    }
+
+    /// Changes the scan limits; the budget also bounds each UI Automation call.
+    pub fn set_scan_limits(&mut self, limits: ScanLimits) {
+        self.limits = limits;
+        self.system.set_call_timeout(limits.budget);
+    }
+
+    /// Which limit cut the most recent element scan short, if any. The elements returned are
+    /// then the ones read before the limit.
+    pub const fn last_truncation(&self) -> Option<Truncation> {
+        self.truncation
+    }
+
     /// Clicks `button` at `at` with `modifiers` held (for example ctrl+click to open a link in
     /// a new tab).
     ///
@@ -210,8 +266,9 @@ impl<S: System> Backend<S> {
         self.run(&input_plan::modifier_click(at, button, modifiers, screen))
     }
 
-    /// Snapshots every target; a failure on `required` is fatal, others skip their window
-    /// (it closed or runs elevated) unless every window failed.
+    /// Snapshots every target within the scan limits; a failure on `required` is fatal, others
+    /// skip their window (it closed or runs elevated) unless every window failed. Hitting the
+    /// node cap or the time budget keeps what was read and records [`Backend::last_truncation`].
     fn collect(
         &mut self,
         targets: &[scope::Target],
@@ -219,12 +276,26 @@ impl<S: System> Backend<S> {
     ) -> Result<Vec<Element>, PlatformError> {
         self.system.begin_snapshot();
         self.snapshot.clear();
+        self.truncation = None;
         let screen = self.system.virtual_screen();
+        let deadline = self.system.now() + self.limits.budget;
+        let mut nodes = 0usize;
         let mut last_error = None;
         let mut read_any = false;
-        for target in targets {
-            let raws = match self.system.snapshot(target.handle) {
-                Ok(raws) => raws,
+        for (position, target) in targets.iter().enumerate() {
+            if position > 0 {
+                if nodes >= self.limits.max_nodes {
+                    self.truncation = Some(Truncation::Nodes);
+                    break;
+                }
+                if self.system.now() >= deadline {
+                    self.truncation = Some(Truncation::Time);
+                    break;
+                }
+            }
+            let limit = self.limits.max_nodes.saturating_sub(nodes);
+            let snapshot = match self.system.snapshot(target.handle, limit) {
+                Ok(snapshot) => snapshot,
                 Err(error) if Some(target.handle) == required => {
                     return Err(match error.kind {
                         SysErrorKind::AccessDenied => backend_error(&error),
@@ -238,8 +309,11 @@ impl<S: System> Backend<S> {
                 }
             };
             read_any = true;
+            nodes += snapshot.elements.len();
             self.snapshot.extend(
-                raws.iter()
+                snapshot
+                    .elements
+                    .iter()
                     .filter(|raw| classify::is_candidate(raw) && target.shows(raw, screen))
                     .map(|raw| Known {
                         element: classify::to_element(raw),
@@ -247,6 +321,10 @@ impl<S: System> Backend<S> {
                         activation: classify::activation(raw),
                     }),
             );
+            if snapshot.truncated {
+                self.truncation = Some(Truncation::Nodes);
+                break;
+            }
         }
         if let (false, Some(error)) = (read_any, last_error) {
             return Err(PlatformError::AccessibilityUnavailable(error.to_string()));

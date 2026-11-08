@@ -1,16 +1,19 @@
 //! UI Automation: one cached bulk query per window and pattern-based activation.
 
+use std::time::Duration;
+
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, CUIAutomation8, ExpandCollapseState_Collapsed,
-    ExpandCollapseState_PartiallyExpanded, IUIAutomation, IUIAutomationCacheRequest,
-    IUIAutomationCondition, IUIAutomationElement, IUIAutomationExpandCollapsePattern,
-    IUIAutomationInvokePattern, IUIAutomationLegacyIAccessiblePattern,
-    IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, TreeScope_Descendants,
-    UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId, UIA_ExpandCollapsePatternId,
-    UIA_InvokePatternId, UIA_IsEnabledPropertyId, UIA_IsExpandCollapsePatternAvailablePropertyId,
+    ExpandCollapseState_PartiallyExpanded, IUIAutomation, IUIAutomation2,
+    IUIAutomationCacheRequest, IUIAutomationCondition, IUIAutomationElement,
+    IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
+    IUIAutomationLegacyIAccessiblePattern, IUIAutomationSelectionItemPattern,
+    IUIAutomationTogglePattern, TreeScope_Descendants, UIA_BoundingRectanglePropertyId,
+    UIA_ControlTypePropertyId, UIA_ExpandCollapsePatternId, UIA_InvokePatternId,
+    UIA_IsEnabledPropertyId, UIA_IsExpandCollapsePatternAvailablePropertyId,
     UIA_IsInvokePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
     UIA_IsLegacyIAccessiblePatternAvailablePropertyId, UIA_IsOffscreenPropertyId,
     UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
@@ -23,7 +26,8 @@ use windows::core::{BSTR, Interface};
 use crate::com::ComApartment;
 use crate::error::Context;
 use crate::types::{
-    Activation, Edges, Patterns, RawElement, SysError, SysErrorKind, WindowHandle, control_type,
+    Activation, Edges, Patterns, RawElement, Snapshot, SysError, SysErrorKind, WindowHandle,
+    control_type,
 };
 
 /// Properties fetched for every element in one round trip.
@@ -164,13 +168,38 @@ impl Automation {
         self.retained.clear();
     }
 
-    /// Appends every matching descendant of `window` to the snapshot with one
-    /// `FindAllBuildCache` call and returns them with their cached properties.
+    /// Bounds how long UIA waits for an unresponsive provider: `connection` for connecting to
+    /// it, `transaction` for each call. Needs `IUIAutomation2` (Windows 8+); returns `false`
+    /// when the client lacks it and the system defaults apply.
+    ///
+    /// # Errors
+    /// When the client rejects the values.
+    pub fn set_timeouts(
+        &self,
+        connection: Duration,
+        transaction: Duration,
+    ) -> Result<bool, SysError> {
+        let Ok(client) = self.client.cast::<IUIAutomation2>() else {
+            return Ok(false);
+        };
+        let millis = |d: Duration| u32::try_from(d.as_millis()).unwrap_or(u32::MAX).max(1);
+        // SAFETY: `client` is a live IUIAutomation2; the calls take plain integers.
+        unsafe { client.SetConnectionTimeout(millis(connection)) }
+            .context("SetConnectionTimeout")?;
+        // SAFETY: as above.
+        unsafe { client.SetTransactionTimeout(millis(transaction)) }
+            .context("SetTransactionTimeout")?;
+        Ok(true)
+    }
+
+    /// Appends up to `limit` matching descendants of `window` to the snapshot with one
+    /// `FindAllBuildCache` call and returns them with their cached properties; `truncated`
+    /// tells whether the query found more than `limit`.
     ///
     /// # Errors
     /// [`SysErrorKind::AccessDenied`] for windows of a higher integrity level (UIPI),
     /// [`SysErrorKind::Gone`] when the window closed.
-    pub fn snapshot(&mut self, window: WindowHandle) -> Result<Vec<RawElement>, SysError> {
+    pub fn snapshot(&mut self, window: WindowHandle, limit: usize) -> Result<Snapshot, SysError> {
         let hwnd = HWND(window.0 as *mut core::ffi::c_void);
         // SAFETY: `client` is live; a stale HWND makes the call fail, not misbehave.
         let root = unsafe { self.client.ElementFromHandle(hwnd) }.context("ElementFromHandle")?;
@@ -180,8 +209,10 @@ impl Automation {
                 .context("FindAllBuildCache")?;
         // SAFETY: `found` is a live element array.
         let length = unsafe { found.Length() }.context("IUIAutomationElementArray::Length")?;
-        let mut elements = Vec::with_capacity(usize::try_from(length).unwrap_or(0));
-        for position in 0..length {
+        let length = usize::try_from(length).unwrap_or(0);
+        let taken = length.min(limit);
+        let mut elements = Vec::with_capacity(taken);
+        for position in (0..taken).filter_map(|p| i32::try_from(p).ok()) {
             // SAFETY: `position` is within 0..Length.
             let element = unsafe { found.GetElement(position) }.context("GetElement")?;
             // Elements that vanish between the query and the read are skipped.
@@ -190,7 +221,10 @@ impl Automation {
                 elements.push(raw);
             }
         }
-        Ok(elements)
+        Ok(Snapshot {
+            elements,
+            truncated: length > taken,
+        })
     }
 
     /// Performs `activation` on the element with snapshot index `index`.

@@ -10,62 +10,82 @@ use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN,
-    RegisterHotKey, UnregisterHotKey, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
-    VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT,
+    RegisterHotKey, UnregisterHotKey, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG, MWMO_INPUTAVAILABLE,
-    MsgWaitForMultipleObjectsEx, PM_REMOVE, PeekMessageW, QS_ALLINPUT, SetWindowsHookExW,
-    TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_HOTKEY, WM_KEYDOWN, WM_SYSKEYDOWN,
+    CallNextHookEx, DispatchMessageW, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN,
+    LLKHF_INJECTED, MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_REMOVE, PeekMessageW,
+    QS_ALLINPUT, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL,
+    WM_HOTKEY, WM_KEYDOWN, WM_SYSKEYDOWN,
 };
 use windows::core::PCWSTR;
 
 use crate::error::Context;
-use crate::types::{HotkeyModifiers, SysError, SysEvent};
+use crate::input::send_input;
+use crate::key_filter::{KeyFilter, MASK_VK, Verdict};
+use crate::types::{HotkeyModifiers, InputStep, SysError, SysEvent};
 
 thread_local! {
     /// Events produced on this thread by the hook and the pump, oldest first.
     static QUEUE: RefCell<VecDeque<SysEvent>> = const { RefCell::new(VecDeque::new()) };
     /// Whether the hook on this thread swallows keys.
     static GRABBING: Cell<bool> = const { Cell::new(false) };
+    /// The grab's per-key decisions (Alt/Win masking state).
+    static FILTER: Cell<KeyFilter> = const { Cell::new(KeyFilter::new()) };
 }
 
-/// Modifier keys pass through the grab so the system's modifier state stays consistent.
-const MODIFIER_KEYS: [u16; 11] = [
-    VK_SHIFT.0,
-    VK_LSHIFT.0,
-    VK_RSHIFT.0,
-    VK_CONTROL.0,
-    VK_LCONTROL.0,
-    VK_RCONTROL.0,
-    VK_MENU.0,
-    VK_LMENU.0,
-    VK_RMENU.0,
-    VK_LWIN.0,
-    VK_RWIN.0,
-];
+fn key_down(vk: u16) -> bool {
+    // SAFETY: GetAsyncKeyState takes a key code and returns its state.
+    let state = unsafe { GetAsyncKeyState(i32::from(vk)) };
+    state < 0
+}
 
-/// The low-level keyboard hook: while grabbing, queues key-downs and swallows non-modifier keys.
+/// Whether Alt or Win is down right now.
+fn menu_modifier_down() -> bool {
+    key_down(VK_MENU.0) || key_down(VK_LWIN.0) || key_down(VK_RWIN.0)
+}
+
+/// Sends the mask key so a held Alt or Win is not seen pressed alone. A failure only means the
+/// app may show its menu cue, so it is ignored.
+fn send_mask() {
+    let vk = u16::try_from(MASK_VK).unwrap_or(0xE8);
+    let _ = send_input(&[
+        InputStep::Key { vk, down: true },
+        InputStep::Key { vk, down: false },
+    ]);
+}
+
+/// The low-level keyboard hook: while grabbing, queues key-downs and swallows non-modifier keys
+/// (see [`KeyFilter`]).
 unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == i32::try_from(HC_ACTION).unwrap_or(0) && GRABBING.with(Cell::get) {
         // SAFETY: for WH_KEYBOARD_LL with HC_ACTION, lparam points at a KBDLLHOOKSTRUCT that is
         // valid for the duration of this call.
         let info = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
-        let modifier = u16::try_from(info.vkCode).is_ok_and(|vk| MODIFIER_KEYS.contains(&vk));
-        if !modifier {
-            let message = u32::try_from(wparam.0).unwrap_or(0);
-            if message == WM_KEYDOWN || message == WM_SYSKEYDOWN {
-                // SAFETY: GetAsyncKeyState takes a key code and returns its state.
-                let shift = unsafe { GetAsyncKeyState(i32::from(VK_SHIFT.0)) } < 0;
-                QUEUE.with_borrow_mut(|queue| {
-                    queue.push_back(SysEvent::Key {
-                        vk: info.vkCode,
-                        shift,
+        let message = u32::try_from(wparam.0).unwrap_or(0);
+        let down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
+        let menu_held =
+            info.flags.contains(LLKHF_ALTDOWN) || key_down(VK_LWIN.0) || key_down(VK_RWIN.0);
+        let injected = info.flags.contains(LLKHF_INJECTED);
+        let mut filter = FILTER.with(Cell::get);
+        let verdict = filter.on_key(info.vkCode, down, menu_held, injected);
+        FILTER.with(|cell| cell.set(filter));
+        match verdict {
+            Verdict::Pass => {}
+            Verdict::MaskThenPass => send_mask(),
+            Verdict::Swallow { deliver } => {
+                if deliver {
+                    let shift = key_down(VK_SHIFT.0);
+                    QUEUE.with_borrow_mut(|queue| {
+                        queue.push_back(SysEvent::Key {
+                            vk: info.vkCode,
+                            shift,
+                        });
                     });
-                });
+                }
+                // A non-zero result swallows the key.
+                return LRESULT(1);
             }
-            // A non-zero result swallows the key.
-            return LRESULT(1);
         }
     }
     // SAFETY: forwards the unmodified arguments to the next hook, as the hook contract requires.
@@ -148,6 +168,15 @@ impl EventPump {
             }
             .context("SetWindowsHookExW")?;
             self.hook = Some(hook);
+        }
+        if !grab {
+            // A swallowed Alt+letter whose Alt is still held would reach the app as a lone Alt
+            // once the hook is gone.
+            let mut filter = FILTER.with(Cell::get);
+            if filter.on_release(menu_modifier_down()) {
+                send_mask();
+            }
+            FILTER.with(|cell| cell.set(filter));
         }
         GRABBING.with(|flag| flag.set(grab));
         if !grab {
