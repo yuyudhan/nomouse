@@ -3,7 +3,8 @@
 #
 # Starts Xvfb, a private D-Bus session, AT-SPI and i3 (never touching the user's session),
 # opens a GTK test window and a Chromium data: page, drives `nomouse` with xdotool, and
-# asserts that clicks, continuous mode, right clicks and scroll mode land, that no overlay
+# asserts that clicks, continuous mode, right clicks, ctrl+clicks, search-by-text and scroll
+# mode (on the scroll area) land, that no overlay
 # window is left behind, and measures hotkey-to-labels latency. It also runs the shared
 # backend contract (crates/nomouse-linux/tests/contract.rs) against the real backend, and a
 # Qt 5 window when PyQt5 is importable.
@@ -156,6 +157,8 @@ scans() { grep -c 'scan [0-9]*:' "$1" || true; }
 scans_at_least() { (($(scans "$1") >= $2)); }
 # label_for <log> <accessible name>: the label of the last scan's hint for that name.
 label_for() { grep -E "hint [a-z]+ = [A-Za-z]+ \"$2\"$" "$1" | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
+# label_for_role <log> <role>: the label of the last scan's first hint with that role.
+label_for_role() { grep -E "hint [a-z]+ = $2 " "$1" | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
 # title_is <window> <prefix>*: the title starts with the literal prefix; callers write it as
 # a glob such as "left: Button 1 #*" (a trailing `*` is the only wildcard used).
 title_is() {
@@ -226,6 +229,43 @@ else
     fail "right click: no labels"
 fi
 
+echo "--- ctrl+click (modifier key 2, then a label)"
+focus "$gtk_win"
+log="$tmp/ctrl.log"
+if run_hints "$log" hints; then
+    xdotool type --delay 20 "2$(label_for "$log" "Button 5")"
+    reap "$hints_pid" || true
+    if wait_for 3 title_is "$gtk_win" "ctrl-left: Button 5 #*"; then pass "ctrl+click landed with Control held"; else fail "ctrl+click: title '$(title "$gtk_win")', log: $(grep -E 'holds|Perform|error' "$log" | tr '\n' ' ')"; fi
+else
+    fail "ctrl+click: no labels"
+fi
+
+echo "--- search mode: type a name, Enter clicks the best match"
+focus "$gtk_win"
+log="$tmp/search.log"
+if run_hints "$log" search; then
+    xdotool type --delay 20 "button6"
+    xdotool key Return
+    reap "$hints_pid" || true
+    if wait_for 3 title_is "$gtk_win" "left: Button 6 #*"; then pass "search mode clicked the match"; else fail "search mode: title '$(title "$gtk_win")'"; fi
+else
+    fail "search mode: no search box"
+fi
+
+echo "--- search mode: Tab, then a label picks another match"
+focus "$gtk_win"
+log="$tmp/search-tab.log"
+if run_hints "$log" search; then
+    # "button1" matches Button 1 (best) and Button 10; the second label is Button 10's.
+    xdotool type --delay 20 "button1"
+    xdotool key Tab
+    xdotool type --delay 20 "s"
+    reap "$hints_pid" || true
+    if wait_for 3 title_is "$gtk_win" "left: Button 10 #*"; then pass "search mode Tab + label clicked the second match"; else fail "search Tab: title '$(title "$gtk_win")'"; fi
+else
+    fail "search Tab: no search box"
+fi
+
 echo "--- semantic click (AT-SPI do_action)"
 mkdir -p "$XDG_CONFIG_HOME/nomouse"
 printf '[hints]\nsemantic_click = true\n' >"$XDG_CONFIG_HOME/nomouse/config.toml"
@@ -251,13 +291,19 @@ echo "--- scroll mode: the scroll area is the target"
 focus "$gtk_win"
 log="$tmp/scroll.log"
 if run_hints "$log" scroll; then
-    xdotool type --delay 20 "$(label_for "$log" "Row 2")"
+    label="$(label_for_role "$log" ScrollArea)"
+    rows="$(grep -cE 'hint [a-z]+ = [A-Za-z]+ "Row [0-9]+"$' "$log" || true)"
+    xdotool type --delay 20 "$label"
     sleep 0.2
     xdotool key --delay 30 j j j
     wait_for 3 title_is "$gtk_win" "scrolled: *" && scrolled=1 || scrolled=0
     xdotool key Escape
     reap "$hints_pid" || true
-    if ((scrolled)); then pass "scroll mode scrolled ($(title "$gtk_win"))"; else fail "scroll mode: title '$(title "$gtk_win")'"; fi
+    if ((scrolled)) && [[ -n "$label" ]] && ((rows == 0)); then
+        pass "scroll mode labelled the scroll area and scrolled it ($(title "$gtk_win"))"
+    else
+        fail "scroll mode: label '$label', $rows row hints, title '$(title "$gtk_win")'"
+    fi
 else
     fail "scroll mode: no labels"
 fi

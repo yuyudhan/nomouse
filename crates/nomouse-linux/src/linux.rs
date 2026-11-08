@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use nomouse_core::{
     Action, Config, Element, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource, InputEvent,
-    InputInjector, Modifiers, MouseButton, Overlay, Platform, PlatformError, Scope,
+    InputInjector, MouseButton, Overlay, Platform, PlatformError, Scope,
 };
 
 use crate::a11y::{AtspiSource, ScanLimits, bus};
@@ -31,18 +31,6 @@ impl LinuxPlatform {
             .as_mut()
             .ok_or_else(|| PlatformError::Backend("AT-SPI source missing".to_owned()))
     }
-
-    /// Performs `action` while holding `modifiers` (Ctrl-click, Shift-click, ...).
-    ///
-    /// # Errors
-    /// When the X connection is lost.
-    pub fn perform_with_modifiers(
-        &mut self,
-        action: &Action,
-        modifiers: Modifiers,
-    ) -> Result<(), PlatformError> {
-        self.x.perform(action, modifiers)
-    }
 }
 
 impl ElementSource for LinuxPlatform {
@@ -60,7 +48,16 @@ impl ElementSource for LinuxPlatform {
 
 impl Overlay for LinuxPlatform {
     fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError> {
-        self.x.show(hints, typed)
+        self.x.show(hints, typed, None)
+    }
+
+    fn show_search(
+        &mut self,
+        hints: &[Hint],
+        typed: &str,
+        query: &str,
+    ) -> Result<(), PlatformError> {
+        self.x.show(hints, typed, Some(query))
     }
 
     fn hide(&mut self) -> Result<(), PlatformError> {
@@ -69,18 +66,22 @@ impl Overlay for LinuxPlatform {
 }
 
 impl InputInjector for LinuxPlatform {
+    /// Clicks hold [`Action::modifiers`] (ctrl+click, shift+click, ...) with XTEST key presses
+    /// around the button; the semantic AT-SPI click is used only for a plain left click.
     fn perform(&mut self, action: &Action) -> Result<(), PlatformError> {
         if let Action::Click {
             at,
             button: MouseButton::Left,
             count: 1,
+            modifiers,
         } = *action
+            && modifiers.is_empty()
             && self.semantic_click
             && self.source.as_ref().is_some_and(|s| s.activate_at(at))
         {
             return Ok(());
         }
-        self.x.perform(action, Modifiers::default())
+        self.x.perform(action)
     }
 }
 

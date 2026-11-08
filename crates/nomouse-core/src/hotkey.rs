@@ -18,6 +18,21 @@ pub struct Modifiers {
     pub meta: bool,
 }
 
+impl Modifiers {
+    /// No modifier held.
+    pub const NONE: Self = Self {
+        ctrl: false,
+        alt: false,
+        shift: false,
+        meta: false,
+    };
+
+    /// Whether no modifier is held.
+    pub const fn is_empty(self) -> bool {
+        !(self.ctrl || self.alt || self.shift || self.meta)
+    }
+}
+
 /// The non-modifier key of a chord.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Key {

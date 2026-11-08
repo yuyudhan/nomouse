@@ -76,6 +76,24 @@ pub trait Overlay {
     /// Fails when the overlay window or the keyboard grab cannot be created.
     fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError>;
 
+    /// Search-by-text: shows `hints` and `typed` like [`Overlay::show`], plus a search box
+    /// with the `query` typed so far (drawn even when `query` is empty or nothing matches), and
+    /// grabs the keyboard.
+    ///
+    /// The default shows only the labels; the Linux, macOS and Windows backends draw the box.
+    ///
+    /// # Errors
+    /// Fails when the overlay window or the keyboard grab cannot be created.
+    fn show_search(
+        &mut self,
+        hints: &[Hint],
+        typed: &str,
+        query: &str,
+    ) -> Result<(), PlatformError> {
+        let _ = query;
+        self.show(hints, typed)
+    }
+
     /// Hides the overlay and releases the keyboard. Calling it while hidden is a no-op.
     ///
     /// # Errors

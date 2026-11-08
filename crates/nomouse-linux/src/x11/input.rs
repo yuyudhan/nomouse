@@ -44,14 +44,21 @@ fn wheel(fakes: &mut Vec<Fake>, negative: u8, positive: u8, steps: i32) {
     }
 }
 
+/// How long held modifiers settle before the pointer acts, so the app sees them as held.
+const MODIFIER_SETTLE_MS: u64 = 30;
+
 /// The event sequence for `action`, holding the `modifiers` keycodes down around it.
 pub(crate) fn plan(action: &Action, modifiers: &[u8]) -> Vec<Fake> {
     let mut fakes: Vec<Fake> = modifiers.iter().map(|code| Fake::KeyDown(*code)).collect();
+    if !modifiers.is_empty() {
+        fakes.push(Fake::Pause(MODIFIER_SETTLE_MS));
+    }
     match *action {
         Action::Click {
             at,
             button: b,
             count,
+            ..
         } => {
             fakes.push(Fake::Motion(at));
             for i in 0..count.max(1) {
@@ -113,6 +120,7 @@ mod tests {
             at: P,
             button: MouseButton::Middle,
             count: 1,
+            modifiers: nomouse_core::Modifiers::NONE,
         };
         assert_eq!(plan(&middle, &[])[1], Fake::Press(2));
     }

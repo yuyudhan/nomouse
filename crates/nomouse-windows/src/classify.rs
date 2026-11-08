@@ -18,15 +18,14 @@ pub(crate) fn role(control_type: i32) -> Option<Role> {
         ct::TREE_ITEM => Role::TreeItem,
         ct::SLIDER | ct::SPINNER => Role::Slider,
         ct::DATA_ITEM => Role::Cell,
-        ct::SCROLL_BAR => Role::ScrollArea,
         ct::TEXT => Role::Text,
         _ => return None,
     };
     Some(role)
 }
 
-/// Whether the element gets a hint: an actionable control type, or any element offering an
-/// activation pattern or keyboard focus; never offscreen or zero-sized ones.
+/// Whether the element gets a hint: an actionable control type, a scroll container, or any
+/// element offering an activation pattern or keyboard focus; never offscreen or zero-sized ones.
 pub(crate) fn is_candidate(raw: &RawElement) -> bool {
     if raw.offscreen || raw.bounds.width() == 0 || raw.bounds.height() == 0 {
         return false;
@@ -34,12 +33,25 @@ pub(crate) fn is_candidate(raw: &RawElement) -> bool {
     let actionable = ct::ACTIONABLE.contains(&raw.control_type);
     // Windows, panes and documents are often focusable as a whole; labelling them adds noise.
     let container = matches!(raw.control_type, ct::WINDOW | ct::PANE | ct::DOCUMENT);
-    actionable || (!container && (raw.patterns.any() || raw.keyboard_focusable))
+    actionable
+        || is_scroll_area(raw)
+        || (!container && (raw.patterns.any() || raw.keyboard_focusable))
+}
+
+/// A container (pane, document, list, tree, grid, ...) that scrolls its own content with
+/// `ScrollPattern`: scroll mode targets it rather than a control or scroll bar inside it.
+/// Controls with their own role (a multi-line edit, a combo box) keep that role.
+fn is_scroll_area(raw: &RawElement) -> bool {
+    raw.patterns.scroll && role(raw.control_type).is_none()
 }
 
 /// The core element for a raw UIA element; `id` is the snapshot index.
 pub(crate) fn to_element(raw: &RawElement) -> Element {
-    let role = role(raw.control_type).unwrap_or(Role::Other);
+    let role = if is_scroll_area(raw) {
+        Role::ScrollArea
+    } else {
+        role(raw.control_type).unwrap_or(Role::Other)
+    };
     Element {
         id: ElementId(u64::try_from(raw.index).unwrap_or(u64::MAX)),
         role: if role == Role::Text && raw.patterns.any() {
@@ -131,6 +143,23 @@ pub(crate) mod tests {
         let mut pane = raw(0, ct::PANE, BOX);
         pane.keyboard_focusable = true;
         assert!(!is_candidate(&pane));
+    }
+
+    #[test]
+    fn scroll_containers_are_scroll_areas_but_scroll_bars_are_not() {
+        let mut pane = raw(0, ct::PANE, BOX);
+        pane.patterns.scroll = true;
+        assert!(is_candidate(&pane));
+        let element = to_element(&pane);
+        assert_eq!(element.role, Role::ScrollArea);
+        assert!(!element.is_clickable());
+        let mut edit = raw(0, ct::EDIT, BOX);
+        edit.patterns.scroll = true;
+        assert_eq!(to_element(&edit).role, Role::TextField);
+        let mut bar = raw(0, ct::SCROLL_BAR, BOX);
+        assert!(!is_candidate(&bar));
+        bar.keyboard_focusable = true;
+        assert_ne!(to_element(&bar).role, Role::ScrollArea);
     }
 
     #[test]

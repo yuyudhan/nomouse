@@ -54,7 +54,8 @@ struct Cli {
 enum Command {
     /// Run the hotkey daemon (the default).
     Daemon,
-    /// Show hints now and act on the picked one.
+    /// Show hints now and act on the picked one. Digits 1-4 toggle shift/ctrl/alt/super for
+    /// the click (for example `2` then a label: ctrl+click).
     Hints {
         /// Keep re-labelling after every action until Escape.
         #[arg(long)]
@@ -65,6 +66,9 @@ enum Command {
     },
     /// Pick a scroll target, then scroll with j/k/h/l/d/u until Escape.
     Scroll,
+    /// Search elements by name: type to filter, Enter clicks the best match, Tab then a label
+    /// clicks another, Escape cancels.
+    Search,
     /// Check the session, accessibility, input and configuration.
     Doctor,
     /// Configuration commands.
@@ -185,6 +189,7 @@ fn daemon() -> Result<String, String> {
         (config.hotkeys.hints, Mode::Once(action)),
         (config.hotkeys.continuous, Mode::Continuous(action)),
         (config.hotkeys.scroll, Mode::Scroll),
+        (config.hotkeys.search, Mode::Search),
     ];
     let mut modes = Vec::new();
     for (hotkey, mode) in bindings {
@@ -283,6 +288,7 @@ fn run_command(command: Command) -> Result<String, String> {
             })
         }
         Command::Scroll => activate_now(Mode::Scroll),
+        Command::Search => activate_now(Mode::Search),
         Command::Doctor => doctor(),
         Command::Config { command } => config_command(command),
         Command::Labels { count, alphabet } => {

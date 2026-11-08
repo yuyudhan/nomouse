@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """GTK 3 test window for scripts/e2e-linux.sh.
 
-Ten buttons "Button 1".."Button 10" set the window title to "left: Button N" on a click and
-"right: Button N" on a right click; a scrolled list of rows sets it to "scrolled: <offset>"
-when scrolled. A running click count is appended ("#<n>") so repeated clicks are visible.
+Ten buttons "Button 1".."Button 10" set the window title to "left: Button N" on a click
+("ctrl-left: Button N" when Control was held) and "right: Button N" on a right click; a
+scrolled list of rows sets it to "scrolled: <offset>" when scrolled. A running click count is
+appended ("#<n>") so repeated clicks are visible.
 """
 
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk  # noqa: E402
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, Gtk  # noqa: E402
 
 clicks = 0
 
@@ -18,6 +20,12 @@ def set_title(window, text):
     global clicks
     clicks += 1
     window.set_title(f"{text} #{clicks}")
+
+
+def on_clicked(window, name):
+    ok, state = Gtk.get_current_event_state()
+    held = ok and bool(state & Gdk.ModifierType.CONTROL_MASK)
+    set_title(window, f"{'ctrl-left' if held else 'left'}: {name}")
 
 
 def main():
@@ -29,7 +37,7 @@ def main():
     for i in range(10):
         name = f"Button {i + 1}"
         button = Gtk.Button(label=name)
-        button.connect("clicked", lambda _b, n=name: set_title(window, f"left: {n}"))
+        button.connect("clicked", lambda _b, n=name: on_clicked(window, n))
 
         def on_press(_b, event, n=name):
             if event.button == 3:

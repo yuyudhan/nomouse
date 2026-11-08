@@ -7,6 +7,7 @@
 //! - [`config`]: the TOML configuration.
 //! - [`platform`]: the traits each OS backend implements.
 //! - [`session`]: one hint-mode activation, tying the above together.
+//! - [`search`]: fuzzy matching of a typed query against element names (search-by-text).
 //! - `contract` (feature `testing`): the backend contract suite and an in-memory fake.
 #![forbid(unsafe_code)]
 
@@ -21,6 +22,7 @@ pub mod glyph;
 pub mod hints;
 pub mod hotkey;
 pub mod platform;
+pub mod search;
 pub mod session;
 
 pub use action::{Action, ActionKind, MouseButton};

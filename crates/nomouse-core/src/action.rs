@@ -6,6 +6,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::element::Point;
+use crate::hotkey::Modifiers;
 
 /// A mouse button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -21,7 +22,8 @@ pub enum MouseButton {
 /// A concrete pointer action at screen coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
-    /// Move to `at` and click `button` `count` times (2 = double click).
+    /// Move to `at` and click `button` `count` times (2 = double click) while holding
+    /// `modifiers` (for example ctrl/cmd+click to open a link in a new tab).
     Click {
         /// Target point.
         at: Point,
@@ -29,6 +31,8 @@ pub enum Action {
         button: MouseButton,
         /// Number of clicks, at least 1.
         count: u8,
+        /// Modifier keys held around the click; pressed before and released after.
+        modifiers: Modifiers,
     },
     /// Move the pointer to `at` without clicking.
     Hover {
@@ -65,6 +69,7 @@ impl Action {
             at,
             button: MouseButton::Left,
             count: 1,
+            modifiers: Modifiers::NONE,
         }
     }
 
@@ -74,6 +79,7 @@ impl Action {
             at,
             button: MouseButton::Right,
             count: 1,
+            modifiers: Modifiers::NONE,
         }
     }
 
@@ -83,6 +89,32 @@ impl Action {
             at,
             button: MouseButton::Left,
             count: 2,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    /// The same action with `modifiers` held; only clicks carry modifiers, other actions are
+    /// returned unchanged.
+    #[must_use]
+    pub const fn with_modifiers(self, modifiers: Modifiers) -> Self {
+        match self {
+            Self::Click {
+                at, button, count, ..
+            } => Self::Click {
+                at,
+                button,
+                count,
+                modifiers,
+            },
+            other => other,
+        }
+    }
+
+    /// The modifiers held during the action ([`Modifiers::NONE`] for non-clicks).
+    pub const fn modifiers(&self) -> Modifiers {
+        match *self {
+            Self::Click { modifiers, .. } => modifiers,
+            Self::Hover { .. } | Self::Drag { .. } | Self::Scroll { .. } => Modifiers::NONE,
         }
     }
 
@@ -156,6 +188,11 @@ impl ActionKind {
         }
     }
 
+    /// Whether the action is a click, so modifier keys apply to it.
+    pub const fn is_click(self) -> bool {
+        matches!(self, Self::Click | Self::RightClick | Self::DoubleClick)
+    }
+
     /// The action for a single selected point, or `None` for the multi-step kinds (drag, scroll).
     pub const fn at(self, point: Point) -> Option<Action> {
         match self {
@@ -204,7 +241,8 @@ mod tests {
             Action::Click {
                 at: p,
                 button: MouseButton::Left,
-                count: 2
+                count: 2,
+                modifiers: Modifiers::NONE,
             }
         );
         assert_eq!(
@@ -212,6 +250,29 @@ mod tests {
             Point::new(9, 9)
         );
         assert_eq!(Action::scroll(p, 0, 3).end_point(), p);
+    }
+
+    #[test]
+    fn modifiers_apply_to_clicks_only() {
+        let p = Point::new(1, 2);
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::NONE
+        };
+        let click = Action::right_click(p).with_modifiers(ctrl);
+        assert_eq!(click.modifiers(), ctrl);
+        assert!(matches!(
+            click,
+            Action::Click {
+                button: MouseButton::Right,
+                count: 1,
+                ..
+            }
+        ));
+        assert_eq!(Action::hover(p).with_modifiers(ctrl), Action::hover(p));
+        assert_eq!(Action::hover(p).modifiers(), Modifiers::NONE);
+        assert!(ActionKind::DoubleClick.is_click());
+        assert!(!ActionKind::Drag.is_click());
     }
 
     #[test]

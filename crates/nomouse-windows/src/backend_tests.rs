@@ -3,7 +3,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
-use nomouse_core::{Element, Rect, Role, assign_hints};
+use nomouse_core::{Element, Modifiers, Point, Rect, Role, assign_hints};
 use nomouse_sys_windows::{Button, Patterns, RawElement, control_type as ct};
 
 use super::*;
@@ -470,7 +470,7 @@ fn drag_is_three_batches_and_modifier_click_holds_keys() {
         ..Modifiers::default()
     };
     backend
-        .modifier_click(Point::new(5, 5), MouseButton::Left, modifiers)
+        .perform(&Action::click(Point::new(5, 5)).with_modifiers(modifiers))
         .unwrap();
     let last = backend.system.sent.last().unwrap();
     assert_eq!(
@@ -478,6 +478,13 @@ fn drag_is_three_batches_and_modifier_click_holds_keys() {
         InputStep::Key {
             vk: 0x11,
             down: true
+        }
+    );
+    assert_eq!(
+        last[last.len() - 1],
+        InputStep::Key {
+            vk: 0x11,
+            down: false
         }
     );
 }
@@ -501,6 +508,18 @@ fn overlay_grabs_keyboard_and_renders() {
     backend.hide().unwrap();
     assert!(!backend.system.grabbed);
     assert_eq!(backend.system.bitmaps.last(), Some(&Bitmap::default()));
+    backend.hide().unwrap();
+}
+
+#[test]
+fn search_overlay_draws_the_query_box() {
+    let Some(mut backend) = make(app()) else {
+        return;
+    };
+    backend.show_search(&[], "", "sav").unwrap();
+    assert!(backend.system.grabbed);
+    let bitmap = backend.system.bitmaps.last().unwrap().clone();
+    assert!(bitmap.pixels.iter().any(|pixel| *pixel != 0));
     backend.hide().unwrap();
 }
 

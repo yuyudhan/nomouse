@@ -5,15 +5,17 @@ The Windows backend of nomouse. It implements the `nomouse-core` platform traits
 | Trait | How |
 | --- | --- |
 | `ElementSource` | UI Automation (`CUIAutomation8`, falling back to `CUIAutomation`) in a single-threaded COM apartment. One `FindAllBuildCache` per window with a cache request that batches bounding rectangle, control type, name, `IsOffscreen`, `IsEnabled`, `IsKeyboardFocusable` and the Invoke / Toggle / SelectionItem / ExpandCollapse / LegacyIAccessible patterns. |
-| `Overlay` | A layered, click-through, topmost tool window (`WS_EX_LAYERED \| WS_EX_TRANSPARENT \| WS_EX_TOPMOST \| WS_EX_TOOLWINDOW \| WS_EX_NOACTIVATE`) updated with `UpdateLayeredWindow` from a premultiplied ARGB buffer. While it is shown a low-level keyboard hook swallows keys (modifiers pass through) and delivers them to the session. |
-| `InputInjector` | `SendInput` with absolute virtual-desktop coordinates: click, right/double click, hover, drag (press, eight intermediate moves, release), wheel and horizontal wheel scrolling. `Backend::modifier_click` clicks with ctrl/alt/shift/win held. With `hints.semantic_click = true`, a left click on a labelled element uses its pattern (Invoke, Toggle, Select, Expand/Collapse, then LegacyIAccessible default action) and falls back to the pointer if the pattern fails. |
+| `Overlay` | A layered, click-through, topmost tool window (`WS_EX_LAYERED \| WS_EX_TRANSPARENT \| WS_EX_TOPMOST \| WS_EX_TOOLWINDOW \| WS_EX_NOACTIVATE`) updated with `UpdateLayeredWindow` from a premultiplied ARGB buffer. While it is shown a low-level keyboard hook swallows keys (modifiers pass through) and delivers them to the session. In search mode the query is drawn as a box near the top centre of the virtual desktop. |
+| `InputInjector` | `SendInput` with absolute virtual-desktop coordinates: click, right/double click, hover, drag (press, eight intermediate moves, release), wheel and horizontal wheel scrolling. A click holds its `Action::modifiers` (ctrl/alt/shift/win key presses around the button, in one batch). With `hints.semantic_click = true`, a plain left click on a labelled element uses its pattern (Invoke, Toggle, Select, Expand/Collapse, then LegacyIAccessible default action) and falls back to the pointer if the pattern fails. |
 | `HotkeySource` | `RegisterHotKey` (with `MOD_NOREPEAT`), delivered through the thread's message pump. |
 
 Which elements get labels: buttons, hyperlinks, check boxes, radio buttons, menu items, tab items,
 list items, tree items, edits, combo boxes, sliders, split buttons, data and header items, plus any
 other element offering an activation pattern or keyboard focus (except whole windows, panes and
-documents). Offscreen and zero-sized elements are dropped, and in screen scope so are elements
-covered by a window above them.
+documents). Elements with the Scroll pattern and no control role of their own (panes, documents,
+lists, trees, grids) are reported as scroll areas, the targets of scroll mode. Offscreen and
+zero-sized elements are dropped, and in screen scope so are elements covered by a window above
+them.
 
 The process opts into per-monitor DPI awareness (v2), so every coordinate is in physical pixels;
 labels are scaled by the DPI of the monitor they sit on. Labels are drawn with Segoe UI Bold (or

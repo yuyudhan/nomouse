@@ -16,10 +16,10 @@ use windows::Win32::UI::Accessibility::{
     UIA_IsEnabledPropertyId, UIA_IsExpandCollapsePatternAvailablePropertyId,
     UIA_IsInvokePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
     UIA_IsLegacyIAccessiblePatternAvailablePropertyId, UIA_IsOffscreenPropertyId,
-    UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
-    UIA_LegacyIAccessibleDefaultActionPropertyId, UIA_LegacyIAccessiblePatternId,
-    UIA_NamePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_SelectionItemPatternId,
-    UIA_TogglePatternId,
+    UIA_IsScrollPatternAvailablePropertyId, UIA_IsSelectionItemPatternAvailablePropertyId,
+    UIA_IsTogglePatternAvailablePropertyId, UIA_LegacyIAccessibleDefaultActionPropertyId,
+    UIA_LegacyIAccessiblePatternId, UIA_NamePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
+    UIA_SelectionItemPatternId, UIA_TogglePatternId,
 };
 use windows::core::{BSTR, Interface};
 
@@ -31,7 +31,7 @@ use crate::types::{
 };
 
 /// Properties fetched for every element in one round trip.
-const CACHED_PROPERTIES: [UIA_PROPERTY_ID; 12] = [
+const CACHED_PROPERTIES: [UIA_PROPERTY_ID; 13] = [
     UIA_BoundingRectanglePropertyId,
     UIA_ControlTypePropertyId,
     UIA_NamePropertyId,
@@ -44,6 +44,7 @@ const CACHED_PROPERTIES: [UIA_PROPERTY_ID; 12] = [
     UIA_IsExpandCollapsePatternAvailablePropertyId,
     UIA_IsLegacyIAccessiblePatternAvailablePropertyId,
     UIA_LegacyIAccessibleDefaultActionPropertyId,
+    UIA_IsScrollPatternAvailablePropertyId,
 ];
 
 /// Patterns cached with each element so activation needs no extra lookup.
@@ -55,12 +56,14 @@ const CACHED_PATTERNS: [UIA_PATTERN_ID; 5] = [
     UIA_LegacyIAccessiblePatternId,
 ];
 
-/// Pattern-availability properties that make an element a query match.
-const PATTERN_AVAILABLE: [UIA_PROPERTY_ID; 4] = [
+/// Pattern-availability properties that make an element a query match (scrollable containers
+/// included, for scroll mode).
+const PATTERN_AVAILABLE: [UIA_PROPERTY_ID; 5] = [
     UIA_IsInvokePatternAvailablePropertyId,
     UIA_IsTogglePatternAvailablePropertyId,
     UIA_IsSelectionItemPatternAvailablePropertyId,
     UIA_IsExpandCollapsePatternAvailablePropertyId,
+    UIA_IsScrollPatternAvailablePropertyId,
 ];
 
 /// A UI Automation client with a prepared cache request and query condition.
@@ -338,6 +341,7 @@ fn read_cached(element: &IUIAutomationElement, index: usize) -> Result<RawElemen
             expand_collapse: cached_flag(element, UIA_IsExpandCollapsePatternAvailablePropertyId),
             legacy_default_action: default_action
                 && cached_flag(element, UIA_IsLegacyIAccessiblePatternAvailablePropertyId),
+            scroll: cached_flag(element, UIA_IsScrollPatternAvailablePropertyId),
         },
     })
 }

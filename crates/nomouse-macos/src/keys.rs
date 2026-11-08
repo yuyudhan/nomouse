@@ -129,6 +129,27 @@ mod tests {
     }
 
     #[test]
+    fn click_modifiers_map_to_event_flags() {
+        let cmd_shift = Modifiers {
+            meta: true,
+            shift: true,
+            ..Modifiers::NONE
+        };
+        let action = nomouse_core::Action::click(nomouse_core::Point::new(1, 1));
+        let flags = modifier_flags(action.with_modifiers(cmd_shift).modifiers());
+        assert_eq!(
+            flags,
+            ModifierFlags {
+                control: false,
+                option: false,
+                shift: true,
+                command: true,
+            }
+        );
+        assert_eq!(modifier_flags(action.modifiers()), ModifierFlags::default());
+    }
+
+    #[test]
     fn session_keys() {
         assert_eq!(key_press(53, None), Some(KeyPress::Escape));
         assert_eq!(key_press(51, Some('\u{8}')), Some(KeyPress::Backspace));

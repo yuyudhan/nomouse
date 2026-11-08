@@ -363,9 +363,9 @@ impl Tree for Bus {
             if !interfaces.contains(Interface::Collection) {
                 return Ok(None);
             }
-            // Three server-side matches, all for showing objects: interactive roles, objects
-            // with actions, focusable objects. Unused criteria must be `NA` with empty sets
-            // (GTK treats `Invalid` as "never matches").
+            // Four server-side matches, all for showing objects: interactive roles, scroll panes
+            // (scroll mode's targets), objects with actions, focusable objects. Unused criteria
+            // must be `NA` with empty sets (GTK treats `Invalid` as "never matches").
             let base = || {
                 ObjectMatchRule::builder()
                     .states([State::Showing, State::Visible], MatchType::All)
@@ -376,6 +376,7 @@ impl Tree for Bus {
             let by_role = base()
                 .roles(walk::INTERACTIVE_ROLES, MatchType::Any)
                 .build();
+            let by_scroll = base().roles(walk::SCROLL_ROLES, MatchType::Any).build();
             let by_action = base()
                 .interfaces([Interface::Action], MatchType::All)
                 .build();
@@ -385,10 +386,11 @@ impl Tree for Bus {
                     MatchType::All,
                 )
                 .build();
-            let (a, b, c) = futures_util::join!(
+            let (a, b, c, d) = futures_util::join!(
                 self.matches(root, by_role, limit),
                 self.matches(root, by_action, limit),
-                self.matches(root, by_focus, limit)
+                self.matches(root, by_focus, limit),
+                self.matches(root, by_scroll, limit)
             );
             let mut seen = HashSet::new();
             let mut found = Vec::new();
@@ -397,6 +399,7 @@ impl Tree for Bus {
                 .into_iter()
                 .chain(b.unwrap_or_default())
                 .chain(c.unwrap_or_default())
+                .chain(d.unwrap_or_default())
             {
                 if seen.insert(obj.clone()) {
                     found.push(obj);

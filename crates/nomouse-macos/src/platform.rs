@@ -5,6 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nomouse_core::config::Config;
+use nomouse_core::search::search_box_anchor;
 use nomouse_core::{
     Action, Element, ElementId, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource, InputEvent,
     InputInjector, MouseButton, Overlay, Platform, PlatformError, Point, Rect, Scope,
@@ -18,7 +19,7 @@ use nomouse_sys_macos::{Button, Label, LabelStyle, ModifierFlags, TapEvent};
 
 use crate::ax_tree::{LiveTree, RootSet, not_trusted, roots};
 use crate::geometry::{lerp, screen_rect, to_panel, union, wheel_deltas};
-use crate::keys::{chord, key_press};
+use crate::keys::{chord, key_press, modifier_flags};
 use crate::roles::{PRESS, SHOW_MENU};
 use crate::style::label_style;
 use crate::walk::{Limits, walk};
@@ -31,6 +32,8 @@ const PUMP_SLICE: f64 = 0.05;
 const DRAG_STEPS: i32 = 12;
 /// Pause between drag steps and after moving before a click, so apps see distinct events.
 const INPUT_PAUSE: Duration = Duration::from_millis(8);
+/// Event flags for pointer input without modifier keys.
+const NO_FLAGS: ModifierFlags = modifier_flags(nomouse_core::Modifiers::NONE);
 
 /// One element of the last snapshot, kept for semantic clicks.
 struct Snapshot {
@@ -139,6 +142,43 @@ impl MacPlatform {
             .find(|entry| entry.bounds.center() == at)
             .is_some_and(|entry| entry.element.perform_action(action).is_ok())
     }
+
+    /// Draws the hint labels, plus the search box `/query` near the top centre of the main
+    /// screen for a `query`, and grabs the keyboard.
+    fn present(&mut self, hints: &[Hint], typed: &str, query: Option<&str>) {
+        let screens = self.app.screens();
+        let typed_len = typed.chars().count();
+        let mut labels: Vec<Label> = hints
+            .iter()
+            .filter_map(|hint| {
+                let bounds = hint.element.bounds;
+                let anchor = to_panel(Point::new(bounds.x, bounds.y), &screens)?;
+                Some(Label {
+                    screen: anchor.screen,
+                    x: anchor.x,
+                    y: anchor.y,
+                    text: hint.label.to_uppercase(),
+                    typed: typed_len.min(hint.label.chars().count()),
+                })
+            })
+            .collect();
+        if let (Some(query), Some(primary)) = (query, screens.first().copied()) {
+            let box_at = search_box_anchor(screen_rect(primary, primary));
+            if let Some(anchor) = to_panel(Point::new(box_at.x, box_at.y), &screens) {
+                let text = format!("/{}", query.to_uppercase());
+                labels.push(Label {
+                    screen: anchor.screen,
+                    x: anchor.x,
+                    y: anchor.y,
+                    typed: text.chars().count(),
+                    text,
+                });
+            }
+        }
+        self.panels
+            .show(&self.app, &labels, &self.style, self.opacity);
+        self.tap.set_grab(true);
+    }
 }
 
 impl ElementSource for MacPlatform {
@@ -180,25 +220,17 @@ impl ElementSource for MacPlatform {
 
 impl Overlay for MacPlatform {
     fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError> {
-        let screens = self.app.screens();
-        let typed_len = typed.chars().count();
-        let labels: Vec<Label> = hints
-            .iter()
-            .filter_map(|hint| {
-                let bounds = hint.element.bounds;
-                let anchor = to_panel(Point::new(bounds.x, bounds.y), &screens)?;
-                Some(Label {
-                    screen: anchor.screen,
-                    x: anchor.x,
-                    y: anchor.y,
-                    text: hint.label.to_uppercase(),
-                    typed: typed_len.min(hint.label.chars().count()),
-                })
-            })
-            .collect();
-        self.panels
-            .show(&self.app, &labels, &self.style, self.opacity);
-        self.tap.set_grab(true);
+        self.present(hints, typed, None);
+        Ok(())
+    }
+
+    fn show_search(
+        &mut self,
+        hints: &[Hint],
+        typed: &str,
+        query: &str,
+    ) -> Result<(), PlatformError> {
+        self.present(hints, typed, Some(query));
         Ok(())
     }
 
@@ -217,13 +249,18 @@ const fn button(button: MouseButton) -> Button {
     }
 }
 
-fn post(kind: MouseEventKind, at: Point, click_state: i64) -> Result<(), PlatformError> {
+fn post(
+    kind: MouseEventKind,
+    at: Point,
+    click_state: i64,
+    modifiers: ModifierFlags,
+) -> Result<(), PlatformError> {
     input::post_mouse(
         kind,
         f64::from(at.x),
         f64::from(at.y),
         click_state,
-        ModifierFlags::default(),
+        modifiers,
     )
     .map_err(|error| PlatformError::Backend(error.to_string()))
 }
@@ -238,8 +275,9 @@ impl InputInjector for MacPlatform {
                 at,
                 button: b,
                 count,
+                modifiers,
             } => {
-                if self.semantic_click && count == 1 {
+                if self.semantic_click && count == 1 && modifiers.is_empty() {
                     let semantic = match b {
                         MouseButton::Left => Some(PRESS),
                         MouseButton::Right => Some(SHOW_MENU),
@@ -249,34 +287,36 @@ impl InputInjector for MacPlatform {
                         return Ok(());
                     }
                 }
-                post(MouseEventKind::Move, at, 0)?;
+                // The flags on the mouse events are what apps read for cmd/shift/option+click.
+                let flags = modifier_flags(modifiers);
+                post(MouseEventKind::Move, at, 0, flags)?;
                 thread::sleep(INPUT_PAUSE);
                 for click in 1..=count.max(1) {
-                    post(MouseEventKind::Down(button(b)), at, i64::from(click))?;
-                    post(MouseEventKind::Up(button(b)), at, i64::from(click))?;
+                    post(MouseEventKind::Down(button(b)), at, i64::from(click), flags)?;
+                    post(MouseEventKind::Up(button(b)), at, i64::from(click), flags)?;
                 }
             }
-            Action::Hover { at } => post(MouseEventKind::Move, at, 0)?,
+            Action::Hover { at } => post(MouseEventKind::Move, at, 0, NO_FLAGS)?,
             Action::Drag {
                 from,
                 to,
                 button: b,
             } => {
-                post(MouseEventKind::Move, from, 0)?;
+                post(MouseEventKind::Move, from, 0, NO_FLAGS)?;
                 thread::sleep(INPUT_PAUSE);
-                post(MouseEventKind::Down(button(b)), from, 1)?;
+                post(MouseEventKind::Down(button(b)), from, 1, NO_FLAGS)?;
                 for step in 1..=DRAG_STEPS {
                     thread::sleep(INPUT_PAUSE);
                     let point = Point::new(
                         lerp(from.x, to.x, step, DRAG_STEPS),
                         lerp(from.y, to.y, step, DRAG_STEPS),
                     );
-                    post(MouseEventKind::Drag(button(b)), point, 1)?;
+                    post(MouseEventKind::Drag(button(b)), point, 1, NO_FLAGS)?;
                 }
-                post(MouseEventKind::Up(button(b)), to, 1)?;
+                post(MouseEventKind::Up(button(b)), to, 1, NO_FLAGS)?;
             }
             Action::Scroll { at, dx, dy } => {
-                post(MouseEventKind::Move, at, 0)?;
+                post(MouseEventKind::Move, at, 0, NO_FLAGS)?;
                 let (vertical, horizontal) = wheel_deltas(dx, dy);
                 input::post_scroll(vertical, horizontal)
                     .map_err(|error| PlatformError::Backend(error.to_string()))?;

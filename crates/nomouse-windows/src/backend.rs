@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use nomouse_core::{
     Action, Config, Element, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource, InputEvent,
-    InputInjector, Modifiers, MouseButton, Overlay, Platform, PlatformError, Point, Scope,
+    InputInjector, MouseButton, Overlay, Platform, PlatformError, Scope,
 };
 use nomouse_sys_windows::{
     Activation, Bitmap, Edges, HotkeyModifiers, InputStep, Snapshot, SysError, SysErrorKind,
@@ -251,21 +251,6 @@ impl<S: System> Backend<S> {
         self.truncation
     }
 
-    /// Clicks `button` at `at` with `modifiers` held (for example ctrl+click to open a link in
-    /// a new tab).
-    ///
-    /// # Errors
-    /// [`PlatformError::PermissionDenied`] when UIPI blocks the input.
-    pub fn modifier_click(
-        &mut self,
-        at: Point,
-        button: MouseButton,
-        modifiers: Modifiers,
-    ) -> Result<(), PlatformError> {
-        let screen = self.system.virtual_screen();
-        self.run(&input_plan::modifier_click(at, button, modifiers, screen))
-    }
-
     /// Snapshots every target within the scan limits; a failure on `required` is fatal, others
     /// skip their window (it closed or runs elevated) unless every window failed. Hitting the
     /// node cap or the time budget keeps what was read and records [`Backend::last_truncation`].
@@ -348,16 +333,21 @@ impl<S: System> Backend<S> {
         Ok(())
     }
 
-    /// Activates the remembered element targeted by a plain left click, if it has a pattern.
+    /// Activates the remembered element targeted by a plain left click (no modifiers held),
+    /// if it has a pattern.
     fn try_semantic(&mut self, action: &Action) -> bool {
         let Action::Click {
             at,
             button: MouseButton::Left,
             count: 1,
+            modifiers,
         } = *action
         else {
             return false;
         };
+        if !modifiers.is_empty() {
+            return false;
+        }
         let Some((index, activation)) = self.snapshot.iter().find_map(|known| {
             (known.element.target() == at)
                 .then_some(known.activation.map(|activation| (known.index, activation)))
@@ -401,11 +391,17 @@ impl<S: System> ElementSource for Backend<S> {
     }
 }
 
-impl<S: System> Overlay for Backend<S> {
-    fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError> {
+impl<S: System> Backend<S> {
+    /// Draws the labels (and the search box for a `query`) and grabs the keyboard once.
+    fn present(
+        &mut self,
+        hints: &[Hint],
+        typed: &str,
+        query: Option<&str>,
+    ) -> Result<(), PlatformError> {
         let area = self.system.virtual_screen();
         let system = &mut self.system;
-        let bitmap = self.renderer.frame(hints, typed, area, |x, y| {
+        let bitmap = self.renderer.frame(hints, typed, query, area, |x, y| {
             f32::from(u16::try_from(system.dpi_at(x, y)).unwrap_or(96)) / BASE_DPI
         });
         self.system
@@ -418,6 +414,21 @@ impl<S: System> Overlay for Backend<S> {
             self.shown = true;
         }
         Ok(())
+    }
+}
+
+impl<S: System> Overlay for Backend<S> {
+    fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError> {
+        self.present(hints, typed, None)
+    }
+
+    fn show_search(
+        &mut self,
+        hints: &[Hint],
+        typed: &str,
+        query: &str,
+    ) -> Result<(), PlatformError> {
+        self.present(hints, typed, Some(query))
     }
 
     fn hide(&mut self) -> Result<(), PlatformError> {

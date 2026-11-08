@@ -74,7 +74,12 @@ fn lerp(from: i32, to: i32, step: i32) -> i32 {
 /// The input batches for `action` on virtual desktop `screen`.
 pub(crate) fn plan(action: &Action, screen: Edges) -> Plan {
     match *action {
-        Action::Click { at, button, count } => vec![click_steps(at, button, count, screen)],
+        Action::Click {
+            at,
+            button,
+            count,
+            modifiers,
+        } => vec![modifier_click(at, button, count, modifiers, screen)],
         Action::Hover { at } => vec![vec![move_to(at, screen)]],
         Action::Drag {
             from,
@@ -117,25 +122,27 @@ pub(crate) fn plan(action: &Action, screen: Edges) -> Plan {
     }
 }
 
-/// A click with `modifiers` held: press modifiers, click, release them in reverse order.
-pub(crate) fn modifier_click(
+/// A click with `modifiers` held: press modifiers, click `count` times, release them in
+/// reverse order. One batch, so no other input interleaves with the held keys.
+fn modifier_click(
     at: Point,
     which: MouseButton,
+    count: u8,
     modifiers: Modifiers,
     screen: Edges,
-) -> Plan {
+) -> Vec<InputStep> {
     let keys = modifier_keys(modifiers);
     let mut steps: Vec<InputStep> = keys
         .iter()
         .map(|&vk| InputStep::Key { vk, down: true })
         .collect();
-    steps.extend(click_steps(at, which, 1, screen));
+    steps.extend(click_steps(at, which, count, screen));
     steps.extend(
         keys.iter()
             .rev()
             .map(|&vk| InputStep::Key { vk, down: false }),
     );
-    vec![steps]
+    steps
 }
 
 #[cfg(test)]
@@ -179,6 +186,7 @@ mod tests {
                 at,
                 button: MouseButton::Right,
                 count: 2,
+                modifiers: Modifiers::NONE,
             },
             SCREEN,
         );
@@ -228,8 +236,13 @@ mod tests {
             shift: true,
             ..Modifiers::default()
         };
-        let plan = modifier_click(Point::new(5, 5), MouseButton::Left, modifiers, SCREEN);
+        let plan = plan(
+            &Action::click(Point::new(5, 5)).with_modifiers(modifiers),
+            SCREEN,
+        );
+        assert_eq!(plan.len(), 1);
         let steps = &plan[0];
+        assert_eq!(steps.len(), 7);
         assert_eq!(
             steps[0],
             InputStep::Key {

@@ -172,6 +172,9 @@ pub(crate) const INTERACTIVE_ROLES: &[AtRole] = &[
     AtRole::SpinButton,
 ];
 
+/// The roles of scrollable containers, reported as [`Role::ScrollArea`] for scroll mode.
+pub(crate) const SCROLL_ROLES: &[AtRole] = &[AtRole::ScrollPane];
+
 fn is_interactive_role(role: AtRole) -> bool {
     INTERACTIVE_ROLES.contains(&role)
 }
@@ -185,7 +188,10 @@ fn qualifies(info: &NodeInfo, clip: Rect) -> Option<(Role, Reason)> {
     let role = map_role(info.role)?;
     if is_interactive_role(info.role) {
         Some((role, Reason::Role))
-    } else if role != Role::ScrollArea && (info.has_action || info.focusable) {
+    } else if role == Role::ScrollArea {
+        // Scroll mode's target. Weak, so the controls inside it keep their labels.
+        Some((role, Reason::Weak))
+    } else if info.has_action || info.focusable {
         Some((
             if role == Role::Text {
                 Role::Other
@@ -523,6 +529,30 @@ mod tests {
         assert_eq!(custom, Some(Role::Other));
         let element_ids: HashSet<ElementId> = found.iter().map(|f| f.element.id).collect();
         assert_eq!(element_ids.len(), found.len());
+    }
+
+    #[test]
+    fn scroll_panes_are_reported_without_hiding_their_contents() {
+        let mut tree = sample();
+        tree.add(
+            11,
+            Some(1),
+            node(AtRole::ScrollPane, Rect::new(0, 500, 600, 400)),
+        );
+        tree.add(
+            12,
+            Some(11),
+            node(AtRole::Button, Rect::new(10, 510, 80, 20)),
+        );
+        let found = collect(&mut tree, &[0], CLIP, limits());
+        assert_eq!(ids(&found), vec![2, 7, 10, 11, 12]);
+        let pane = found.iter().find(|f| f.node == 11).map(|f| f.element.role);
+        assert_eq!(pane, Some(Role::ScrollArea));
+        assert!(
+            SCROLL_ROLES
+                .iter()
+                .all(|role| map_role(*role) == Some(Role::ScrollArea))
+        );
     }
 
     #[test]

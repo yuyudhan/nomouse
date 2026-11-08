@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
+use nomouse_core::search::search_box_anchor;
 use nomouse_core::{
     Action, Hint, Hotkey, HotkeyId, InputEvent, Modifiers, PlatformError, Point, Rect,
 };
@@ -597,14 +598,22 @@ impl X11 {
         ))
     }
 
-    /// Shows `hints` on the monitors they lie on and grabs the keyboard.
+    /// Shows `hints` on the monitors they lie on and grabs the keyboard. With a `query`
+    /// (search-by-text) a search box `/query` is drawn near the top centre of the monitor of
+    /// the best match (the first hint), or of the first monitor when nothing matches.
     ///
     /// # Errors
     /// When windows cannot be created or the keyboard cannot be grabbed.
-    pub(crate) fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError> {
+    pub(crate) fn show(
+        &mut self,
+        hints: &[Hint],
+        typed: &str,
+        query: Option<&str>,
+    ) -> Result<(), PlatformError> {
         let monitors = self.monitors();
         let typed = typed.chars().count();
         let mut per_monitor: Vec<Vec<Label>> = vec![Vec::new(); monitors.len()];
+        let mut first_monitor = None;
         for hint in hints {
             let bounds = hint.element.bounds;
             let index = monitors
@@ -612,9 +621,22 @@ impl X11 {
                 .position(|m| m.contains(bounds.center()))
                 .or_else(|| monitors.iter().position(|m| m.intersects(&bounds)))
                 .unwrap_or(0);
+            first_monitor.get_or_insert(index);
             if let Some(label) = self
                 .renderer
                 .label(&hint.label, typed, bounds, monitors[index])
+            {
+                per_monitor[index].push(label);
+            }
+        }
+        if let Some(query) = query {
+            let index = first_monitor.unwrap_or(0);
+            let area = monitors[index];
+            let text = format!("/{query}");
+            let anchor = search_box_anchor(area);
+            if let Some(label) = self
+                .renderer
+                .label(&text, text.chars().count(), anchor, area)
             {
                 per_monitor[index].push(label);
             }
@@ -692,28 +714,18 @@ impl X11 {
     // ---- input ----
 
     fn modifier_keycodes(&self, modifiers: Modifiers) -> Vec<u8> {
-        [
-            (modifiers.ctrl, sym::CONTROL_L),
-            (modifiers.shift, sym::SHIFT_L),
-            (modifiers.alt, sym::ALT_L),
-            (modifiers.meta, sym::SUPER_L),
-        ]
-        .into_iter()
-        .filter(|(on, _)| *on)
-        .filter_map(|(_, keysym)| self.keymap.keycodes(keysym).first().copied())
-        .collect()
+        modifier_keysyms(modifiers)
+            .into_iter()
+            .filter_map(|keysym| self.keymap.keycodes(keysym).first().copied())
+            .collect()
     }
 
-    /// Performs `action` with XTEST, holding `modifiers` (Ctrl-click, Shift-click, ...).
+    /// Performs `action` with XTEST, holding its [`Action::modifiers`] (ctrl+click, ...).
     ///
     /// # Errors
     /// When the connection is lost.
-    pub(crate) fn perform(
-        &mut self,
-        action: &Action,
-        modifiers: Modifiers,
-    ) -> Result<(), PlatformError> {
-        let held = self.modifier_keycodes(modifiers);
+    pub(crate) fn perform(&mut self, action: &Action) -> Result<(), PlatformError> {
+        let held = self.modifier_keycodes(action.modifiers());
         for fake in plan(action, &held) {
             let (kind, detail, at) = match fake {
                 Fake::Motion(at) => (xproto::MOTION_NOTIFY_EVENT, 0, at),
@@ -753,5 +765,43 @@ impl Drop for X11 {
             let _ = self.conn.ungrab_keyboard(x11rb::CURRENT_TIME);
         }
         let _: Result<(), ConnectionError> = self.conn.flush();
+    }
+}
+
+/// The keysyms pressed for `modifiers`, in press order (released in reverse).
+fn modifier_keysyms(modifiers: Modifiers) -> Vec<u32> {
+    [
+        (modifiers.ctrl, sym::CONTROL_L),
+        (modifiers.shift, sym::SHIFT_L),
+        (modifiers.alt, sym::ALT_L),
+        (modifiers.meta, sym::SUPER_L),
+    ]
+    .into_iter()
+    .filter_map(|(on, keysym)| on.then_some(keysym))
+    .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn modifiers_map_to_left_keysyms_in_press_order() {
+        assert_eq!(modifier_keysyms(Modifiers::NONE), Vec::<u32>::new());
+        let all = Modifiers {
+            ctrl: true,
+            alt: true,
+            shift: true,
+            meta: true,
+        };
+        assert_eq!(
+            modifier_keysyms(all),
+            vec![sym::CONTROL_L, sym::SHIFT_L, sym::ALT_L, sym::SUPER_L]
+        );
+        let meta = Modifiers {
+            meta: true,
+            ..Modifiers::NONE
+        };
+        assert_eq!(modifier_keysyms(meta), vec![sym::SUPER_L]);
     }
 }

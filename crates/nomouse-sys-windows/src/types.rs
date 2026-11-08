@@ -124,6 +124,9 @@ pub struct Patterns {
     pub expand_collapse: bool,
     /// `LegacyIAccessiblePattern` with a non-empty default action.
     pub legacy_default_action: bool,
+    /// `ScrollPattern`: the element scrolls its own content (a scroll container, the target of
+    /// scroll mode). Not an activation pattern, so [`Patterns::any`] ignores it.
+    pub scroll: bool,
 }
 
 impl Patterns {

@@ -2,8 +2,8 @@
 
 Keyboard-driven clicking for Linux, macOS and Windows, in the spirit of
 [Homerow](https://www.homerow.app/): press a global hotkey, hint labels appear on every clickable
-element of the focused window (or the whole screen), type a label to click it. Also planned:
-right-click, double-click, hover, drag, a scroll mode, and search by element text.
+element of the focused window (or the whole screen), type a label to click it. Right-click,
+double-click, hover, drag, modifier clicks, a scroll mode and search by element text are built in.
 
 Elements come from each OS's accessibility tree, so nomouse works with every app that exposes
 one: native apps, GTK, Qt, Chromium and Electron (with accessibility on), Firefox, and Java apps
@@ -14,11 +14,31 @@ supported; a clearly separate fallback may come later.
 
 Pre-alpha. Done: the platform-independent core (`nomouse-core`) and the Linux X11 backend with
 the full CLI: `nomouse daemon` (the default; global hotkeys `ctrl+space` hints,
-`ctrl+shift+space` continuous, `ctrl+alt+space` scroll mode), `nomouse hints [--continuous]
-[--action <kind>]`, `nomouse scroll`, `nomouse doctor`, `nomouse config path|show|init|check` and
+`ctrl+shift+space` continuous, `ctrl+alt+space` scroll mode, `ctrl+alt+/` search),
+`nomouse hints [--continuous] [--action <kind>]`, `nomouse scroll`, `nomouse search`,
+`nomouse doctor`, `nomouse config path|show|init|check` and
 `nomouse labels <n>`. Set `NOMOUSE_LOG=info` (or `debug`) for logs. macOS and Windows backends are
 in progress; Wayland is detected and refused until M4. See [docs/roadmap.md](docs/roadmap.md).
 `scripts/e2e-linux.sh` runs the Linux end-to-end test on a private Xvfb display.
+
+## Keys while labels are shown
+
+| Key | Effect |
+|-----|--------|
+| label letters | narrow the labels; a full label acts on its element |
+| Backspace | remove the last typed character |
+| Escape | cancel |
+| `1` / `2` / `3` / `4` | toggle Shift / Ctrl / Alt / Super (Command on macOS, Windows key on Windows) for the next click, e.g. `2` then a label is ctrl+click (cmd+click is `4`): open a link in a new tab |
+
+**Search mode** (`ctrl+alt+/`, `nomouse search`): type part of an element's name (fuzzy,
+case-insensitive); labels appear only on matches, best match first, with the query in a box near
+the top of the screen. Enter clicks the best match; Tab freezes the query so label letters (and
+the modifier digits) pick another match; Backspace with no label typed returns to the query.
+
+**Scroll mode** labels the scrollable areas (AT-SPI scroll panes, AX scroll areas, UI Automation
+elements with the Scroll pattern) rather than the controls inside them, falling back to the
+clickable elements when an app reports none; after picking one, `j`/`k`/`h`/`l` scroll by
+`scroll.step` wheel steps, `d`/`u` by five times that, Escape or Enter ends it.
 
 ## Platforms and the accessibility requirement
 

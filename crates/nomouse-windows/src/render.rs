@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use nomouse_core::config::OverlayConfig;
 use nomouse_core::glyph::LabelFont;
+use nomouse_core::search::search_box_anchor;
 use nomouse_core::{Hint, PlatformError, Rect};
 use nomouse_sys_windows::{Bitmap, Edges};
 use tiny_skia::{Color, Paint, Pixmap, Transform};
@@ -222,16 +223,18 @@ impl Renderer {
     }
 
     /// Renders every hint into one bitmap covering their union; `scale_at` gives the DPI scale
-    /// at a point. Returns an empty bitmap when there is nothing to draw.
+    /// at a point. With a `query` (search-by-text) a search box `/query` is drawn near the top
+    /// centre of `area`. Returns an empty bitmap when there is nothing to draw.
     pub(crate) fn frame(
         &self,
         hints: &[Hint],
         typed: &str,
+        query: Option<&str>,
         area: Edges,
         mut scale_at: impl FnMut(i32, i32) -> f32,
     ) -> Bitmap {
         let typed_len = typed.chars().count();
-        let labels: Vec<Label> = hints
+        let mut labels: Vec<Label> = hints
             .iter()
             .filter_map(|hint| {
                 let at = hint.element.target();
@@ -249,6 +252,19 @@ impl Renderer {
                 )
             })
             .collect();
+        if let Some(query) = query {
+            let anchor =
+                search_box_anchor(Rect::new(area.left, area.top, area.width(), area.height()));
+            let at = anchor.center();
+            let text = format!("/{query}");
+            labels.extend(self.label(
+                &text,
+                text.chars().count(),
+                anchor,
+                area,
+                scale_at(at.x, at.y),
+            ));
+        }
         compose(&labels)
     }
 }
@@ -418,6 +434,7 @@ mod tests {
                 hint("d", Rect::new(0, 590, 5, 5)),
             ],
             "a",
+            None,
             area,
             |_, _| 1.0,
         );
@@ -439,5 +456,19 @@ mod tests {
         ] {
             assert!(frame.pixels.iter().any(|&p| near(p, colour)), "{colour:?}");
         }
+    }
+
+    #[test]
+    fn search_frame_adds_the_query_box_near_the_top() {
+        let Some(path) = test_font() else {
+            return;
+        };
+        let renderer = Renderer::from_file(&path, style()).unwrap();
+        let area = Edges::new(0, 0, 800, 600);
+        let empty = renderer.frame(&[], "", None, area, |_, _| 1.0);
+        assert_eq!(empty, Bitmap::default());
+        let search = renderer.frame(&[], "", Some("sav"), area, |_, _| 1.0);
+        assert!(search.width > 0 && search.height > 0);
+        assert!(search.y < 150 && search.x > 200 && search.x < 400);
     }
 }

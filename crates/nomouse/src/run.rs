@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use nomouse_core::{
-    Action, ActionKind, Alphabet, HintSession, InputEvent, KeyPress, Platform, PlatformError,
+    Action, ActionKind, Alphabet, Hint, HintSession, InputEvent, KeyPress, Platform, PlatformError,
     Point, Scope, SessionEvent,
 };
 
@@ -22,6 +22,8 @@ pub(crate) enum Mode {
     Continuous(ActionKind),
     /// Pick a scroll target, then scroll with keys until Escape.
     Scroll,
+    /// Type to filter elements by name; Enter (or a label after Tab) clicks a match.
+    Search,
 }
 
 impl Mode {
@@ -29,7 +31,26 @@ impl Mode {
         match self {
             Self::Once(kind) | Self::Continuous(kind) => kind,
             Self::Scroll => ActionKind::Scroll,
+            Self::Search => ActionKind::Click,
         }
+    }
+
+    fn session(self, alphabet: &Alphabet, elements: Vec<nomouse_core::Element>) -> HintSession {
+        match self {
+            Self::Search => HintSession::search(alphabet, elements, self.kind()),
+            Self::Once(_) | Self::Continuous(_) | Self::Scroll => {
+                HintSession::new(alphabet, elements, self.kind())
+            }
+        }
+    }
+}
+
+/// Draws the session: its matching labels, plus the query box in search mode.
+fn draw(platform: &mut dyn Platform, session: &HintSession) -> Result<(), PlatformError> {
+    let hints: Vec<Hint> = session.visible();
+    match session.query() {
+        Some(query) => platform.show_search(&hints, session.typed(), query),
+        None => platform.show(&hints, session.typed()),
     }
 }
 
@@ -120,7 +141,7 @@ pub(crate) fn activate(
     let mut scans = 0_usize;
     loop {
         let elements = platform.elements(settings.scope)?;
-        let mut session = HintSession::new(&settings.alphabet, elements, mode.kind());
+        let mut session = mode.session(&settings.alphabet, elements);
         if session.is_empty() {
             return Ok(if performed > 0 {
                 Outcome::Performed(performed)
@@ -128,7 +149,7 @@ pub(crate) fn activate(
                 Outcome::NoElements
             });
         }
-        platform.show(&session.visible(), "")?;
+        draw(platform, &session)?;
         scans += 1;
         tracing::debug!("scan {scans}: {} hints", session.hints().len());
         for hint in session.hints() {
@@ -153,8 +174,9 @@ pub(crate) fn activate(
             };
             match session.key(key) {
                 SessionEvent::Rejected => {}
-                SessionEvent::Narrowed | SessionEvent::DragStarted(_) => {
-                    platform.show(&session.visible(), session.typed())?;
+                SessionEvent::Narrowed | SessionEvent::DragStarted(_) => draw(platform, &session)?,
+                SessionEvent::ModifiersChanged(modifiers) => {
+                    tracing::debug!("next click holds {modifiers:?}");
                 }
                 SessionEvent::Cancelled => {
                     return Ok(if performed > 0 {
@@ -200,6 +222,7 @@ mod tests {
         scans: usize,
         shown: Vec<(usize, String)>,
         visible: bool,
+        queries: Vec<String>,
     }
 
     impl ElementSource for Fake {
@@ -214,6 +237,16 @@ mod tests {
             self.shown.push((hints.len(), typed.to_owned()));
             self.visible = true;
             Ok(())
+        }
+
+        fn show_search(
+            &mut self,
+            hints: &[Hint],
+            typed: &str,
+            query: &str,
+        ) -> Result<(), PlatformError> {
+            self.queries.push(query.to_owned());
+            self.show(hints, typed)
         }
 
         fn hide(&mut self) -> Result<(), PlatformError> {
@@ -267,6 +300,8 @@ mod tests {
             .map(|c| match c {
                 '!' => KeyPress::Escape,
                 '<' => KeyPress::Backspace,
+                '=' => KeyPress::Enter,
+                '>' => KeyPress::Tab,
                 other => KeyPress::Char(other),
             })
             .collect();
@@ -287,6 +322,50 @@ mod tests {
 
     fn run(platform: &mut Fake, mode: Mode) -> Result<Outcome, PlatformError> {
         activate(platform, &settings(), mode, Instant::now())
+    }
+
+    fn named(names: &[&str], keys: &str) -> Fake {
+        let mut p = fake(u64::try_from(names.len()).unwrap(), keys);
+        for (element, name) in p.elements.iter_mut().zip(names) {
+            (*name).clone_into(&mut element.name);
+        }
+        p
+    }
+
+    #[test]
+    fn search_mode_draws_the_query_and_enter_clicks_the_best_match() {
+        let mut p = named(&["Profile", "Save", "File"], "fil=");
+        assert_eq!(run(&mut p, Mode::Search), Ok(Outcome::Performed(1)));
+        assert_eq!(p.queries, vec!["", "f", "fi", "fil"]);
+        assert_eq!(p.shown[0].0, 0);
+        assert_eq!(p.shown[3].0, 2);
+        assert_eq!(p.performed, vec![Action::click(Point::new(205, 5))]);
+    }
+
+    #[test]
+    fn search_mode_tab_label_and_modifier_click() {
+        let mut p = named(&["Profile", "Save", "File"], "fil>2s");
+        assert_eq!(run(&mut p, Mode::Search), Ok(Outcome::Performed(1)));
+        let ctrl = nomouse_core::Modifiers {
+            ctrl: true,
+            ..nomouse_core::Modifiers::NONE
+        };
+        assert_eq!(
+            p.performed,
+            vec![Action::click(Point::new(5, 5)).with_modifiers(ctrl)]
+        );
+        let mut cancelled = named(&["Save"], "sa!");
+        assert_eq!(run(&mut cancelled, Mode::Search), Ok(Outcome::Cancelled));
+        assert_eq!(cancelled.performed, Vec::<Action>::new());
+    }
+
+    #[test]
+    fn scroll_mode_targets_the_scroll_area() {
+        let mut p = fake(3, "aj!");
+        p.elements[2].role = Role::ScrollArea;
+        assert_eq!(run(&mut p, Mode::Scroll), Ok(Outcome::Performed(1)));
+        assert_eq!(p.performed[0], Action::hover(Point::new(205, 5)));
+        assert_eq!(p.performed[1], Action::scroll(Point::new(205, 5), 0, 3));
     }
 
     #[test]
