@@ -33,6 +33,9 @@ pub struct HintsConfig {
     pub scope: Scope,
     /// Action when a hint is picked after the main hotkey.
     pub action: ActionKind,
+    /// Click through the accessibility action (AT-SPI `do_action`, UIA `Invoke`, `AXPress`)
+    /// when the element offers one, instead of a synthetic pointer click.
+    pub semantic_click: bool,
 }
 
 impl Default for HintsConfig {
@@ -41,6 +44,7 @@ impl Default for HintsConfig {
             alphabet: DEFAULT_ALPHABET.to_owned(),
             scope: Scope::FocusedWindow,
             action: ActionKind::Click,
+            semantic_click: false,
         }
     }
 }
@@ -51,18 +55,20 @@ impl Default for HintsConfig {
 pub struct HotkeysConfig {
     /// Shows hints.
     pub hints: Hotkey,
+    /// Shows hints in continuous mode: re-labels after every click until Escape.
+    pub continuous: Hotkey,
     /// Shows hints for a scroll target.
     pub scroll: Hotkey,
     /// Search elements by text.
     pub search: Hotkey,
 }
 
-const fn ctrl_alt(key: Key) -> Hotkey {
+const fn chord(ctrl: bool, alt: bool, shift: bool, key: Key) -> Hotkey {
     Hotkey::new(
         Modifiers {
-            ctrl: true,
-            alt: true,
-            shift: false,
+            ctrl,
+            alt,
+            shift,
             meta: false,
         },
         key,
@@ -72,9 +78,10 @@ const fn ctrl_alt(key: Key) -> Hotkey {
 impl Default for HotkeysConfig {
     fn default() -> Self {
         Self {
-            hints: ctrl_alt(Key::Space),
-            scroll: ctrl_alt(Key::Char('j')),
-            search: ctrl_alt(Key::Slash),
+            hints: chord(true, false, false, Key::Space),
+            continuous: chord(true, false, true, Key::Space),
+            scroll: chord(true, true, false, Key::Space),
+            search: chord(true, true, false, Key::Slash),
         }
     }
 }
@@ -101,6 +108,14 @@ pub struct OverlayConfig {
     pub font_size: u32,
     /// Label opacity in percent, 10 to 100.
     pub opacity: u32,
+    /// Label background, `#rrggbb`.
+    pub background: String,
+    /// Label text, `#rrggbb`.
+    pub foreground: String,
+    /// Already-typed label characters, `#rrggbb`.
+    pub typed_foreground: String,
+    /// Label border, `#rrggbb`.
+    pub border: String,
 }
 
 impl Default for OverlayConfig {
@@ -108,8 +123,43 @@ impl Default for OverlayConfig {
         Self {
             font_size: 13,
             opacity: 95,
+            background: "#ffd75f".to_owned(),
+            foreground: "#1c1c1c".to_owned(),
+            typed_foreground: "#8a8a8a".to_owned(),
+            border: "#1c1c1c".to_owned(),
         }
     }
+}
+
+impl OverlayConfig {
+    /// The colours as RGB triples: background, foreground, typed foreground, border.
+    ///
+    /// # Errors
+    /// [`ConfigError::Colour`] for the first field that is not `#rrggbb`.
+    pub fn colours(&self) -> Result<[[u8; 3]; 4], ConfigError> {
+        let parse = |field: &'static str, value: &str| {
+            parse_colour(value).ok_or_else(|| ConfigError::Colour {
+                field,
+                value: value.to_owned(),
+            })
+        };
+        Ok([
+            parse("overlay.background", &self.background)?,
+            parse("overlay.foreground", &self.foreground)?,
+            parse("overlay.typed_foreground", &self.typed_foreground)?,
+            parse("overlay.border", &self.border)?,
+        ])
+    }
+}
+
+/// Parses `#rrggbb` (case-insensitive) into an RGB triple.
+pub fn parse_colour(text: &str) -> Option<[u8; 3]> {
+    let hex = text.strip_prefix('#')?;
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let channel = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+    Some([channel(0)?, channel(2)?, channel(4)?])
 }
 
 /// Why a configuration could not be loaded.
@@ -150,6 +200,14 @@ pub enum ConfigError {
         min: u32,
         /// Largest allowed.
         max: u32,
+    },
+    /// A colour is not `#rrggbb`.
+    #[error("{field} = {value:?} is not a #rrggbb colour")]
+    Colour {
+        /// The field.
+        field: &'static str,
+        /// The given value.
+        value: String,
     },
 }
 
@@ -203,6 +261,7 @@ impl Config {
         self.alphabet()?;
         let keys = [
             ("hints", self.hotkeys.hints),
+            ("continuous", self.hotkeys.continuous),
             ("scroll", self.hotkeys.scroll),
             ("search", self.hotkeys.search),
         ];
@@ -217,7 +276,8 @@ impl Config {
         }
         check_range("scroll.step", self.scroll.step, 1, 50)?;
         check_range("overlay.font_size", self.overlay.font_size, 6, 72)?;
-        check_range("overlay.opacity", self.overlay.opacity, 10, 100)
+        check_range("overlay.opacity", self.overlay.opacity, 10, 100)?;
+        self.overlay.colours().map(|_| ())
     }
 
     /// The validated label alphabet.
@@ -261,7 +321,9 @@ mod tests {
     #[test]
     fn defaults_round_trip() {
         let text = Config::default().to_toml();
-        assert!(text.contains("hints = \"ctrl+alt+space\""));
+        assert!(text.contains("hints = \"ctrl+space\""));
+        assert!(text.contains("continuous = \"ctrl+shift+space\""));
+        assert!(text.contains("semantic_click = false"));
         assert_eq!(Config::from_toml(&text).unwrap(), Config::default());
     }
 
@@ -292,7 +354,7 @@ mod tests {
             Err(ConfigError::Parse(_))
         ));
         assert!(matches!(
-            Config::from_toml("[hotkeys]\nscroll = \"ctrl+alt+space\"\n"),
+            Config::from_toml("[hotkeys]\nscroll = \"ctrl+space\"\n"),
             Err(ConfigError::DuplicateHotkey {
                 first: "hints",
                 second: "scroll",
@@ -310,6 +372,25 @@ mod tests {
             Config::from_toml("[scroll]\nstep = 0\n"),
             Err(ConfigError::OutOfRange { .. })
         ));
+        assert!(matches!(
+            Config::from_toml("[overlay]\nborder = \"red\"\n"),
+            Err(ConfigError::Colour {
+                field: "overlay.border",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn colours_parse() {
+        assert_eq!(parse_colour("#FFd75f"), Some([255, 215, 95]));
+        assert_eq!(parse_colour("ffd75f"), None);
+        assert_eq!(parse_colour("#ffd75"), None);
+        assert_eq!(parse_colour("#gggggg"), None);
+        assert_eq!(
+            OverlayConfig::default().colours().unwrap()[0],
+            [255, 215, 95]
+        );
     }
 
     #[test]
