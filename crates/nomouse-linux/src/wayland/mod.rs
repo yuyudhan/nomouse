@@ -35,6 +35,8 @@ pub(crate) use self::input::uinput_writable;
 const NAMESPACE: &str = "nomouse-overlay";
 /// How long the compositor gets to deliver an absolute move before the relative nudge after it.
 const ENTER_SETTLE_MS: u64 = 15;
+/// How long injected input gets to reach clients before the injecting devices go away.
+const TEARDOWN_SETTLE: Duration = Duration::from_millis(150);
 
 /// How long `show` waits for the overlay to get keyboard focus.
 const FOCUS_WAIT: Duration = Duration::from_millis(1500);
@@ -82,6 +84,8 @@ pub(crate) struct Wayland {
     renderer: Renderer,
     injector: Injector,
     frame: Vec<u8>,
+    /// When the last action was injected, so teardown can let clients take it first.
+    last_action: Option<Instant>,
 }
 
 fn connect() -> Result<(Connection, GlobalList, EventQueue<State>, State), PlatformError> {
@@ -232,6 +236,7 @@ impl Wayland {
             renderer,
             injector,
             frame: Vec::new(),
+            last_action: None,
         })
     }
 
@@ -540,7 +545,9 @@ impl Wayland {
                 }
             }
         }
-        self.roundtrip()
+        let result = self.roundtrip();
+        self.last_action = Some(Instant::now());
+        result
     }
 
     /// Which input path is in use, for logs.
@@ -554,6 +561,12 @@ impl Wayland {
 
 impl Drop for Wayland {
     fn drop(&mut self) {
+        // Destroying the virtual pointer right after a click removes the seat's only pointer;
+        // with Sway 1.11 and Xwayland 24.1 the X client (GTK) then often never sees the click
+        // complete (right-button presses land, left clicks do not). Let the last action settle.
+        if let Some(at) = self.last_action {
+            std::thread::sleep(TEARDOWN_SETTLE.saturating_sub(at.elapsed()));
+        }
         for surface in self.state.surfaces.drain(..) {
             surface.layer.destroy();
             surface.wl.destroy();
