@@ -86,7 +86,8 @@ impl AxElement {
         // SAFETY: `out` is a valid, writable pointer slot; on success it receives a +1 reference.
         let code = unsafe { self.0.copy_attribute_value(&name, NonNull::from(&mut out)) };
         optional(check(code))?
-            .and_then(|()| take_retained(out))
+            // SAFETY: on success `out` holds a +1 reference from AXUIElementCopyAttributeValue.
+            .and_then(|()| unsafe { take_retained(out) })
             .map_or(Ok(None), |value| Ok(Some(decode(&value, true))))
     }
 
@@ -110,7 +111,8 @@ impl AxElement {
             )
         };
         check(code)?;
-        let Some(values) = take_retained(out) else {
+        // SAFETY: on success `out` holds a +1 CFArray from CopyMultipleAttributeValues.
+        let Some(values) = (unsafe { take_retained(out) }) else {
             return Ok(vec![None; names.len()]);
         };
         let mut decoded: Vec<Option<AxValue>> = array_items(&values)
@@ -135,7 +137,8 @@ impl AxElement {
         let Some(()) = optional(check(code))? else {
             return Ok(Vec::new());
         };
-        Ok(take_retained(out)
+        // SAFETY: on success `out` holds a +1 CFArray from AXUIElementCopyActionNames.
+        Ok(unsafe { take_retained(out) }
             .map(|names| {
                 array_items(&names)
                     .iter()
@@ -199,7 +202,8 @@ impl AxElement {
                 .copy_element_at_position(x, y, NonNull::from(&mut out))
         };
         Ok(optional(check(code))?
-            .and_then(|()| take_retained(out))
+            // SAFETY: on success `out` holds a +1 element from CopyElementAtPosition.
+            .and_then(|()| unsafe { take_retained(out) })
             .map(Self))
     }
 }
@@ -216,9 +220,13 @@ pub fn is_process_trusted(prompt: bool) -> bool {
 }
 
 /// Takes ownership of a +1 reference written by a `Copy` function.
-fn take_retained<T: objc2_core_foundation::Type>(raw: *const T) -> Option<CFRetained<T>> {
-    // SAFETY: the caller passes a pointer that a CF "Copy" function returned with a +1 retain
-    // count (or null), so adopting it without an extra retain balances the reference.
+///
+/// # Safety
+/// `raw` must be null or a valid pointer to a `T` carrying a +1 retain count that the caller
+/// owns (as returned by a CF/AX "Copy" or "Create" function); ownership moves to the result.
+unsafe fn take_retained<T: objc2_core_foundation::Type>(raw: *const T) -> Option<CFRetained<T>> {
+    // SAFETY: guaranteed by this function's contract: a non-null `raw` is an owned +1
+    // reference, so adopting it without an extra retain balances the count.
     NonNull::new(raw.cast_mut()).map(|raw| unsafe { CFRetained::from_raw(raw) })
 }
 

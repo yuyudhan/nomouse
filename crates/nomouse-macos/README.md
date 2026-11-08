@@ -64,8 +64,29 @@ cargo test -p nomouse-macos --test macos_accessibility
 
 ## Manual test checklist
 
-Build with `cargo build --release`, grant Accessibility, run `target/release/nomouse`, and for
-each app below press the hints hotkey (`ctrl+space`), type a label, and confirm the result.
+### Setup
+
+1. Build: `cargo build --release` (the binary is `target/release/nomouse`).
+2. Grant Accessibility to the terminal you run it from (System Settings > Privacy & Security >
+   Accessibility), then fully quit and reopen that terminal.
+3. Create the config file: `target/release/nomouse config init` writes the defaults to
+   `~/Library/Application Support/nomouse/config.toml` (`nomouse config path` prints it).
+   For the Chromium/Electron steps, add:
+
+   ```toml
+   [macos]
+   enhanced_ui_apps = ["com.google.Chrome", "com.microsoft.VSCode"]
+   ```
+
+   and check the file with `target/release/nomouse config check`.
+4. `target/release/nomouse doctor`: every line should be `ok`.
+5. Start the daemon: `target/release/nomouse` (or `nomouse daemon`); leave it running.
+   Default hotkeys: hints `ctrl+space`, continuous hints `ctrl+shift+space`, scroll
+   `ctrl+alt+space`, search `ctrl+alt+/`. `nomouse hints` shows hints once without the daemon.
+
+### Steps
+
+For each app below press the hints hotkey, type a label, and confirm the result.
 
 1. **Permissions**: on a fresh grant list, the first start shows the macOS Accessibility prompt
    and `nomouse doctor` reports Accessibility as failing; after granting and restarting, it
@@ -92,6 +113,15 @@ each app below press the hints hotkey (`ctrl+space`), type a label, and confirm 
    normally.
 10. **Double click and drag**: double-click mode selects a word in TextEdit; drag mode moves a
     Finder icon to another folder.
-11. **Robustness**: activate while an app is busy (for example during a large Finder copy):
+11. **Secure input**: with the daemon running, focus a password field (for example the
+    login field in Safari, or Terminal with Secure Keyboard Entry turned on). macOS disables
+    nomouse's event tap while secure input is on, so the hotkey does nothing there. Leave the
+    field (or turn Secure Keyboard Entry off), press the hotkey again: hints appear without
+    restarting nomouse (the tap re-enables itself).
+12. **Scroll amount**: in a long Finder list or Safari page, press the scroll hotkey, pick the
+    target, press `j` once: the content moves by `scroll.step` lines (default 3). Set
+    `[scroll] step = 10` in the config, restart the daemon, and `j` now moves clearly further;
+    `k` scrolls back the same amount, `h`/`l` scroll sideways.
+13. **Robustness**: activate while an app is busy (for example during a large Finder copy):
     hints appear within about a second with whatever could be read, and nomouse stays
     responsive.
