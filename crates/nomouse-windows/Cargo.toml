@@ -12,5 +12,8 @@ nomouse-core = { workspace = true, features = ["glyph"] }
 nomouse-sys-windows.workspace = true
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 
+[dev-dependencies]
+nomouse-core = { workspace = true, features = ["testing"] }
+
 [lints]
 workspace = true
