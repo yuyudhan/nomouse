@@ -1,0 +1,97 @@
+# nomouse-macos
+
+The macOS backend of nomouse: it reads clickable elements through the Accessibility API
+(`AXUIElement`), draws hint labels in click-through `NSPanel`s, catches hotkeys and typed keys
+with a Quartz event tap, and clicks, drags, hovers and scrolls with synthetic `CGEvent`s.
+All FFI lives in `nomouse-sys-macos`; this crate is `#![forbid(unsafe_code)]`.
+
+## Permissions
+
+| Permission | Needed for | How to grant |
+| --- | --- | --- |
+| **Accessibility** | Reading other apps' UI, performing `AXPress`, the keyboard event tap (an active tap filters keys, which macOS allows only for trusted processes), posting clicks | System Settings > Privacy & Security > Accessibility: add and enable the `nomouse` binary (or the terminal it runs from). On first start nomouse shows macOS's own prompt. Restart nomouse after granting. |
+| Input Monitoring | Not needed: the active tap runs under Accessibility. `nomouse doctor` still reports its state. | System Settings > Privacy & Security > Input Monitoring |
+
+Granting Accessibility to a terminal (Terminal, iTerm2) also covers anything started from it,
+which is convenient while testing. A rebuilt binary at a new path needs granting again.
+
+`nomouse doctor` lists the macOS version, Accessibility trust, whether synthetic input is
+allowed, the Input Monitoring state and the Chromium/Electron opt-in list.
+
+## Behaviour
+
+- **Scope `focused-window`**: the frontmost app's focused window, its open menus, its menu bar
+  (top-level items only) and every app's menu bar extras (status items).
+  **Scope `screen`**: every non-minimized window of every regular app, plus the same menus.
+- **Tree walk**: depth-first, cycle-safe (elements compared with `CFEqual`), limited to depth
+  48, 4000 nodes and 600 ms. Tables and outlines use `AXVisibleRows`; windows and web areas
+  prefer `AXChildrenInNavigationOrder`. Subtrees outside the visible part of their window or
+  scroll area are skipped. Each Accessibility call waits at most 250 ms for a busy app.
+- **Hinted roles**: buttons, links, check boxes, radio buttons (tabs inside tab groups), pop-up
+  buttons, combo boxes, menu items and menu bar items, text fields and areas, sliders and
+  steppers, rows, standalone cells, disclosure triangles, plus any group, image or web element
+  that lists `AXPress`.
+- **Chromium and Electron**: nomouse sets `AXManualAccessibility` on the frontmost app once per
+  process (Electron builds its tree only when asked). Chrome, Edge, Brave and similar need
+  `AXEnhancedUserInterface`, which can slow window animations, so it is opt-in per app:
+
+  ```toml
+  [macos]
+  enhanced_ui_apps = ["com.google.Chrome", "com.microsoft.VSCode"]
+  ```
+
+  The tree appears a moment after the attribute is set, so the very first activation in such
+  an app may find few elements; activate again.
+- **Hotkeys** match by key position (ANSI layout) with exact modifiers; `meta` is Command and
+  `alt` is Option. The default `ctrl+space` is also macOS's "select previous input source"
+  shortcut: nomouse's tap sees it first and swallows it while nomouse runs. F21 to F24 do not
+  exist on Mac keyboards and are rejected.
+- **Semantic click** (`hints.semantic_click = true`): a left click on a labelled element runs
+  `AXPress`, a right click `AXShowMenu`; when the element refuses, nomouse clicks the pointer.
+- Coordinates are points in the global top-left space Accessibility and Quartz share; labels
+  are drawn at each screen's backing scale.
+
+## Running the integration test
+
+`tests/macos_accessibility.rs` opens Finder, collects elements, shows and hides the overlay and
+hovers an element. It skips (and passes) when the test binary is not trusted for
+Accessibility, which is the case on GitHub's runners. To run it for real, grant your terminal
+Accessibility, then:
+
+```sh
+cargo test -p nomouse-macos --test macos_accessibility
+```
+
+## Manual test checklist
+
+Build with `cargo build --release`, grant Accessibility, run `target/release/nomouse`, and for
+each app below press the hints hotkey (`ctrl+space`), type a label, and confirm the result.
+
+1. **Permissions**: on a fresh grant list, the first start shows the macOS Accessibility prompt
+   and `nomouse doctor` reports Accessibility as failing; after granting and restarting, it
+   passes.
+2. **TextEdit**: open a new document. Hints cover the toolbar/format bar controls, the text area
+   and the menu bar items (File, Edit, ...). Picking the text area puts the caret there; picking
+   `Format` opens the menu, and a second activation labels the open menu's items.
+3. **Finder**: a window in list view. Hints sit on the sidebar items, toolbar buttons and the
+   visible rows only (scroll a long folder: rows that scrolled away get no hints, new ones do).
+   Disclosure triangles expand folders. Right-click mode opens the context menu of a row.
+   Scroll mode scrolls the list in the direction typed.
+4. **Safari**: a page with many links (for example a news site). Links, buttons, the address
+   field and tabs are labelled; picking a link navigates. Labels stay inside the window.
+5. **Chrome**: without `macos.enhanced_ui_apps`, web content may have no hints; add
+   `com.google.Chrome`, restart nomouse, activate twice, and links in the page get hints.
+6. **VS Code** (Electron): the activity bar, editor tabs and explorer rows get hints thanks to
+   `AXManualAccessibility`; if not, add `com.microsoft.VSCode` to `enhanced_ui_apps`.
+7. **Menu bar extras**: the clock, Control Center and third-party status items are labelled;
+   picking one opens it.
+8. **Multiple screens** (if available): with `scope = "screen"`, labels appear on every screen
+   at the right places, including a screen arranged above or left of the main one.
+9. **Keyboard**: while hints are shown, typed keys do not reach the app; Escape hides the
+   hints; Backspace removes the last typed character. After hiding, typing reaches the app
+   normally.
+10. **Double click and drag**: double-click mode selects a word in TextEdit; drag mode moves a
+    Finder icon to another folder.
+11. **Robustness**: activate while an app is busy (for example during a large Finder copy):
+    hints appear within about a second with whatever could be read, and nomouse stays
+    responsive.
