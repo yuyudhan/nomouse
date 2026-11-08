@@ -3,6 +3,10 @@ all-features = true
 
 [advisories]
 yanked = "deny"
+ignore = [
+    # ttf-parser is unmaintained; ab_glyph (overlay label rendering) still depends on it.
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained (not a vulnerability), pulled by ab_glyph for overlay label rendering; replacing the font stack is tracked as a separate task" },
+]
 
 [licenses]
 confidence-threshold = 0.9
@@ -24,6 +28,9 @@ private = { ignore = true }
 multiple-versions = "deny"
 wildcards = "deny"
 allow-wildcard-paths = true
+skip = [
+    { crate = "syn@2", reason = "windows-rs 0.62 proc macros (windows-implement/interface)" },
+]
 
 [sources]
 unknown-registry = "deny"
