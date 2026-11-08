@@ -45,7 +45,8 @@ terminal), with the default hotkey `ctrl+space` unless configured otherwise.
    the start button and the tray icons get labels too.
 3. **Edge.** Open Edge on a busy page (a news site). Links, buttons and form fields get labels;
    picking a link navigates. With `semantic_click = true` links are invoked without moving the
-   pointer. Scroll mode on the page scrolls `scroll.step` notches per key press; drag a tab out
+   pointer. Scroll mode on the page scrolls `scroll.step` notches per key press (the binary
+   applies the step; the backend sends whole notches); drag a tab out
    of the tab strip with the drag action.
 4. **VS Code.** Open VS Code (Electron/Chromium). If few labels appear, enable the screen reader
    mode prompt or set `"editor.accessibilitySupport": "on"`; then the activity bar, explorer tree,

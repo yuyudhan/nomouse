@@ -118,7 +118,6 @@ pub struct Backend<S: System> {
     renderer: Renderer,
     options: ScopeOptions,
     semantic_click: bool,
-    scroll_step: u32,
     snapshot: Vec<Known>,
     next_hotkey: u32,
     hotkeys: Vec<(HotkeyId, Hotkey)>,
@@ -127,7 +126,7 @@ pub struct Backend<S: System> {
 
 impl<S: System> Backend<S> {
     /// Creates a backend over `system` with a label font from the Windows font directory,
-    /// reading `semantic_click`, `[scroll] step` and `[overlay]` from `config`.
+    /// reading `hints.semantic_click` and `[overlay]` from `config`.
     ///
     /// # Errors
     /// [`PlatformError::Backend`] for invalid `[overlay]` colours or when no font is installed.
@@ -161,7 +160,6 @@ impl<S: System> Backend<S> {
             renderer,
             options,
             semantic_click: config.hints.semantic_click,
-            scroll_step: config.scroll.step.clamp(1, 50),
             snapshot: Vec::new(),
             next_hotkey: 1,
             hotkeys: Vec::new(),
@@ -362,7 +360,7 @@ impl<S: System> InputInjector for Backend<S> {
             return Ok(());
         }
         let screen = self.system.virtual_screen();
-        self.run(&input_plan::plan(action, screen, self.scroll_step))
+        self.run(&input_plan::plan(action, screen))
     }
 }
 

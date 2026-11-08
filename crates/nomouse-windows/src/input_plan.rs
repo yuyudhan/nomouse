@@ -59,8 +59,9 @@ fn click_steps(at: Point, which: MouseButton, count: u8, screen: Edges) -> Vec<I
     steps
 }
 
-fn wheel_delta(steps: i32, scroll_step: u32) -> i32 {
-    let delta = i64::from(steps) * i64::from(scroll_step) * WHEEL_DELTA;
+/// The raw wheel delta for `steps` notches (the binary already applied `scroll.step`).
+fn wheel_delta(steps: i32) -> i32 {
+    let delta = i64::from(steps) * WHEEL_DELTA;
     i32::try_from(delta).unwrap_or(if delta < 0 { i32::MIN } else { i32::MAX })
 }
 
@@ -70,9 +71,8 @@ fn lerp(from: i32, to: i32, step: i32) -> i32 {
     i32::try_from(value).unwrap_or(to)
 }
 
-/// The input batches for `action` on virtual desktop `screen`; scroll steps are multiplied by
-/// `scroll_step` wheel notches (the `scroll.step` setting).
-pub(crate) fn plan(action: &Action, screen: Edges, scroll_step: u32) -> Plan {
+/// The input batches for `action` on virtual desktop `screen`.
+pub(crate) fn plan(action: &Action, screen: Edges) -> Plan {
     match *action {
         Action::Click { at, button, count } => vec![click_steps(at, button, count, screen)],
         Action::Hover { at } => vec![vec![move_to(at, screen)]],
@@ -107,12 +107,10 @@ pub(crate) fn plan(action: &Action, screen: Edges, scroll_step: u32) -> Plan {
             let mut steps = vec![move_to(at, screen)];
             if dy != 0 {
                 // Positive dy scrolls down, which is a negative (towards the user) wheel delta.
-                steps.push(InputStep::Wheel(
-                    wheel_delta(dy, scroll_step).saturating_neg(),
-                ));
+                steps.push(InputStep::Wheel(wheel_delta(dy).saturating_neg()));
             }
             if dx != 0 {
-                steps.push(InputStep::HorizontalWheel(wheel_delta(dx, scroll_step)));
+                steps.push(InputStep::HorizontalWheel(wheel_delta(dx)));
             }
             vec![steps]
         }
@@ -183,7 +181,6 @@ mod tests {
                 count: 2,
             },
             SCREEN,
-            3,
         );
         assert_eq!(plan.len(), 1);
         assert_eq!(plan[0].len(), 5);
@@ -198,20 +195,20 @@ mod tests {
     }
 
     #[test]
-    fn scroll_uses_step_and_sign() {
-        let plan = plan(&Action::scroll(Point::new(1, 1), -1, 2), SCREEN, 3);
+    fn scroll_uses_notches_and_sign() {
+        let plan = plan(&Action::scroll(Point::new(1, 1), -1, 2), SCREEN);
         assert_eq!(
             &plan[0][1..],
-            &[InputStep::Wheel(-720), InputStep::HorizontalWheel(-360)]
+            &[InputStep::Wheel(-240), InputStep::HorizontalWheel(-120)]
         );
-        assert_eq!(wheel_delta(i32::MAX, 50), i32::MAX);
+        assert_eq!(wheel_delta(i32::MAX), i32::MAX);
     }
 
     #[test]
     fn drag_moves_in_steps() {
         let from = Point::new(-1000, 100);
         let to = Point::new(-200, 900);
-        let plan = plan(&Action::drag(from, to), SCREEN, 3);
+        let plan = plan(&Action::drag(from, to), SCREEN);
         assert_eq!(plan.len(), 3);
         assert_eq!(plan[1].len(), 8);
         assert_eq!(plan[1][7], move_to(to, SCREEN));

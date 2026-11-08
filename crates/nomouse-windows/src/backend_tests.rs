@@ -346,14 +346,15 @@ fn pointer_click_by_default() {
 }
 
 #[test]
-fn scroll_reads_step_and_blocked_input_is_permission_denied() {
+fn scroll_ignores_step_and_blocked_input_is_permission_denied() {
+    // The binary multiplies by scroll.step when it builds the action; the backend must not.
     let mut config = Config::default();
-    config.scroll.step = 2;
+    config.scroll.step = 7;
     let Some(mut backend) = backend_with(app(), &config) else {
         return;
     };
     backend
-        .perform(&Action::scroll(Point::new(5, 5), 0, 1))
+        .perform(&Action::scroll(Point::new(5, 5), 0, 2))
         .unwrap();
     assert_eq!(backend.system.sent[0][1], InputStep::Wheel(-240));
     backend.system.send_fails = true;

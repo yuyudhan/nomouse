@@ -21,6 +21,28 @@ pub use native::{NativeSystem, WindowsPlatform, doctor, platform, platform_with}
 pub use nomouse_sys_windows::{WindowHandle, WindowInfo};
 pub use scope::ScopeOptions;
 
+/// Off Windows the backend cannot run: always [`PlatformError::Unsupported`].
+///
+/// # Errors
+/// Always.
+#[cfg(not(windows))]
+pub fn platform(
+    _config: &nomouse_core::Config,
+) -> Result<Box<dyn nomouse_core::Platform>, nomouse_core::PlatformError> {
+    Err(nomouse_core::PlatformError::Unsupported(
+        "the Windows backend runs only on Windows".to_owned(),
+    ))
+}
+
+/// Off Windows: one failing check saying the backend needs Windows.
+#[cfg(not(windows))]
+pub fn doctor(_config: &nomouse_core::Config) -> Vec<(String, Result<String, String>)> {
+    vec![(
+        "Windows backend".to_owned(),
+        Err("this backend runs only on Windows".to_owned()),
+    )]
+}
+
 /// The OS this backend serves.
 pub const TARGET_OS: &str = "windows";
 
