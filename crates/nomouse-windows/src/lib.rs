@@ -1,8 +1,25 @@
 //! Windows backend for nomouse: UI Automation elements, layered-window overlay, SendInput input.
 //!
 //! The backend implements the [`nomouse_core::Platform`] traits; see `docs/architecture.md`.
-//! OS-specific modules are compiled only on `target_os = "windows"`, so the crate checks on every OS.
+//! All logic lives in [`Backend`], written against the small [`System`] seam and tested with a
+//! fake on every OS; on Windows, [`NativeSystem`] implements the seam over
+//! `nomouse-sys-windows`, and [`platform`] / [`doctor`] are what the binary calls.
 #![forbid(unsafe_code)]
+
+mod backend;
+mod classify;
+mod input_plan;
+mod keys;
+#[cfg(windows)]
+mod native;
+mod render;
+mod scope;
+
+pub use backend::{Backend, System};
+#[cfg(windows)]
+pub use native::{NativeSystem, WindowsPlatform, doctor, platform, platform_with};
+pub use nomouse_sys_windows::{WindowHandle, WindowInfo};
+pub use scope::ScopeOptions;
 
 /// The OS this backend serves.
 pub const TARGET_OS: &str = "windows";
