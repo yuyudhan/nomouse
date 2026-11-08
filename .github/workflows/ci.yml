@@ -85,6 +85,23 @@ jobs:
             - name: e2e (GTK, Chromium, Qt)
               run: scripts/e2e-linux.sh --display :99 --require-chromium --require-qt
 
+    e2e-wayland:
+        name: e2e (Linux Wayland, headless Sway + XWayland + AT-SPI)
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+            - name: Install the pinned toolchain
+              run: rustup show active-toolchain || rustup toolchain install
+            - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+            - name: Install Sway, XWayland, wtype, grim, AT-SPI and GTK
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends sway xwayland wtype grim \
+                      dbus-daemon at-spi2-core python3-gi gir1.2-gtk-3.0 fonts-dejavu-core
+            - name: e2e (native Wayland and XWayland GTK)
+              run: scripts/e2e-wayland.sh
+
     coverage:
         name: coverage (floor)
         runs-on: ubuntu-latest

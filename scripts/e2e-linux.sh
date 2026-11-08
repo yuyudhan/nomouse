@@ -170,7 +170,8 @@ title_is() {
 # run_hints <log> <args...>: starts `nomouse hints`, waits for its first scan.
 run_hints() {
     local log="$1"; shift
-    NOMOUSE_LOG=debug "$bin" "$@" 2>"$log" &
+    # --standalone: run in this process (and log here) even while the daemon runs.
+    NOMOUSE_LOG=debug "$bin" --standalone "$@" 2>"$log" &
     hints_pid=$!
     wait_for 10 grep -q 'scan 1:' "$log" && wait_for 5 overlay_viewable
 }
@@ -337,6 +338,16 @@ xdotool key ctrl+space
 wait_for 5 scans_at_least "$daemon_log" $((before_scans + 1)) && wait_for 5 overlay_viewable
 xdotool type --delay 20 "$(label_for "$daemon_log" "Button 7")"
 if wait_for 3 title_is "$gtk_win" "left: Button 7 #*"; then pass "daemon hotkey click landed"; else fail "daemon hotkey click: '$(title "$gtk_win")'"; fi
+
+echo "--- \`nomouse hints\` hands its mode to the running daemon"
+focus "$gtk_win"
+before_scans="$(scans "$daemon_log")"
+if timeout 5 "$bin" hints && wait_for 5 scans_at_least "$daemon_log" $((before_scans + 1)) && wait_for 5 overlay_viewable; then
+    xdotool type --delay 20 "$(label_for "$daemon_log" "Button 4")"
+    if wait_for 3 title_is "$gtk_win" "left: Button 4 #*"; then pass "command socket: the daemon ran the session and the click landed"; else fail "command socket click: '$(title "$gtk_win")'"; fi
+else
+    fail "command socket: the daemon did not scan after \`nomouse hints\`"
+fi
 
 if ((chromium)); then
     chrome="$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)"
