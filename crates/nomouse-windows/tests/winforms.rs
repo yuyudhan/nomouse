@@ -115,3 +115,13 @@ fn invokes_a_winforms_button() {
         "the click handler ran"
     );
 }
+
+#[test]
+fn the_real_backend_passes_the_contract() {
+    let mut platform =
+        platform_with(&Config::default(), ScopeOptions::default()).expect("backend starts");
+    nomouse_core::contract::assert_platform(
+        &mut platform,
+        nomouse_core::contract::Probe::default(),
+    );
+}

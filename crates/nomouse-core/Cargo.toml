@@ -10,6 +10,8 @@ publish.workspace = true
 [features]
 # Glyph outlines (skrifa) filled into tiny-skia pixmaps, shared by the overlay renderers.
 glyph = ["dep:skrifa", "dep:tiny-skia"]
+# The backend contract suite and the in-memory FakePlatform, for other crates' tests.
+testing = []
 
 [dependencies]
 serde.workspace = true

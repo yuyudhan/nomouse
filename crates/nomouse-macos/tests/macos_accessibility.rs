@@ -24,6 +24,19 @@ fn run() -> Result<(), String> {
         note("skipped: this process is not trusted for Accessibility");
         return Ok(());
     }
+    // The backend refuses to start untrusted, so the shared contract runs only here.
+    let mut platform =
+        nomouse_macos::platform(&Config::default()).map_err(|error| error.to_string())?;
+    let violations = nomouse_core::contract::check_platform(
+        platform.as_mut(),
+        nomouse_core::contract::Probe::default(),
+    );
+    if !violations.is_empty() {
+        let list: Vec<String> = violations.iter().map(ToString::to_string).collect();
+        return Err(format!("backend contract:\n{}", list.join("\n")));
+    }
+    note("backend contract: passed");
+    drop(platform);
     Command::new("open")
         .args(["-a", "Finder", "/Applications"])
         .status()

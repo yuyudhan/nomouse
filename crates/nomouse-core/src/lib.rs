@@ -7,10 +7,13 @@
 //! - [`config`]: the TOML configuration.
 //! - [`platform`]: the traits each OS backend implements.
 //! - [`session`]: one hint-mode activation, tying the above together.
+//! - `contract` (feature `testing`): the backend contract suite and an in-memory fake.
 #![forbid(unsafe_code)]
 
 pub mod action;
 pub mod config;
+#[cfg(any(test, feature = "testing"))]
+pub mod contract;
 pub mod element;
 pub mod filter;
 #[cfg(feature = "glyph")]

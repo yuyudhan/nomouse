@@ -12,6 +12,9 @@ nomouse-core.workspace = true
 nomouse-sys-macos.workspace = true
 num-traits = "0.2"
 
+[dev-dependencies]
+nomouse-core = { workspace = true, features = ["testing"] }
+
 [[test]]
 name = "macos_accessibility"
 harness = false
