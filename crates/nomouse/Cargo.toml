@@ -10,6 +10,13 @@ publish.workspace = true
 [dependencies]
 clap.workspace = true
 nomouse-core.workspace = true
+thiserror.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "fmt",
+    "std",
+    "ansi",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nomouse-linux.workspace = true

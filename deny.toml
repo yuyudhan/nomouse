@@ -4,6 +4,15 @@ all-features = true
 [advisories]
 yanked = "deny"
 ignore = [
+    # zbus 5's standalone crates, folded into zbus 6. atspi 0.30 (the newest AT-SPI client,
+    # used by the Linux backend) requires zbus 5; revisit when atspi moves to zbus 6.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant 5: needed by atspi 0.30 via zbus 5" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names 4: needed by atspi 0.30 via zbus 5" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive 5: needed by atspi 0.30 via zbus 5" },
+    # quick-xml 0.38 is used only at compile time, by atspi-common's zbus-lockstep proc macro,
+    # to read the AT-SPI interface XML bundled in the crate: no untrusted XML is ever parsed.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml 0.38: build-time parse of bundled XML only" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml 0.38: build-time parse of bundled XML only" },
     # ttf-parser is unmaintained; ab_glyph (overlay label rendering) still depends on it.
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained (not a vulnerability), pulled by ab_glyph for overlay label rendering; replacing the font stack is tracked as a separate task" },
 ]
@@ -28,7 +37,13 @@ private = { ignore = true }
 multiple-versions = "deny"
 wildcards = "deny"
 allow-wildcard-paths = true
-skip = [{ crate = "syn@2", reason = "windows-rs 0.62 proc macros (windows-implement/interface)" }]
+skip = [
+    # syn 2 proc macros: windows-rs 0.62 (windows-implement/interface) and, on Linux, zbus 5,
+    # zvariant 5, enumflags2 and tracing-attributes; nothing of syn is linked into the binary.
+    { crate = "syn@2", reason = "windows-rs 0.62 and zbus 5 (atspi) proc macros still use syn 2" },
+    # zbus 5 / zvariant 5 (via atspi) use winnow 0.7; toml 1.2 uses winnow 1.
+    { crate = "winnow@0.7", reason = "zbus 5 parsers lag toml's winnow 1" },
+]
 
 [sources]
 unknown-registry = "deny"

@@ -1,8 +1,22 @@
-//! Linux backend for nomouse: AT-SPI elements, X11 and wlroots Wayland overlays and input.
+//! Linux backend for nomouse: AT-SPI elements, an X11 overlay, XTEST input and XGrabKey
+//! hotkeys.
 //!
-//! The backend implements the [`nomouse_core::Platform`] traits; see `docs/architecture.md`.
-//! OS-specific modules are compiled only on `target_os = "linux"`, so the crate checks on every OS.
+//! [`platform`] builds the backend for the current session; [`doctor`] reports what works.
+//! Wayland sessions are detected and refused with a typed error until milestone M4.
+//! OS-specific modules are compiled only on `target_os = "linux"`, so the crate checks on
+//! every OS.
 #![forbid(unsafe_code)]
+
+#[cfg(target_os = "linux")]
+mod a11y;
+#[cfg(target_os = "linux")]
+mod linux;
+pub mod session;
+#[cfg(target_os = "linux")]
+mod x11;
+
+#[cfg(target_os = "linux")]
+pub use linux::{LinuxPlatform, doctor, platform};
 
 /// The OS this backend serves.
 pub const TARGET_OS: &str = "linux";

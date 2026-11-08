@@ -45,6 +45,9 @@ pub enum Action {
         button: MouseButton,
     },
     /// Scroll at `at` by whole wheel steps; positive `dy` scrolls down, positive `dx` right.
+    ///
+    /// The steps are final: the binary has already multiplied the direction by
+    /// `scroll.step`, so backends send exactly `|dx|` and `|dy|` wheel clicks.
     Scroll {
         /// Point the pointer moves to before scrolling.
         at: Point,
