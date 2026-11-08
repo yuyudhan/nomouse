@@ -12,10 +12,13 @@ supported; a clearly separate fallback may come later.
 
 ## Status
 
-Pre-alpha. Done: the platform-independent core (`nomouse-core`: element model, hint labels,
-label filtering, actions, hotkeys, config, the platform traits and the hint-session state
-machine) and a CLI with `nomouse config default|path|check`, `nomouse labels <n>` and
-`nomouse doctor`. The OS backends are next; see [docs/roadmap.md](docs/roadmap.md).
+Pre-alpha. Done: the platform-independent core (`nomouse-core`) and the Linux X11 backend with
+the full CLI: `nomouse daemon` (the default; global hotkeys `ctrl+space` hints,
+`ctrl+shift+space` continuous, `ctrl+alt+space` scroll mode), `nomouse hints [--continuous]
+[--action <kind>]`, `nomouse scroll`, `nomouse doctor`, `nomouse config path|show|init|check` and
+`nomouse labels <n>`. Set `NOMOUSE_LOG=info` (or `debug`) for logs. macOS and Windows backends are
+in progress; Wayland is detected and refused until M4. See [docs/roadmap.md](docs/roadmap.md).
+`scripts/e2e-linux.sh` runs the Linux end-to-end test on a private Xvfb display.
 
 ## Platforms and the accessibility requirement
 

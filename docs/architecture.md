@@ -5,7 +5,7 @@
 | Crate | Role | Unsafe |
 |-------|------|--------|
 | `nomouse-core` | element model, hint labels, label filter, actions, hotkeys, config, platform traits, hint session | forbidden |
-| `nomouse-linux` | AT-SPI elements; X11 (`x11` feature) and wlroots Wayland (`wayland` feature) overlay, input, hotkeys | forbidden |
+| `nomouse-linux` | AT-SPI elements; X11 overlay, XTest input and XGrabKey hotkeys (Wayland: M4) | forbidden |
 | `nomouse-macos` | macOS backend built on `nomouse-sys-macos` | forbidden |
 | `nomouse-sys-macos` | safe wrappers over AXUIElement, CGEvent, AppKit | allowed, audited |
 | `nomouse-windows` | Windows backend built on `nomouse-sys-windows` | forbidden |
@@ -50,9 +50,16 @@ Hint alphabet: `asdfghjk` by default, configurable; `i`, `l`, `o` are rejected a
 
 ## Backends
 
-- **Linux X11**: `atspi`/`zbus` for the tree (focused window via the active frame);
-  `x11rb` for an override-redirect, input-transparent ARGB overlay, `XGrabKeyboard` while shown,
-  `XGrabKey` for hotkeys and XTest for input. 100% safe Rust.
+- **Linux X11**: `atspi`/`zbus` for the tree: the focused window is the AT-SPI application
+  owning `_NET_ACTIVE_WINDOW`'s `_NET_WM_PID` (its active frame plus open menus/popups),
+  read with three Collection `GetMatches` queries (interactive roles, Action, focusable) and a
+  bounded level-by-level walk (depth, node count, deadline, cycle-safe) where Collection is
+  missing; calls are pipelined per level with a 400 ms per-call timeout. `x11rb` for an
+  override-redirect ARGB overlay per RandR monitor, shaped to the label boxes (so it looks right
+  without a compositor) with an empty input region (click-through); labels are tiny-skia paths
+  from `ab_glyph` outlines. `XGrabKeyboard` while shown, `XGrabKey` on the root for hotkeys (all
+  Caps/Num Lock variants, layout-aware keysyms), XTest for input; `semantic_click` uses the
+  element's AT-SPI action instead. Wayland sessions get a typed `Unsupported` error. 100% safe Rust.
 - **Linux Wayland (wlroots)**: the same AT-SPI tree; `wayland-client` with `wlr-layer-shell` for
   the overlay and keyboard focus; `wlr-virtual-pointer` (or uinput) for input; hotkeys through the
   compositor's bindings calling `nomouse` or the XDG GlobalShortcuts portal where available.
