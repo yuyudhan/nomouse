@@ -35,16 +35,22 @@ impl DisplayServer {
         Self::detect(|name| std::env::var(name).ok())
     }
 
-    /// `Ok(display)` for X11, otherwise the typed error the backend reports.
+    /// `Ok(display)` for X11, otherwise the typed error the X11 backend reports.
     ///
     /// # Errors
-    /// [`PlatformError::Unsupported`] for Wayland (until milestone M4) and for no session.
+    /// [`PlatformError::Unsupported`] for Wayland (served by the Wayland backend, or refused
+    /// when built without the `wayland` feature) and for no session.
     pub fn require_x11(&self) -> Result<&str, PlatformError> {
         match self {
             Self::X11(display) => Ok(display),
             Self::Wayland(socket) => Err(PlatformError::Unsupported(format!(
-                "Wayland session ({socket}): Wayland support is not implemented yet (roadmap \
-                 milestone M4); log in to an X11 session to use nomouse"
+                "Wayland session ({socket}): this is not an X11 session{}",
+                if cfg!(feature = "wayland") {
+                    ""
+                } else {
+                    "; this nomouse was built without the `wayland` feature, rebuild with it \
+                     or log in to an X11 session"
+                }
             ))),
             Self::None => Err(PlatformError::Unsupported(
                 "no graphical session: neither DISPLAY nor WAYLAND_DISPLAY is set".to_owned(),
@@ -105,7 +111,7 @@ mod tests {
         let error = DisplayServer::Wayland("wayland-0".into())
             .require_x11()
             .unwrap_err();
-        assert!(matches!(&error, PlatformError::Unsupported(m) if m.contains("M4")));
+        assert!(matches!(&error, PlatformError::Unsupported(m) if m.contains("not an X11")));
         assert_eq!(DisplayServer::X11(":5".into()).require_x11(), Ok(":5"));
         assert!(DisplayServer::None.require_x11().is_err());
     }

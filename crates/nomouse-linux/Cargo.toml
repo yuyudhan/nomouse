@@ -1,6 +1,6 @@
 [package]
 name = "nomouse-linux"
-description = "Linux backend for nomouse: AT-SPI elements, X11 overlay, XTEST input and XGrabKey hotkeys."
+description = "Linux backend for nomouse: AT-SPI elements; X11 (XTEST, XGrabKey) and wlroots Wayland (layer-shell, virtual pointer, uinput) overlays and input."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,17 +10,37 @@ publish.workspace = true
 [dependencies]
 nomouse-core.workspace = true
 
+[features]
+default = ["wayland"]
+# The Wayland backend (wlroots compositors: Sway, Hyprland; KDE overlay with /dev/uinput input).
+wayland = [
+    "dep:evdev",
+    "dep:kbvm",
+    "dep:serde_json",
+    "dep:wayland-client",
+    "dep:wayland-protocols",
+    "dep:wayland-protocols-misc",
+    "dep:wayland-protocols-wlr",
+]
+
 [target.'cfg(target_os = "linux")'.dependencies]
 async-io = "2"
 atspi = { version = "0.30", default-features = false, features = ["proxies", "zbus"] }
+evdev = { version = "0.13", optional = true }
 futures-util = { version = "0.3", default-features = false, features = [
     "alloc",
     "async-await-macro",
 ] }
+kbvm = { version = "0.2", default-features = false, optional = true }
 nomouse-core = { workspace = true, features = ["glyph"] }
-rustix = { version = "1", default-features = false, features = ["event", "std"] }
+rustix = { version = "1", default-features = false, features = ["event", "fs", "std"] }
+serde_json = { version = "1", optional = true }
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 tracing = "0.1"
+wayland-client = { version = "0.31", optional = true }
+wayland-protocols = { version = "0.32", features = ["client", "unstable"], optional = true }
+wayland-protocols-misc = { version = "0.3", features = ["client"], optional = true }
+wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }
 x11rb = { version = "0.14", features = ["randr", "shape", "xtest"] }
 zbus = { version = "5", default-features = false, features = ["async-io"] }
 

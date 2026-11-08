@@ -1,4 +1,4 @@
-//! The assembled Linux X11 platform, its constructor and `nomouse doctor` checks.
+//! The assembled Linux platforms' constructor, the X11 platform and `nomouse doctor` checks.
 
 use std::time::Duration;
 
@@ -13,7 +13,7 @@ use crate::x11::render::{Renderer, Style, find_font};
 use crate::x11::{self, X11};
 
 /// Timeout of one AT-SPI call: a hung application must not freeze hint mode.
-const CALL_TIMEOUT: Duration = Duration::from_millis(400);
+pub(crate) const CALL_TIMEOUT: Duration = Duration::from_millis(400);
 
 /// The Linux X11 backend: AT-SPI elements, X11 overlay, XTEST input, XGrabKey hotkeys.
 pub struct LinuxPlatform {
@@ -37,7 +37,9 @@ impl ElementSource for LinuxPlatform {
     fn elements(&mut self, scope: Scope) -> Result<Vec<Element>, PlatformError> {
         let pid = self.x.active_pid();
         let screen = self.x.screen();
-        let result = self.source()?.elements(scope, pid, screen);
+        let result = self
+            .source()?
+            .elements(scope, pid, screen, &std::collections::HashMap::new());
         if matches!(result, Err(PlatformError::AccessibilityUnavailable(_))) {
             // The bus may have restarted; reconnect on the next scan.
             self.source = None;
@@ -105,18 +107,44 @@ impl Platform for LinuxPlatform {
     }
 }
 
-/// Builds the backend for this session from `config`.
+/// Builds the backend for this session from `config`: Wayland when `WAYLAND_DISPLAY` is set
+/// (with the `wayland` feature), else X11.
 ///
 /// Turns on the session's accessibility switch (`org.a11y.Status.IsEnabled`) when it is off,
 /// so Qt and Chromium apps started afterwards expose their trees.
 ///
 /// # Errors
-/// [`PlatformError::Unsupported`] on Wayland (until M4) or without a display or XTEST/SHAPE;
-/// [`PlatformError::Backend`] for invalid overlay colours or a missing font.
+/// [`PlatformError::Unsupported`] without a display, without XTEST/SHAPE on X11, or without
+/// layer-shell (GNOME) or any input path on Wayland; [`PlatformError::Backend`] for invalid
+/// overlay colours or a missing font.
 pub fn platform(config: &Config) -> Result<Box<dyn Platform>, PlatformError> {
-    DisplayServer::current().require_x11()?;
+    let session = DisplayServer::current();
+    #[cfg(feature = "wayland")]
+    if let DisplayServer::Wayland(_) = session {
+        let renderer = Renderer::new(Style::from_config(&config.overlay)?)?;
+        let wayland = crate::wayland::Wayland::connect(renderer)?;
+        let source = accessibility();
+        return Ok(Box::new(crate::wayland::platform::WaylandPlatform::new(
+            wayland,
+            crate::wayland::compositor::Compositor::current(),
+            source,
+            config.hints.semantic_click,
+        )));
+    }
+    session.require_x11()?;
     let renderer = Renderer::new(Style::from_config(&config.overlay)?)?;
     let x = X11::connect(renderer)?;
+    let source = accessibility();
+    Ok(Box::new(LinuxPlatform {
+        x,
+        source,
+        semantic_click: config.hints.semantic_click,
+    }))
+}
+
+/// Turns the accessibility switch on when it is off and connects to the AT-SPI bus (`None`
+/// when it is unreachable now; scans retry).
+fn accessibility() -> Option<AtspiSource> {
     match bus::accessibility_enabled() {
         Ok(false) => match bus::enable_accessibility() {
             Ok(()) => tracing::info!("turned on the session accessibility switch"),
@@ -125,22 +153,20 @@ pub fn platform(config: &Config) -> Result<Box<dyn Platform>, PlatformError> {
         Ok(true) => {}
         Err(error) => tracing::warn!("{error}"),
     }
-    let source = AtspiSource::connect(ScanLimits::default(), CALL_TIMEOUT)
+    AtspiSource::connect(ScanLimits::default(), CALL_TIMEOUT)
         .inspect_err(|error| tracing::warn!("{error}"))
-        .ok();
-    Ok(Box::new(LinuxPlatform {
-        x,
-        source,
-        semantic_click: config.hints.semantic_click,
-    }))
+        .ok()
 }
 
-fn check_display() -> Result<String, String> {
-    let session = DisplayServer::current();
-    session
-        .require_x11()
-        .map(|_| session.to_string())
-        .map_err(|e| e.to_string())
+fn check_display(session: &DisplayServer) -> Result<String, String> {
+    match session {
+        #[cfg(feature = "wayland")]
+        DisplayServer::Wayland(_) => Ok(session.to_string()),
+        _ => session
+            .require_x11()
+            .map(|_| session.to_string())
+            .map_err(|e| e.to_string()),
+    }
 }
 
 fn check_x_server() -> Result<String, String> {
@@ -214,18 +240,24 @@ fn check_font(config: &Config) -> Result<String, String> {
 
 /// The `nomouse doctor` checks for this session: `(name, Ok(detail) | Err(problem))`.
 pub fn doctor(config: &Config) -> Vec<(String, Result<String, String>)> {
-    let display = check_display();
-    let x_server = if display.is_ok() {
-        check_x_server()
-    } else {
-        Err("skipped: no X11 session".to_owned())
-    };
-    vec![
-        ("display server".to_owned(), display),
-        ("X server".to_owned(), x_server),
+    let session = DisplayServer::current();
+    let mut checks = vec![("display server".to_owned(), check_display(&session))];
+    match session {
+        #[cfg(feature = "wayland")]
+        DisplayServer::Wayland(_) => {
+            checks.extend(crate::wayland::platform::doctor(config.hotkeys.hints));
+        }
+        DisplayServer::X11(_) => checks.push(("X server".to_owned(), check_x_server())),
+        _ => checks.push((
+            "X server".to_owned(),
+            Err("skipped: no X11 session".to_owned()),
+        )),
+    }
+    checks.extend([
         ("AT-SPI bus".to_owned(), check_bus()),
         ("accessibility switch".to_owned(), check_switch()),
         ("toolkits".to_owned(), check_toolkits()),
         ("label font".to_owned(), check_font(config)),
-    ]
+    ]);
+    checks
 }

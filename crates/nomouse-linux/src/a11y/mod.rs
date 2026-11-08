@@ -3,10 +3,11 @@
 pub(crate) mod bus;
 pub(crate) mod walk;
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use atspi::Role as AtRole;
-use nomouse_core::{Element, PlatformError, Point, Rect, Scope};
+use nomouse_core::{Element, ElementId, PlatformError, Point, Rect, Scope};
 
 use bus::{App, Bus, Obj};
 use walk::{Found, Limits};
@@ -126,6 +127,22 @@ fn intersection(a: Rect, b: Rect) -> Option<Rect> {
     ))
 }
 
+/// Splits `roots` by the process of the application owning each, keeping first-seen order.
+fn group_by_pid(apps: &[App], roots: Vec<Obj>) -> Vec<(Option<u32>, Vec<Obj>)> {
+    let mut groups: Vec<(Option<u32>, Vec<Obj>)> = Vec::new();
+    for root in roots {
+        let pid = apps
+            .iter()
+            .find(|app| app.top_levels.iter().any(|top| top.obj == root))
+            .and_then(|app| app.pid);
+        match groups.iter_mut().find(|(known, _)| *known == pid) {
+            Some((_, group)) => group.push(root),
+            None => groups.push((pid, vec![root])),
+        }
+    }
+    groups
+}
+
 /// The AT-SPI element source with the last snapshot kept for semantic clicks.
 pub(crate) struct AtspiSource {
     bus: Bus,
@@ -149,7 +166,10 @@ impl AtspiSource {
         })
     }
 
-    /// Scans `scope`; `active_pid` is the X active window's process, `screen` the root bounds.
+    /// Scans `scope`; `active_pid` is the focused window's process, `screen` the desktop bounds.
+    ///
+    /// `offsets` maps processes whose AT-SPI extents are window-relative (native Wayland
+    /// clients) to their window's origin; their elements are moved by it. X11 passes none.
     ///
     /// # Errors
     /// As [`nomouse_core::ElementSource::elements`].
@@ -158,6 +178,7 @@ impl AtspiSource {
         scope: Scope,
         active_pid: Option<u32>,
         screen: Rect,
+        offsets: &HashMap<u32, Point>,
     ) -> Result<Vec<Element>, PlatformError> {
         let started = Instant::now();
         let apps = self.bus.applications()?;
@@ -173,10 +194,30 @@ impl AtspiSource {
             deadline: started + self.limits.budget,
             bulk: true,
         };
-        self.last = walk::collect(&mut self.bus, &roots, clip, limits);
+        let root_count = roots.len();
+        self.last = if offsets.is_empty() {
+            walk::collect(&mut self.bus, &roots, clip, limits)
+        } else {
+            let mut found = Vec::new();
+            for (pid, group) in group_by_pid(&apps, roots) {
+                let mut part = walk::collect(&mut self.bus, &group, clip, limits);
+                if let Some(offset) = pid.and_then(|pid| offsets.get(&pid)) {
+                    for item in &mut part {
+                        let bounds = &mut item.element.bounds;
+                        bounds.x = bounds.x.saturating_add(offset.x);
+                        bounds.y = bounds.y.saturating_add(offset.y);
+                    }
+                }
+                found.append(&mut part);
+            }
+            for (index, item) in found.iter_mut().enumerate() {
+                item.element.id = ElementId(u64::try_from(index).unwrap_or(u64::MAX));
+            }
+            found
+        };
         tracing::debug!(
             "scanned {} roots in {:?}: {} elements",
-            roots.len(),
+            root_count,
             started.elapsed(),
             self.last.len()
         );

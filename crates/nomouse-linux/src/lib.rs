@@ -1,8 +1,10 @@
-//! Linux backend for nomouse: AT-SPI elements, an X11 overlay, XTEST input and XGrabKey
-//! hotkeys.
+//! Linux backend for nomouse: AT-SPI elements; on X11 an overlay window, XTEST input and
+//! XGrabKey hotkeys; on wlroots Wayland compositors (Sway, Hyprland) a layer-shell overlay,
+//! virtual pointer/keyboard (or `/dev/uinput`) input and compositor-bound hotkeys.
 //!
 //! [`platform`] builds the backend for the current session; [`doctor`] reports what works.
-//! Wayland sessions are detected and refused with a typed error until milestone M4.
+//! The Wayland backend is the default `wayland` feature; without it Wayland sessions are
+//! refused with a typed error.
 //! OS-specific modules are compiled only on `target_os = "linux"`, so the crate checks on
 //! every OS.
 #![forbid(unsafe_code)]
@@ -12,11 +14,15 @@ mod a11y;
 #[cfg(target_os = "linux")]
 mod linux;
 pub mod session;
+#[cfg(all(target_os = "linux", feature = "wayland"))]
+mod wayland;
 #[cfg(target_os = "linux")]
 mod x11;
 
 #[cfg(target_os = "linux")]
 pub use linux::{LinuxPlatform, doctor, platform};
+#[cfg(all(target_os = "linux", feature = "wayland"))]
+pub use wayland::platform::WaylandPlatform;
 
 /// The OS this backend serves.
 pub const TARGET_OS: &str = "linux";

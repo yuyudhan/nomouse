@@ -11,7 +11,8 @@ publish = false
 
 [workspace.dependencies]
 nomouse-core = { path = "crates/nomouse-core" }
-nomouse-linux = { path = "crates/nomouse-linux" }
+# The binary picks the backend's features (`wayland`, on by default there).
+nomouse-linux = { path = "crates/nomouse-linux", default-features = false }
 nomouse-macos = { path = "crates/nomouse-macos" }
 nomouse-sys-macos = { path = "crates/nomouse-sys-macos" }
 nomouse-windows = { path = "crates/nomouse-windows" }
