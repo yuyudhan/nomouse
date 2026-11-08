@@ -253,15 +253,13 @@ fn decode(value: &CFType, allow_array: bool) -> AxValue {
     if let Some(ax_value) = value.downcast_ref::<AXValue>() {
         return decode_ax_value(ax_value);
     }
-    if let Some(array) = value.downcast_ref::<CFArray>() {
-        if allow_array {
-            return AxValue::Array(
-                array_items(array)
-                    .iter()
-                    .map(|item| decode(item, false))
-                    .collect(),
-            );
-        }
+    if allow_array && let Some(array) = value.downcast_ref::<CFArray>() {
+        return AxValue::Array(
+            array_items(array)
+                .iter()
+                .map(|item| decode(item, false))
+                .collect(),
+        );
     }
     AxValue::Other
 }

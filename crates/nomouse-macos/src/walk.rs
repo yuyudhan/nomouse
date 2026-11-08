@@ -183,10 +183,11 @@ pub fn walk<T: AxTree>(
             Err(ReadError::Skip) => continue,
             Err(ReadError::Fatal(error)) => return Err(error),
         };
-        if let Some(frame) = info.frame {
-            if !frame.is_empty() && !frame.intersects(&pending.visible) {
-                continue;
-            }
+        if let Some(frame) = info.frame
+            && !frame.is_empty()
+            && !frame.intersects(&pending.visible)
+        {
+            continue;
         }
         let facts = RoleFacts {
             role: &info.role,
@@ -292,10 +293,10 @@ pub fn pick_children<N: PartialEq>(role: &str, lists: ChildLists<N>) -> Vec<N> {
         navigation_order,
         children,
     } = lists;
-    if matches!(role, "AXTable" | "AXOutline" | "AXList" | "AXBrowser") {
-        if let Some(rows) = visible_rows.filter(|rows| !rows.is_empty()) {
-            return rows;
-        }
+    if matches!(role, "AXTable" | "AXOutline" | "AXList" | "AXBrowser")
+        && let Some(rows) = visible_rows.filter(|rows| !rows.is_empty())
+    {
+        return rows;
     }
     [visible_children, navigation_order, children]
         .into_iter()
