@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Enable with: just install-hooks (sets core.hooksPath to .githooks).
+set -euo pipefail
+exec just check

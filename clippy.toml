@@ -2,4 +2,14 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-print-in-tests = true
-doc-valid-idents = ["AXUIElement", "CGEvent", "AppKit", "NSPanel", "SendInput", "XTest", "XGrabKey", "..", "AT-SPI"]
+doc-valid-idents = [
+    "AXUIElement",
+    "CGEvent",
+    "AppKit",
+    "NSPanel",
+    "SendInput",
+    "XTest",
+    "XGrabKey",
+    "..",
+    "AT-SPI",
+]
