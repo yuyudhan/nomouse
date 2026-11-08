@@ -142,6 +142,14 @@ impl Virtual {
         u32::try_from(self.epoch.elapsed().as_millis() % u128::from(u32::MAX)).unwrap_or(0)
     }
 
+    /// One pixel of relative motion there and back.
+    pub(crate) fn wiggle(&self) {
+        for dx in [1.0, -1.0] {
+            self.pointer.motion(self.time(), dx, 0.0);
+            self.pointer.frame();
+        }
+    }
+
     /// Sends one step; pauses are the caller's (it must flush first).
     pub(crate) fn send(&mut self, step: Step, layout: Rect) {
         let time = self.time();

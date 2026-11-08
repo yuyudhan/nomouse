@@ -33,6 +33,8 @@ pub(crate) use self::input::uinput_writable;
 
 /// The layer-shell namespace of the overlay surfaces.
 const NAMESPACE: &str = "nomouse-overlay";
+/// How long the compositor gets to deliver an absolute move before the relative nudge after it.
+const ENTER_SETTLE_MS: u64 = 15;
 
 /// How long `show` waits for the overlay to get keyboard focus.
 const FOCUS_WAIT: Duration = Duration::from_millis(1500);
@@ -516,7 +518,19 @@ impl Wayland {
                 continue;
             }
             match &mut self.injector {
-                Injector::Virtual(device) => device.send(step, layout),
+                Injector::Virtual(device) => {
+                    // Xwayland does not take its pointer position from an absolute move that
+                    // carries the pointer onto its surface from a native one: the click then
+                    // lands at its stale position (the last native click). A relative nudge
+                    // there and back, after the move is delivered, makes it resync.
+                    let motion = matches!(step, Step::Motion(..));
+                    device.send(step, layout);
+                    if motion {
+                        self.queue.flush().map_err(lost)?;
+                        std::thread::sleep(Duration::from_millis(ENTER_SETTLE_MS));
+                        device.wiggle();
+                    }
+                }
                 Injector::Uinput(device) => {
                     let device = match device {
                         Some(existing) if existing.layout() == layout => existing,

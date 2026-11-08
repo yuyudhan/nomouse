@@ -103,6 +103,10 @@ impl ElementSource for WaylandPlatform {
         let windows = self.windows();
         let pid = windows.focused_pid();
         let offsets: HashMap<u32, nomouse_core::Point> = windows.native_offsets();
+        tracing::debug!(
+            "focused pid {pid:?}, {} window(s), native offsets {offsets:?}",
+            windows.all.len()
+        );
         let screen = self.wayland.screen();
         if self.source.is_none() {
             self.source = Some(AtspiSource::connect(
@@ -157,6 +161,7 @@ impl InputInjector for WaylandPlatform {
         {
             return Ok(());
         }
+        tracing::debug!("injecting {action:?}");
         self.wayland.perform(action)
     }
 }
