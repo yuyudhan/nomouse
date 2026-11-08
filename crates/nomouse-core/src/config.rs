@@ -21,6 +21,18 @@ pub struct Config {
     pub scroll: ScrollConfig,
     /// Overlay appearance.
     pub overlay: OverlayConfig,
+    /// macOS-only settings; ignored on other systems.
+    pub macos: MacosConfig,
+}
+
+/// `[macos]`
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MacosConfig {
+    /// Bundle ids (such as `com.google.Chrome`) whose accessibility tree nomouse switches on
+    /// with `AXEnhancedUserInterface`. Chromium and Electron apps build their tree only when
+    /// asked; the attribute can slow window animations, so it is opt-in per app.
+    pub enhanced_ui_apps: Vec<String>,
 }
 
 /// `[hints]`
@@ -391,6 +403,16 @@ mod tests {
             OverlayConfig::default().colours().unwrap()[0],
             [255, 215, 95]
         );
+    }
+
+    #[test]
+    fn macos_enhanced_ui_apps() {
+        assert_eq!(Config::default().macos, MacosConfig::default());
+        assert_eq!(Config::default().macos.enhanced_ui_apps.len(), 0);
+        let config =
+            Config::from_toml("[macos]\nenhanced_ui_apps = [\"com.google.Chrome\"]\n").unwrap();
+        assert_eq!(config.macos.enhanced_ui_apps, ["com.google.Chrome"]);
+        assert!(Config::from_toml("[macos]\nunknown = 1\n").is_err());
     }
 
     #[test]
