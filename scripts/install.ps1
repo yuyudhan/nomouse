@@ -28,8 +28,8 @@ $Repo = "yuyudhan/nomouse"
 $Target = "x86_64-pc-windows-msvc"
 $Archive = "nomouse-$Target.zip"
 
-function Say([string]$Message) {
-    Write-Host "nomouse: $Message"
+function Write-Status([string]$Message) {
+    Write-Output "nomouse: $Message"
 }
 
 function Get-InstallDir {
@@ -47,7 +47,7 @@ function Get-UserPath {
     return @($value -split ";" | Where-Object { $_ -ne "" })
 }
 
-function Set-UserPath([string[]]$Entries) {
+function Save-UserPath([string[]]$Entries) {
     [Environment]::SetEnvironmentVariable("Path", ($Entries -join ";"), "User")
 }
 
@@ -83,7 +83,7 @@ function Install-Nomouse {
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("nomouse-" + [Guid]::NewGuid())
     New-Item -ItemType Directory -Path $tmp | Out-Null
     try {
-        Say "downloading $Archive from $base"
+        Write-Status "downloading $Archive from $base"
         $zip = Join-Path $tmp $Archive
         Invoke-Download "$base/$Archive" $zip
         Invoke-Download "$base/$Archive.sha256" "$zip.sha256"
@@ -92,7 +92,7 @@ function Install-Nomouse {
         if ($expected -ne $actual) {
             throw "checksum mismatch for $Archive (expected $expected, got $actual)"
         }
-        Say "checksum ok ($actual)"
+        Write-Status "checksum ok ($actual)"
 
         Expand-Archive -Path $zip -DestinationPath $tmp -Force
         $exe = Join-Path $tmp "nomouse-$Target\nomouse.exe"
@@ -114,12 +114,12 @@ function Install-Nomouse {
 
         $entries = Get-UserPath
         if ($entries -notcontains $dir) {
-            Set-UserPath ($entries + $dir)
-            Say "added $dir to your user PATH (open a new terminal to use it)"
+            Save-UserPath ($entries + $dir)
+            Write-Status "added $dir to your user PATH (open a new terminal to use it)"
         }
         $env:Path = "$dir;$env:Path"
-        Say "installed $(& $dest --version) to $dest"
-        Say "next: nomouse doctor"
+        Write-Status "installed $(& $dest --version) to $dest"
+        Write-Status "next: nomouse doctor"
     } finally {
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -131,24 +131,24 @@ function Uninstall-Nomouse {
     if (Test-Path $dest) {
         Remove-Item $dest -Force
         Remove-Item "$dest.old" -Force -ErrorAction SilentlyContinue
-        Say "removed $dest"
+        Write-Status "removed $dest"
     } else {
-        Say "nomouse is not installed in $dir"
+        Write-Status "nomouse is not installed in $dir"
     }
     if ((Test-Path $dir) -and -not (Get-ChildItem $dir -Force)) {
         Remove-Item $dir -Force
     }
     $entries = Get-UserPath
     if ($entries -contains $dir) {
-        Set-UserPath ($entries | Where-Object { $_ -ne $dir })
-        Say "removed $dir from your user PATH"
+        Save-UserPath ($entries | Where-Object { $_ -ne $dir })
+        Write-Status "removed $dir from your user PATH"
     }
     $config = Join-Path $env:APPDATA "nomouse"
     if ($Purge) {
         Remove-Item $config -Recurse -Force -ErrorAction SilentlyContinue
-        Say "removed $config"
+        Write-Status "removed $config"
     } elseif (Test-Path $config) {
-        Say "kept the config in $config (add -Purge to delete it)"
+        Write-Status "kept the config in $config (add -Purge to delete it)"
     }
 }
 

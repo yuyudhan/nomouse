@@ -42,6 +42,15 @@ jobs:
             - name: Shellcheck
               if: runner.os == 'Linux'
               run: git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck --severity=style
+            - name: PSScriptAnalyzer
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: |
+                  if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+                      Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+                  }
+                  Invoke-ScriptAnalyzer -Path scripts/install.ps1 -Severity Warning,Error -EnableExit
+                  Invoke-ScriptAnalyzer -Path scripts/test-install.ps1 -Severity Warning,Error -EnableExit
             - name: Clippy
               run: cargo clippy --workspace --all-targets --all-features -- -D warnings
             - name: Test (core, binary, Linux backend)
@@ -52,6 +61,12 @@ jobs:
             # the Finder test on macOS (it skips itself without an Accessibility grant).
             - name: Test (Windows + macOS backends, integration on their OS)
               run: cargo test -p nomouse-windows -p nomouse-macos --all-features -- --nocapture
+            - name: install.ps1 end to end
+              if: runner.os == 'Windows'
+              run: |
+                  cargo build --locked -p nomouse
+                  scripts/release/package.sh x86_64-pc-windows-msvc target/debug/nomouse.exe target/installer-dist
+                  pwsh -NoProfile -File scripts/test-install.ps1 -Dist target/installer-dist
 
     e2e-linux:
         name: e2e (Linux X11, Xvfb + i3 + AT-SPI)
