@@ -343,13 +343,21 @@ if ((chromium)); then
     if [[ -n "$chrome" ]]; then
         echo "--- Chromium data: page"
         page='data:text/html,<title>start</title><body style="margin:40px"><button onclick="document.title=%27clicked%27">Go%20there</button></body>'
-        "$chrome" --force-renderer-accessibility --user-data-dir="$tmp/chrome" --no-first-run \
+        chrome_flags=()
+        # GitHub's Ubuntu runners forbid the unprivileged user namespaces Chrome's sandbox
+        # needs (AppArmor), so Chrome aborts at start there; the throwaway CI profile runs
+        # without it. Local runs keep the sandbox.
+        if [[ "${CI:-}" == true ]]; then chrome_flags+=(--no-sandbox); fi
+        "$chrome" "${chrome_flags[@]}" --force-renderer-accessibility --user-data-dir="$tmp/chrome" --no-first-run \
             --no-default-browser-check --disable-gpu --disable-dev-shm-usage --password-store=basic \
             --disable-features=Translate --new-window "$page" >"$tmp/chrome-stderr.log" 2>&1 &
         pids+=($!)
         if wait_for 30 xdotool search --name '^start' >/dev/null; then
             chrome_win="$(xdotool search --name '^start' | head -n1)"
-            sleep 2
+            # Readiness: the renderer fills its accessibility tree seconds after the window maps.
+            if ! python3 "$root/scripts/e2e/a11y_ready.py" "$(xdotool getwindowpid "$chrome_win")" "Go there" 30; then
+                echo "  Chromium never exposed the button over AT-SPI; the hints scan below will show it"
+            fi
             focus "$chrome_win"
             log="$tmp/chrome.log"
             if run_hints "$log" hints && label="$(label_for "$log" "Go there")" && [[ -n "$label" ]]; then
@@ -359,10 +367,11 @@ if ((chromium)); then
             else
                 kill "$hints_pid" 2>/dev/null || true
                 fail "Chromium: no label for the button ($(grep -c 'hint ' "$log" || true) hints)"
-                grep 'hint ' "$log" | sed 's/^.*hint /    hint /' || true
+                sed 's/^/    /' "$log" | tail -n 20
             fi
         else
             fail "Chromium window did not appear"
+            sed 's/^/    /' "$tmp/chrome-stderr.log" | tail -n 20
         fi
     else
         skip_or_fail "$require_chromium" "no Chromium/Chrome installed"
@@ -372,10 +381,14 @@ fi
 if ((qt)); then
     if "$qt_python" -c 'import PyQt5.QtWidgets' 2>/dev/null; then
         echo "--- Qt 5 window"
-        start "$qt_python" "$root/scripts/e2e/qt_app.py"
+        start "$qt_python" "$root/scripts/e2e/qt_app.py" 2>"$tmp/qt-stderr.log"
         if wait_for 15 xdotool search --name '^nomouse-qt' >/dev/null; then
             qt_win="$(xdotool search --name '^nomouse-qt' | head -n1)"
-            sleep 1
+            # Readiness: Qt registers with AT-SPI after the window maps. A Qt built without the
+            # AT-SPI bridge (the PyQt5 pip wheel) never does: use the distribution's PyQt5.
+            if ! python3 "$root/scripts/e2e/a11y_ready.py" "$(xdotool getwindowpid "$qt_win")" "Qt Button 3" 20; then
+                echo "  Qt never exposed its buttons over AT-SPI (is $qt_python's Qt built with the AT-SPI bridge?)"
+            fi
             focus "$qt_win"
             log="$tmp/qt.log"
             if run_hints "$log" hints && label="$(label_for "$log" "Qt Button 3")" && [[ -n "$label" ]]; then
@@ -385,7 +398,8 @@ if ((qt)); then
             else
                 kill "$hints_pid" 2>/dev/null || true
                 fail "Qt: no label for the button ($(grep -c 'hint ' "$log" || true) hints)"
-                grep 'hint ' "$log" | sed 's/^.*hint /    hint /' || true
+                sed 's/^/    /' "$log" | tail -n 20
+                sed 's/^/    qt: /' "$tmp/qt-stderr.log" | tail -n 10
             fi
         else
             fail "Qt window did not appear"

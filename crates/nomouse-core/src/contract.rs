@@ -155,13 +155,21 @@ fn check_overlay<P: Platform + ?Sized>(platform: &mut P, probe: Probe, out: &mut
         }
     }
     let hints = [probe_hint(probe.hover_at)];
-    let steps: [(&str, &[Hint], &str); 3] = [
-        ("show", &hints, ""),
-        ("show replaces", &hints, "a"),
-        ("show nothing", &[], ""),
+    // (step, hints, typed, search query): `None` calls `show`, `Some` calls `show_search`.
+    let steps: [(&str, &[Hint], &str, Option<&str>); 6] = [
+        ("show", &hints, "", None),
+        ("show replaces", &hints, "a", None),
+        ("show nothing", &[], "", None),
+        ("search box, empty query", &hints, "", Some("")),
+        ("search box with a query", &hints, "", Some("probe")),
+        ("search box, nothing matches", &[], "", Some("zzz")),
     ];
-    for (step, shown, typed) in steps {
-        match platform.show(shown, typed) {
+    for (step, shown, typed, query) in steps {
+        let result = match query {
+            None => platform.show(shown, typed),
+            Some(query) => platform.show_search(shown, typed, query),
+        };
+        match result {
             Ok(()) | Err(PlatformError::PermissionDenied(_) | PlatformError::Unsupported(_)) => {}
             Err(error) => violation(out, "overlay: show", format!("{step}: {error:?}")),
         }

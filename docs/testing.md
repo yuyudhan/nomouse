@@ -41,7 +41,8 @@ alphabet allows.
 - `elements()` returns ids unique within a snapshot, or only the documented errors
   (`AccessibilityUnavailable`, `PermissionDenied`, `NoFocusedWindow`).
 - `hide()` while hidden is a no-op; `show()` replaces what was shown; `show(&[])` works;
-  `hide()` after `show()` succeeds, twice.
+  `show_search()` draws with an empty query, a query, and no matches; `hide()` after either
+  succeeds, twice.
 - `unregister()` of an unknown id is a no-op; two registered chords get distinct ids; a chord
   is free again after `unregister()`; a taken chord is `HotkeyTaken`.
 - `next_event()` on an idle session returns `Ok` within its timeout (plus 2 s slack).
@@ -86,20 +87,33 @@ a private D-Bus session bus, `at-spi-bus-launcher` and i3 with a private IPC soc
 
 Chromium and PyQt5 are optional locally (`SKIP:` when absent; `--no-chromium`, `--no-qt`) and
 required in CI (`--require-chromium --require-qt`). `NOMOUSE_E2E_QT_PYTHON` points at an
-interpreter with PyQt5, e.g. a venv (`python3 -m venv ~/.cache/nomouse-e2e-qt` then
-`~/.cache/nomouse-e2e-qt/bin/pip install PyQt5`). `--hold` keeps the session up for debugging.
+interpreter with PyQt5. It must be a Qt built with the AT-SPI bridge, such as Debian/Ubuntu's
+`python3-pyqt5`. The PyQt5 pip wheel has no bridge: its windows never appear on the
+accessibility bus, so the Qt check fails with it. Without root, unpack the distribution
+packages (`apt-get download python3-pyqt5 python3-pyqt5.sip libqt5core5a libqt5gui5
+libqt5widgets5 libqt5dbus5 ...`, then `dpkg -x`) and point a wrapper at them with
+`LD_LIBRARY_PATH`, `PYTHONPATH` and `QT_PLUGIN_PATH`. `--hold` keeps the session up for
+debugging. `NOMOUSE_E2E_KEEP=1` keeps the run's logs (each `nomouse` debug log and app stderr)
+and prints where they are. A failed Chromium or Qt check prints the tail of the `nomouse` log and
+of the app's stderr.
 
 Determinism rules for the script:
 
 - Bounded polling (`wait_for <seconds>`) is used only for startup readiness: the X server, the
-  bus, i3, app windows and `nomouse` reaching its first scan.
+  bus, i3, app windows, `nomouse` reaching its first scan, and each app's accessibility tree.
+  `scripts/e2e/a11y_ready.py <pid> <name> <seconds>` polls AT-SPI directly (not through
+  nomouse) until the app exposes the element the check will use. Chromium fills its tree
+  seconds after its window maps.
 - Every assertion is attempted once, with a fixed timeout. There are no retries.
-- Every child is reaped with a deadline (`reap`), so a hung `nomouse` fails the step instead
-  of stalling the job; CI also caps the job at 30 minutes.
+- Every child is reaped with a deadline (`reap`). A hung `nomouse` fails its step instead of
+  stalling the job, and CI caps the job at 30 minutes.
 - It is shellcheck-clean at `--severity=style` like every script (`just shellcheck`).
+- Under `CI=true`, Chromium runs with `--no-sandbox`. GitHub's Ubuntu runners forbid the
+  unprivileged user namespaces its sandbox needs, so without the flag it aborts at start.
 
 Debian/Ubuntu packages: `xvfb i3-wm xdotool x11-utils dbus-daemon at-spi2-core python3-gi
-gir1.2-gtk-3.0`, plus `python3-pyqt5` and Chromium/Chrome for the optional targets.
+gir1.2-gtk-3.0 gir1.2-atspi-2.0`, plus `python3-pyqt5` and Chromium/Chrome for the optional
+targets.
 
 ## End to end on Wayland (headless Sway)
 
