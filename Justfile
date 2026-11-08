@@ -60,10 +60,11 @@ install-hooks:
     git config core.hooksPath .githooks
     @echo "hooks: core.hooksPath = $(git config core.hooksPath)"
 
-# Build every Linux release asset into target/dist/ without tagging or publishing, then test
+# Build every Linux release asset from the committed HEAD (a snapshot under target/hook-tree/,
+# so uncommitted edits are left out) into target/dist/ without tagging or publishing, then test
 # install.sh against them.
 release-dry-run:
-    scripts/release/dry-run.sh
+    scripts/hooks/in-snapshot.sh release HEAD -- scripts/release/dry-run.sh "$PWD/target/dist"
     scripts/test-install.sh target/dist
 
 # install.sh end to end against a release directory, in an env -i sandbox with a temp HOME.
