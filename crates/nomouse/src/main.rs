@@ -2,6 +2,8 @@
 //! and configuration commands.
 #![forbid(unsafe_code)]
 
+#[cfg(unix)]
+mod ipc;
 mod lock;
 mod run;
 
@@ -48,6 +50,10 @@ struct Cli {
     /// Command; `daemon` when omitted.
     #[command(subcommand)]
     command: Option<Command>,
+    /// Run hints, continuous, scroll or search in this process even when a daemon is running
+    /// (by default they are handed to the daemon over its socket).
+    #[arg(long, global = true)]
+    standalone: bool,
 }
 
 #[derive(Subcommand)]
@@ -60,6 +66,13 @@ enum Command {
         /// Keep re-labelling after every action until Escape.
         #[arg(long)]
         continuous: bool,
+        /// Action instead of the configured one (click, right-click, double-click, hover, drag).
+        #[arg(long)]
+        action: Option<ActionKind>,
+    },
+    /// Continuous hints: keep re-labelling after every action until Escape (`hints
+    /// --continuous`).
+    Continuous {
         /// Action instead of the configured one (click, right-click, double-click, hover, drag).
         #[arg(long)]
         action: Option<ActionKind>,
@@ -120,7 +133,7 @@ fn init_logging() {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     init_logging();
-    match run_command(cli.command.unwrap_or(Command::Daemon)) {
+    match run_command(cli.command.unwrap_or(Command::Daemon), cli.standalone) {
         Ok(text) => {
             let mut stdout = std::io::stdout().lock();
             if stdout.write_all(text.as_bytes()).is_err() {
@@ -165,7 +178,20 @@ fn describe(outcome: Outcome) -> String {
     }
 }
 
-fn activate_now(mode: Mode) -> Result<String, String> {
+/// Runs `mode`: hands it to the running daemon when there is one (unless `standalone`), so
+/// only one overlay exists and compositor key bindings reach the daemon; else runs it here.
+fn activate(mode: Mode, standalone: bool) -> Result<String, String> {
+    #[cfg(unix)]
+    if !standalone {
+        let path = ipc::current_path();
+        match ipc::send(&path, mode) {
+            Ok(()) => return Ok(String::new()),
+            Err(ipc::SendError::NoDaemon(_)) => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = standalone;
     let started = Instant::now();
     let config = load_or_default()?;
     let settings = settings(&config)?;
@@ -198,37 +224,108 @@ fn daemon() -> Result<String, String> {
             Err(error) => tracing::warn!("{hotkey}: {error}"),
         }
     }
-    if modes.is_empty() {
-        return Err("no hotkey could be registered".to_owned());
+    #[cfg(unix)]
+    {
+        let socket = ipc::current_path();
+        let server = match ipc::Server::bind(&socket) {
+            Ok(server) => server,
+            Err(error) if !modes.is_empty() => {
+                tracing::warn!("command socket {}: {error}", socket.display());
+                return serve(platform.as_mut(), &settings, &modes, &NoRequests);
+            }
+            Err(error) => {
+                return Err(format!(
+                    "no hotkey could be registered and the command socket {} failed: {error}",
+                    socket.display()
+                ));
+            }
+        };
+        tracing::info!(
+            "{} daemon ready with {} hotkey(s) and commands on {}",
+            platform.name(),
+            modes.len(),
+            socket.display()
+        );
+        serve(platform.as_mut(), &settings, &modes, &server)
     }
-    tracing::info!(
-        "{} daemon ready with {} hotkey(s)",
-        platform.name(),
-        modes.len()
-    );
-    serve(platform.as_mut(), &settings, &modes)
+    #[cfg(not(unix))]
+    {
+        if modes.is_empty() {
+            return Err("no hotkey could be registered".to_owned());
+        }
+        tracing::info!(
+            "{} daemon ready with {} hotkey(s)",
+            platform.name(),
+            modes.len()
+        );
+        serve(platform.as_mut(), &settings, &modes, &NoRequests)
+    }
+}
+
+/// How often the daemon checks the command socket between hotkey events.
+const COMMAND_POLL: Duration = Duration::from_millis(30);
+
+/// Where the daemon's mode requests (besides its own hotkeys) come from.
+trait Requests {
+    /// The oldest request waiting.
+    fn next(&self) -> Option<Mode>;
+    /// Drops the requests made while a session ran; returns how many.
+    fn discard(&self) -> usize;
+}
+
+/// No command socket.
+struct NoRequests;
+
+impl Requests for NoRequests {
+    fn next(&self) -> Option<Mode> {
+        None
+    }
+
+    fn discard(&self) -> usize {
+        0
+    }
+}
+
+#[cfg(unix)]
+impl Requests for ipc::Server {
+    fn next(&self) -> Option<Mode> {
+        self.poll()
+    }
+
+    fn discard(&self) -> usize {
+        self.discard_pending()
+    }
 }
 
 fn serve(
     platform: &mut dyn Platform,
     settings: &Settings,
     modes: &[(nomouse_core::HotkeyId, Mode)],
+    requests: &dyn Requests,
 ) -> Result<String, String> {
     loop {
         let event = platform
-            .next_event(Duration::from_secs(1))
+            .next_event(COMMAND_POLL)
             .map_err(|e| e.to_string())?;
-        let Some(InputEvent::Hotkey(id)) = event else {
-            continue;
-        };
         let started = Instant::now();
-        let Some((_, mode)) = modes.iter().find(|(known, _)| *known == id) else {
+        let mode = match event {
+            Some(InputEvent::Hotkey(id)) => modes
+                .iter()
+                .find(|(known, _)| *known == id)
+                .map(|(_, mode)| *mode),
+            _ => requests.next(),
+        };
+        let Some(mode) = mode else {
             continue;
         };
-        match run::activate(platform, settings, *mode, started) {
+        match run::activate(platform, settings, mode, started) {
             Ok(outcome) => tracing::info!("{}", describe(outcome).trim_end()),
             // A lost display surfaces again from `next_event` and ends the daemon there.
             Err(error) => tracing::warn!("{error}"),
+        }
+        let ignored = requests.discard();
+        if ignored > 0 {
+            tracing::info!("ignored {ignored} request(s) made while the session ran");
         }
     }
 }
@@ -272,23 +369,33 @@ fn doctor() -> Result<String, String> {
     Ok(out)
 }
 
-fn run_command(command: Command) -> Result<String, String> {
+fn run_command(command: Command, standalone: bool) -> Result<String, String> {
     match command {
         Command::Daemon => daemon(),
         Command::Hints { continuous, action } => {
             let kind = match action {
-                Some(ActionKind::Scroll) => return activate_now(Mode::Scroll),
+                Some(ActionKind::Scroll) => return activate(Mode::Scroll, standalone),
                 Some(kind) => kind,
                 None => load_or_default()?.hints.action,
             };
-            activate_now(if continuous {
-                Mode::Continuous(kind)
-            } else {
-                Mode::Once(kind)
-            })
+            activate(
+                if continuous {
+                    Mode::Continuous(kind)
+                } else {
+                    Mode::Once(kind)
+                },
+                standalone,
+            )
         }
-        Command::Scroll => activate_now(Mode::Scroll),
-        Command::Search => activate_now(Mode::Search),
+        Command::Continuous { action } => {
+            let kind = match action {
+                Some(kind) => kind,
+                None => load_or_default()?.hints.action,
+            };
+            activate(Mode::Continuous(kind), standalone)
+        }
+        Command::Scroll => activate(Mode::Scroll, standalone),
+        Command::Search => activate(Mode::Search, standalone),
         Command::Doctor => doctor(),
         Command::Config { command } => config_command(command),
         Command::Labels { count, alphabet } => {
@@ -339,10 +446,13 @@ mod tests {
 
     #[test]
     fn labels_with_explicit_alphabet() {
-        let out = run_command(Command::Labels {
-            count: 3,
-            alphabet: Some("ab".into()),
-        })
+        let out = run_command(
+            Command::Labels {
+                count: 3,
+                alphabet: Some("ab".into()),
+            },
+            false,
+        )
         .unwrap();
         assert_eq!(out, "b\naa\nab\n");
     }
@@ -350,10 +460,13 @@ mod tests {
     #[test]
     fn bad_alphabet_is_an_error() {
         assert!(
-            run_command(Command::Labels {
-                count: 1,
-                alphabet: Some("l".into())
-            })
+            run_command(
+                Command::Labels {
+                    count: 1,
+                    alphabet: Some("l".into())
+                },
+                false,
+            )
             .is_err()
         );
     }

@@ -18,6 +18,11 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "ansi",
 ] }
 
+[features]
+default = ["wayland"]
+# The Linux Wayland backend (wlroots compositors); off builds an X11-only binary.
+wayland = ["nomouse-linux/wayland"]
+
 [target.'cfg(target_os = "linux")'.dependencies]
 nomouse-linux.workspace = true
 
@@ -39,7 +44,8 @@ priority = "optional"
 depends = "libc6 (>= 2.35)"
 extended-description = """\
 nomouse labels every clickable element of the focused window from the accessibility tree; \
-typing a label clicks it. Needs an X11 session with the AT-SPI accessibility bus."""
+typing a label clicks it. Needs the AT-SPI accessibility bus and an X11 session or a wlroots \
+Wayland compositor (Sway, Hyprland)."""
 assets = [
     [
         "target/release/nomouse",
