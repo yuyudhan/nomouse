@@ -108,6 +108,8 @@ scans() { grep -c 'scan [0-9]*:' "$1" || true; }
 scans_at_least() { (($(scans "$1") >= $2)); }
 # label_for <log> <accessible name>: the label of the last scan's hint for that name.
 label_for() { grep -E "hint [a-z]+ = [A-Za-z]+ \"$2\"$" "$1" | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
+# The pattern is deliberately unquoted: callers pass globs such as "left: Button 1 #*".
+# shellcheck disable=SC2053
 title_is() { [[ "$(title "$1")" == $2 ]]; }
 
 # run_hints <log> <args...>: starts `nomouse hints`, waits for its first scan.
@@ -133,7 +135,7 @@ for i in $(seq 1 10); do
         echo "  click $i (label '$label') left title '$(title "$gtk_win")'"
     fi
 done
-((clicks_ok == 10)) && pass "10/10 clicks landed" || fail "$clicks_ok/10 clicks landed"
+if ((clicks_ok == 10)); then pass "10/10 clicks landed"; else fail "$clicks_ok/10 clicks landed"; fi
 
 echo "--- continuous mode: 5 clicks then Escape"
 focus "$gtk_win"
@@ -167,7 +169,7 @@ log="$tmp/right.log"
 if run_hints "$log" hints --action right-click; then
     xdotool type --delay 20 "$(label_for "$log" "Button 2")"
     wait "$hints_pid" || true
-    wait_for 3 title_is "$gtk_win" "right: Button 2 #*" && pass "right click landed" || fail "right click: title '$(title "$gtk_win")'"
+    if wait_for 3 title_is "$gtk_win" "right: Button 2 #*"; then pass "right click landed"; else fail "right click: title '$(title "$gtk_win")'"; fi
 else
     fail "right click: no labels"
 fi
@@ -203,7 +205,7 @@ if run_hints "$log" scroll; then
     wait_for 3 title_is "$gtk_win" "scrolled: *" && scrolled=1 || scrolled=0
     xdotool key Escape
     wait "$hints_pid" || true
-    ((scrolled)) && pass "scroll mode scrolled ($(title "$gtk_win"))" || fail "scroll mode: title '$(title "$gtk_win")'"
+    if ((scrolled)); then pass "scroll mode scrolled ($(title "$gtk_win"))"; else fail "scroll mode: title '$(title "$gtk_win")'"; fi
 else
     fail "scroll mode: no labels"
 fi
@@ -215,10 +217,10 @@ daemon_pid=$!
 pids+=("$daemon_pid")
 wait_for 10 grep -q 'daemon ready' "$daemon_log" || fail "daemon did not start"
 if "$bin" daemon 2>"$tmp/second.log"; then fail "a second daemon started"; else
-    grep -q 'already running' "$tmp/second.log" && pass "single instance: second daemon refused" || fail "second daemon: $(cat "$tmp/second.log")"
+    if grep -q 'already running' "$tmp/second.log"; then pass "single instance: second daemon refused"; else fail "second daemon: $(cat "$tmp/second.log")"; fi
 fi
 external=()
-for trial in 1 2 3 4 5; do
+for _ in 1 2 3 4 5; do
     focus "$gtk_win"
     t0=$(date +%s%N)
     xdotool key ctrl+space
@@ -236,7 +238,7 @@ before_scans="$(scans "$daemon_log")"
 xdotool key ctrl+space
 wait_for 5 scans_at_least "$daemon_log" $((before_scans + 1)) && wait_for 5 overlay_viewable
 xdotool type --delay 20 "$(label_for "$daemon_log" "Button 7")"
-wait_for 3 title_is "$gtk_win" "left: Button 7 #*" && pass "daemon hotkey click landed" || fail "daemon hotkey click: '$(title "$gtk_win")'"
+if wait_for 3 title_is "$gtk_win" "left: Button 7 #*"; then pass "daemon hotkey click landed"; else fail "daemon hotkey click: '$(title "$gtk_win")'"; fi
 
 if ((chromium)); then
     chrome="$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)"
@@ -255,7 +257,7 @@ if ((chromium)); then
             if run_hints "$log" hints && label="$(label_for "$log" "Go there")" && [[ -n "$label" ]]; then
                 xdotool type --delay 20 "$label"
                 wait "$hints_pid" || true
-                wait_for 5 title_is "$chrome_win" "clicked*" && pass "Chromium click landed" || fail "Chromium: title '$(title "$chrome_win")'"
+                if wait_for 5 title_is "$chrome_win" "clicked*"; then pass "Chromium click landed"; else fail "Chromium: title '$(title "$chrome_win")'"; fi
             else
                 kill "$hints_pid" 2>/dev/null || true
                 fail "Chromium: no label for the button ($(grep -c 'hint ' "$log" || true) hints)"
@@ -273,7 +275,7 @@ kill "$daemon_pid" 2>/dev/null || true
 wait "$daemon_pid" 2>/dev/null || true
 sleep 0.2
 leftover="$(xwininfo -root -tree | grep -c '"nomouse-overlay"' || true)"
-((leftover == 0)) && pass "no leftover overlay windows" || fail "$leftover overlay windows left"
+if ((leftover == 0)); then pass "no leftover overlay windows"; else fail "$leftover overlay windows left"; fi
 
 echo "--- $passed passed, $failed failed"
 ((failed == 0))
