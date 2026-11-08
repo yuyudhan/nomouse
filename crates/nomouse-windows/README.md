@@ -20,6 +20,16 @@ labels are scaled by the DPI of the monitor they sit on. Labels are drawn with S
 another font from `%WINDIR%\Fonts`) through `ab_glyph` and `tiny-skia`, the same approach as the
 Linux backend, in the `[overlay]` colours, size and opacity.
 
+Scans are bounded like the Linux backend's: at most 5000 elements across all windows and a
+1.5 s budget (`ScanLimits`, adjustable with `Backend::set_scan_limits`). The budget is also the
+UIA connection and transaction timeout (via `IUIAutomation2`), so a hung app cannot stall a
+scan; once a limit is hit, no further window is queried and `Backend::last_truncation` says
+which limit cut the scan short.
+
+While labels are shown, modifiers pass through to the app; when a letter was typed with Alt
+or Win held, an unassigned key (`0xE8`) is injected before that modifier's release, so the app
+does not see a lone Alt (menu bar) or Win (Start menu).
+
 Scopes: `focused-window` is the foreground window plus any open popup menus. `screen` is every
 visible, non-cloaked window, the taskbar and the notification area; `ScopeOptions` (passed to
 `platform_with`) can drop the taskbar or just the tray.
