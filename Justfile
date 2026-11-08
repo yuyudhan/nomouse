@@ -52,6 +52,14 @@ test:
 deny:
     cargo deny check
 
+# Linux X11 end-to-end tests on a private Xvfb/i3/AT-SPI session (never your display).
+e2e *args:
+    scripts/e2e-linux.sh {{args}}
+
+# Line coverage of nomouse-core and the binary's non-OS logic; fails below the floors.
+coverage *args:
+    scripts/coverage.sh {{args}}
+
 # The full local gate (what the pre-push hook runs on each pushed commit): check, test, deny.
 verify: check test deny
 

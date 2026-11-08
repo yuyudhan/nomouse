@@ -44,8 +44,47 @@ jobs:
               run: git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck --severity=style
             - name: Clippy
               run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-            - name: Test
-              run: cargo test --workspace --all-features
+            - name: Test (core, binary, Linux backend)
+              run: cargo test --workspace --all-features --exclude nomouse-windows --exclude nomouse-macos
+            # The Windows and macOS backends' unit tests and fake-system contract tests run on
+            # every OS; their real-desktop integration tests run on their own OS: the WinForms
+            # UI Automation test and the real-backend contract on the Windows runner's desktop,
+            # the Finder test on macOS (it skips itself without an Accessibility grant).
+            - name: Test (Windows + macOS backends, integration on their OS)
+              run: cargo test -p nomouse-windows -p nomouse-macos --all-features -- --nocapture
+
+    e2e-linux:
+        name: e2e (Linux X11, Xvfb + i3 + AT-SPI)
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+            - name: Install the pinned toolchain
+              run: rustup show active-toolchain || rustup toolchain install
+            - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+            - name: Install the X11 session, AT-SPI, GTK and Qt
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends xvfb i3-wm xdotool x11-utils \
+                      dbus-daemon at-spi2-core python3-gi gir1.2-gtk-3.0 python3-pyqt5 fonts-dejavu-core
+            - name: e2e (GTK, Chromium, Qt)
+              run: scripts/e2e-linux.sh --display :99 --require-chromium --require-qt
+
+    coverage:
+        name: coverage (floor)
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+            - name: Install the pinned toolchain
+              run: |
+                  rustup show active-toolchain || rustup toolchain install
+                  rustup component add llvm-tools-preview
+            - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+            - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+              with:
+                  tool: cargo-llvm-cov
+            - name: Coverage
+              run: scripts/coverage.sh
 
     deny:
         name: cargo-deny

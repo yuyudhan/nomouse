@@ -4,38 +4,63 @@
 # Starts Xvfb, a private D-Bus session, AT-SPI and i3 (never touching the user's session),
 # opens a GTK test window and a Chromium data: page, drives `nomouse` with xdotool, and
 # asserts that clicks, continuous mode, right clicks and scroll mode land, that no overlay
-# window is left behind, and measures hotkey-to-labels latency.
+# window is left behind, and measures hotkey-to-labels latency. It also runs the shared
+# backend contract (crates/nomouse-linux/tests/contract.rs) against the real backend, and a
+# Qt 5 window when PyQt5 is importable.
 #
-# Usage: scripts/e2e-linux.sh [--display :97] [--no-chromium]
+# Usage: scripts/e2e-linux.sh [--display :97] [--no-chromium] [--require-chromium]
+#                             [--no-qt] [--require-qt] [--hold]
 # Needs: Xvfb, i3, xdotool, xwininfo, dbus-daemon, at-spi-bus-launcher, python3-gi (GTK 3);
-# Chromium/Chrome is optional (skipped when absent or with --no-chromium).
+# Chromium/Chrome and PyQt5 are optional (skipped when absent, failed when --require-*).
+# NOMOUSE_E2E_QT_PYTHON picks the interpreter that has PyQt5 (default: python3).
+#
+# Determinism: only startup readiness (Xvfb, the bus, i3, app windows) is waited for with
+# bounded polling; every assertion is tried once with a fixed timeout, and every child is
+# reaped with a deadline, so a hung `nomouse` fails the run instead of stalling it.
 set -euo pipefail
 
 display=":97"
 chromium=1
+require_chromium=0
+qt=1
+require_qt=0
 hold=0
 while (($#)); do
     case "$1" in
         --display) display="$2"; shift 2 ;;
         --no-chromium) chromium=0; shift ;;
+        --require-chromium) require_chromium=1; shift ;;
+        --no-qt) qt=0; shift ;;
+        --require-qt) require_qt=1; shift ;;
         --hold) hold=1; shift ;;
         *) echo "unknown argument $1" >&2; exit 2 ;;
     esac
 done
+qt_python="${NOMOUSE_E2E_QT_PYTHON:-python3}"
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 # Release build: the latency figures are meaningless for a debug zbus.
 cargo build --quiet --release --manifest-path "$root/Cargo.toml" -p nomouse
+# The contract test binary, built now: cargo cannot run once HOME points at the private dir.
+contract_test="$(cargo test --quiet --release --no-run --message-format=json \
+    --manifest-path "$root/Cargo.toml" -p nomouse-linux --test contract |
+    python3 -c 'import json, sys
+for line in sys.stdin:
+    m = json.loads(line)
+    if m.get("reason") == "compiler-artifact" and m["target"]["name"] == "contract" and m.get("executable"):
+        print(m["executable"])')"
 
 tmp="$(mktemp -d /tmp/nomouse-e2e.XXXXXX)"
 # A private copy, so a concurrent `cargo build` cannot replace the binary mid-run.
 cp "${CARGO_TARGET_DIR:-$root/target}/release/nomouse" "$tmp/nomouse"
+cp "$contract_test" "$tmp/contract"
 bin="$tmp/nomouse"
 pids=()
 cleanup() {
     for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
     wait 2>/dev/null || true
-    rm -rf "$tmp"
+    # NOMOUSE_E2E_KEEP=1 keeps the logs (nomouse debug logs, app stderr) for a failed run.
+    if [[ "${NOMOUSE_E2E_KEEP:-0}" == 1 ]]; then echo "logs kept in $tmp"; else rm -rf "$tmp"; fi
 }
 trap cleanup EXIT
 
@@ -63,6 +88,22 @@ wait_for() {
 }
 
 start() { "$@" & pids+=($!); }
+
+# reap <pid> [seconds]: waits for a child with a deadline; kills it and fails on timeout.
+gone() { ! kill -0 "$1"; }
+reap() {
+    if wait_for "${2:-10}" gone "$1"; then
+        wait "$1" 2>/dev/null || true
+    else
+        echo "  pid $1 still running after ${2:-10}s; killed"
+        kill "$1" 2>/dev/null || true
+        wait "$1" 2>/dev/null || true
+        return 1
+    fi
+}
+
+# skip_or_fail <required> <message>: a missing optional target skips, a required one fails.
+skip_or_fail() { if (($1)); then fail "$2"; else echo "SKIP: $2"; fi; }
 
 Xvfb "$display" -screen 0 1600x1000x24 -nolisten tcp >"$tmp/xvfb.log" 2>&1 &
 pids+=($!)
@@ -93,6 +134,13 @@ wait_for 15 xdotool search --name '^nomouse-e2e' >/dev/null || { echo "GTK windo
 gtk_win="$(xdotool search --name '^nomouse-e2e' | head -n1)"
 # Let the toolkit register with AT-SPI.
 sleep 1
+
+echo "--- backend contract (real X11 + AT-SPI backend)"
+if timeout 60 "$tmp/contract" --ignored --test-threads=1 >"$tmp/contract.log" 2>&1; then
+    pass "the X11 backend passes the shared backend contract"
+else
+    fail "backend contract: $(cat "$tmp/contract.log")"
+fi
 if ((hold)); then
     # Debugging aid: keep the private session up and print how to join it.
     echo "export DISPLAY=$DISPLAY DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR XDG_CONFIG_HOME=$XDG_CONFIG_HOME" >"/tmp/nomouse-e2e-hold.env"
@@ -108,9 +156,13 @@ scans() { grep -c 'scan [0-9]*:' "$1" || true; }
 scans_at_least() { (($(scans "$1") >= $2)); }
 # label_for <log> <accessible name>: the label of the last scan's hint for that name.
 label_for() { grep -E "hint [a-z]+ = [A-Za-z]+ \"$2\"$" "$1" | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
-# The pattern is deliberately unquoted: callers pass globs such as "left: Button 1 #*".
-# shellcheck disable=SC2053
-title_is() { [[ "$(title "$1")" == $2 ]]; }
+# title_is <window> <prefix>*: the title starts with the literal prefix; callers write it as
+# a glob such as "left: Button 1 #*" (a trailing `*` is the only wildcard used).
+title_is() {
+    local current
+    current="$(title "$1")"
+    [[ "$current" == "${2%\*}"* ]]
+}
 
 # run_hints <log> <args...>: starts `nomouse hints`, waits for its first scan.
 run_hints() {
@@ -128,7 +180,7 @@ for i in $(seq 1 10); do
     if ! run_hints "$log" hints; then fail "click $i: no labels"; kill "$hints_pid" 2>/dev/null || true; continue; fi
     label="$(label_for "$log" "Button $i")"
     xdotool type --delay 20 "$label"
-    wait "$hints_pid" || true
+    reap "$hints_pid" || true
     if wait_for 3 title_is "$gtk_win" "left: Button $i #*"; then
         clicks_ok=$((clicks_ok + 1))
     else
@@ -152,7 +204,7 @@ if run_hints "$log" hints --continuous; then
     done
     wait_for 5 scans_at_least "$log" 6 && wait_for 5 overlay_viewable || continuous_ok=0
     xdotool key Escape
-    wait "$hints_pid" || true
+    reap "$hints_pid" || continuous_ok=0
 else
     continuous_ok=0
 fi
@@ -168,7 +220,7 @@ focus "$gtk_win"
 log="$tmp/right.log"
 if run_hints "$log" hints --action right-click; then
     xdotool type --delay 20 "$(label_for "$log" "Button 2")"
-    wait "$hints_pid" || true
+    reap "$hints_pid" || true
     if wait_for 3 title_is "$gtk_win" "right: Button 2 #*"; then pass "right click landed"; else fail "right click: title '$(title "$gtk_win")'"; fi
 else
     fail "right click: no labels"
@@ -183,7 +235,7 @@ if run_hints "$log" hints; then
     # Park the pointer far away: only the accessibility action can press the button.
     xdotool mousemove 1590 990
     xdotool type --delay 20 "$(label_for "$log" "Button 9")"
-    wait "$hints_pid" || true
+    reap "$hints_pid" || true
     pointer="$(xdotool getmouselocation --shell | tr '\n' ' ')"
     if wait_for 3 title_is "$gtk_win" "left: Button 9 #*" && [[ "$pointer" == *"X=1590 Y=990"* ]]; then
         pass "semantic click pressed the button without moving the pointer"
@@ -195,7 +247,7 @@ else
 fi
 rm "$XDG_CONFIG_HOME/nomouse/config.toml"
 
-echo "--- scroll mode"
+echo "--- scroll mode: the scroll area is the target"
 focus "$gtk_win"
 log="$tmp/scroll.log"
 if run_hints "$log" scroll; then
@@ -204,7 +256,7 @@ if run_hints "$log" scroll; then
     xdotool key --delay 30 j j j
     wait_for 3 title_is "$gtk_win" "scrolled: *" && scrolled=1 || scrolled=0
     xdotool key Escape
-    wait "$hints_pid" || true
+    reap "$hints_pid" || true
     if ((scrolled)); then pass "scroll mode scrolled ($(title "$gtk_win"))"; else fail "scroll mode: title '$(title "$gtk_win")'"; fi
 else
     fail "scroll mode: no labels"
@@ -216,7 +268,7 @@ NOMOUSE_LOG=debug "$bin" daemon 2>"$daemon_log" &
 daemon_pid=$!
 pids+=("$daemon_pid")
 wait_for 10 grep -q 'daemon ready' "$daemon_log" || fail "daemon did not start"
-if "$bin" daemon 2>"$tmp/second.log"; then fail "a second daemon started"; else
+if timeout 10 "$bin" daemon 2>"$tmp/second.log"; then fail "a second daemon started"; else
     if grep -q 'already running' "$tmp/second.log"; then pass "single instance: second daemon refused"; else fail "second daemon: $(cat "$tmp/second.log")"; fi
 fi
 external=()
@@ -256,7 +308,7 @@ if ((chromium)); then
             log="$tmp/chrome.log"
             if run_hints "$log" hints && label="$(label_for "$log" "Go there")" && [[ -n "$label" ]]; then
                 xdotool type --delay 20 "$label"
-                wait "$hints_pid" || true
+                reap "$hints_pid" || true
                 if wait_for 5 title_is "$chrome_win" "clicked*"; then pass "Chromium click landed"; else fail "Chromium: title '$(title "$chrome_win")'"; fi
             else
                 kill "$hints_pid" 2>/dev/null || true
@@ -267,12 +319,38 @@ if ((chromium)); then
             fail "Chromium window did not appear"
         fi
     else
-        echo "SKIP: no Chromium/Chrome installed"
+        skip_or_fail "$require_chromium" "no Chromium/Chrome installed"
+    fi
+fi
+
+if ((qt)); then
+    if "$qt_python" -c 'import PyQt5.QtWidgets' 2>/dev/null; then
+        echo "--- Qt 5 window"
+        start "$qt_python" "$root/scripts/e2e/qt_app.py"
+        if wait_for 15 xdotool search --name '^nomouse-qt' >/dev/null; then
+            qt_win="$(xdotool search --name '^nomouse-qt' | head -n1)"
+            sleep 1
+            focus "$qt_win"
+            log="$tmp/qt.log"
+            if run_hints "$log" hints && label="$(label_for "$log" "Qt Button 3")" && [[ -n "$label" ]]; then
+                xdotool type --delay 20 "$label"
+                reap "$hints_pid" || true
+                if wait_for 5 title_is "$qt_win" "qt: Qt Button 3 #*"; then pass "Qt click landed"; else fail "Qt: title '$(title "$qt_win")'"; fi
+            else
+                kill "$hints_pid" 2>/dev/null || true
+                fail "Qt: no label for the button ($(grep -c 'hint ' "$log" || true) hints)"
+                grep 'hint ' "$log" | sed 's/^.*hint /    hint /' || true
+            fi
+        else
+            fail "Qt window did not appear"
+        fi
+    else
+        skip_or_fail "$require_qt" "PyQt5 not importable by $qt_python"
     fi
 fi
 
 kill "$daemon_pid" 2>/dev/null || true
-wait "$daemon_pid" 2>/dev/null || true
+reap "$daemon_pid" 5 || true
 sleep 0.2
 leftover="$(xwininfo -root -tree | grep -c '"nomouse-overlay"' || true)"
 if ((leftover == 0)); then pass "no leftover overlay windows"; else fail "$leftover overlay windows left"; fi

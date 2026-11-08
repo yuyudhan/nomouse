@@ -1,2 +1,6 @@
 [files]
 extend-exclude = ["target", "Cargo.lock"]
+
+[default.extend-words]
+# GObject Introspection Repository, as in the Debian package gir1.2-gtk-3.0.
+gir = "gir"
