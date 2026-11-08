@@ -467,7 +467,7 @@ mod tests {
         let area = Edges::new(0, 0, 800, 600);
         let empty = renderer.frame(&[], "", None, area, |_, _| 1.0);
         assert_eq!(empty, Bitmap::default());
-        let search = renderer.frame(&[], "", Some("sav"), area, |_, _| 1.0);
+        let search = renderer.frame(&[], "", Some("save"), area, |_, _| 1.0);
         assert!(search.width > 0 && search.height > 0);
         assert!(search.y < 150 && search.x > 200 && search.x < 400);
     }

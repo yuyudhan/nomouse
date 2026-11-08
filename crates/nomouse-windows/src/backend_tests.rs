@@ -516,7 +516,7 @@ fn search_overlay_draws_the_query_box() {
     let Some(mut backend) = make(app()) else {
         return;
     };
-    backend.show_search(&[], "", "sav").unwrap();
+    backend.show_search(&[], "", "save").unwrap();
     assert!(backend.system.grabbed);
     let bitmap = backend.system.bitmaps.last().unwrap().clone();
     assert!(bitmap.pixels.iter().any(|pixel| *pixel != 0));

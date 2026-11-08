@@ -44,7 +44,10 @@ fn wheel(fakes: &mut Vec<Fake>, negative: u8, positive: u8, steps: i32) {
     }
 }
 
-/// How long held modifiers settle before the pointer acts, so the app sees them as held.
+/// How long held modifiers settle before the pointer acts, so the app sees them as held, and
+/// stay held after it: window managers such as i3 grab client buttons synchronously (to focus
+/// on click) and replay the press only after a round trip, while key events keep flowing, so
+/// releasing the modifier at once reaches the app before the replayed click does.
 const MODIFIER_SETTLE_MS: u64 = 30;
 
 /// The event sequence for `action`, holding the `modifiers` keycodes down around it.
@@ -93,6 +96,9 @@ pub(crate) fn plan(action: &Action, modifiers: &[u8]) -> Vec<Fake> {
             wheel(&mut fakes, 4, 5, dy);
             wheel(&mut fakes, 6, 7, dx);
         }
+    }
+    if !modifiers.is_empty() {
+        fakes.push(Fake::Pause(MODIFIER_SETTLE_MS));
     }
     fakes.extend(modifiers.iter().rev().map(|code| Fake::KeyUp(*code)));
     fakes
