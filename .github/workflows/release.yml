@@ -26,11 +26,14 @@ jobs:
               name: Read the workspace version
               run: |
                   version="$(scripts/release/version.sh)"
-                  if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v${version}" ]; then
-                      echo "::error::tag ${GITHUB_REF_NAME} does not match the workspace version ${version}"
-                      exit 1
+                  # A tag release must match the workspace version and have changelog notes.
+                  if [ "$GITHUB_REF_TYPE" = tag ]; then
+                      if [ "$GITHUB_REF_NAME" != "v${version}" ]; then
+                          echo "::error::tag ${GITHUB_REF_NAME} does not match the workspace version ${version}"
+                          exit 1
+                      fi
+                      scripts/release/notes.sh "$version" >/dev/null
                   fi
-                  scripts/release/notes.sh "$version" >/dev/null
                   echo "version=${version}" >>"$GITHUB_OUTPUT"
 
     linux:

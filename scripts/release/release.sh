@@ -71,6 +71,7 @@ cargo update --workspace
 today="$(date -u +%Y-%m-%d)"
 VERSION="$version" TODAY="$today" perl -0pi -e \
     's/^## \[Unreleased\]\n/## [Unreleased]\n\n## [$ENV{VERSION}] - $ENV{TODAY}\n/m' CHANGELOG.md
+scripts/release/notes.sh "$version" >/dev/null
 
 just verify
 
