@@ -23,6 +23,10 @@ default = ["wayland"]
 # The Linux Wayland backend (wlroots compositors); off builds an X11-only binary.
 wayland = ["nomouse-linux/wayland"]
 
+[target.'cfg(unix)'.dependencies]
+# getuid for the command socket's fallback directory (safe wrapper, no unsafe here).
+rustix = { version = "1", default-features = false, features = ["process", "std"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 nomouse-linux.workspace = true
 

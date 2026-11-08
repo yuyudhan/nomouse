@@ -873,6 +873,7 @@ dependencies = [
  "nomouse-linux",
  "nomouse-macos",
  "nomouse-windows",
+ "rustix",
  "thiserror",
  "tracing",
  "tracing-subscriber",

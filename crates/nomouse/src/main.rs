@@ -183,7 +183,7 @@ fn describe(outcome: Outcome) -> String {
 fn activate(mode: Mode, standalone: bool) -> Result<String, String> {
     #[cfg(unix)]
     if !standalone {
-        let path = ipc::current_path();
+        let path = ipc::current_path().map_err(|error| format!("command socket: {error}"))?;
         match ipc::send(&path, mode) {
             Ok(()) => return Ok(String::new()),
             Err(ipc::SendError::NoDaemon(_)) => {}
@@ -226,17 +226,22 @@ fn daemon() -> Result<String, String> {
     }
     #[cfg(unix)]
     {
-        let socket = ipc::current_path();
-        let server = match ipc::Server::bind(&socket) {
-            Ok(server) => server,
+        let bound = ipc::current_path().and_then(|socket| match ipc::Server::bind(&socket) {
+            Ok(server) => Ok((socket, server)),
+            Err(error) => Err(std::io::Error::new(
+                error.kind(),
+                format!("{}: {error}", socket.display()),
+            )),
+        });
+        let (socket, server) = match bound {
+            Ok(bound) => bound,
             Err(error) if !modes.is_empty() => {
-                tracing::warn!("command socket {}: {error}", socket.display());
+                tracing::warn!("command socket: {error}");
                 return serve(platform.as_mut(), &settings, &modes, &NoRequests);
             }
             Err(error) => {
                 return Err(format!(
-                    "no hotkey could be registered and the command socket {} failed: {error}",
-                    socket.display()
+                    "no hotkey could be registered and the command socket failed: {error}"
                 ));
             }
         };
