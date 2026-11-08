@@ -44,7 +44,8 @@ alphabet allows.
   `show_search()` draws with an empty query, a query, and no matches; `hide()` after either
   succeeds, twice.
 - `unregister()` of an unknown id is a no-op; two registered chords get distinct ids; a chord
-  is free again after `unregister()`; a taken chord is `HotkeyTaken`.
+  registered twice (by another program or by this backend) is `HotkeyTaken`; a chord is free
+  again after `unregister()`.
 - `next_event()` on an idle session returns `Ok` within its timeout (plus 2 s slack).
 - `perform(hover)` succeeds or is `PermissionDenied`. The suite never clicks.
 
@@ -61,8 +62,9 @@ Who runs it:
 | macOS backend, real session | `macos_accessibility` (after the trust check) | macOS with an Accessibility grant |
 | Linux X11 backend, real session | `crates/nomouse-linux/tests/contract.rs` (`#[ignore]`) | `just e2e`, Linux CI |
 
-The suite also proves itself: `contract::tests::every_check_can_fail` runs it over a backend
-that breaks every rule and expects each check to report.
+The suite also proves itself: `contract::tests::every_check_can_fail` and
+`the_remaining_checks_can_fail` run it over two backends that break the rules between them, and
+expect every check to report.
 
 GitHub's macOS runners have no Accessibility grant and the backend refuses to start without
 one, so on CI the macOS integration test prints `skipped: this process is not trusted` and

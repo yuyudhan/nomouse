@@ -355,8 +355,12 @@ impl X11 {
     /// Grabs `hotkey` on the root window, in every Caps/Num Lock variant.
     ///
     /// # Errors
-    /// [`PlatformError::HotkeyTaken`] when another client holds the chord.
+    /// [`PlatformError::HotkeyTaken`] when another client, or this backend, holds the chord.
     pub(crate) fn register(&mut self, hotkey: Hotkey) -> Result<HotkeyId, PlatformError> {
+        // X lets one client grab a key twice, so a second registration would silently share it.
+        if self.hotkeys.values().any(|grab| grab.hotkey == hotkey) {
+            return Err(PlatformError::HotkeyTaken(hotkey));
+        }
         let keycodes = self.keymap.keycodes(keys::hotkey_keysym(hotkey.key));
         let Some(first) = keycodes.first() else {
             return Err(PlatformError::Unsupported(format!(

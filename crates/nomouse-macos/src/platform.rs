@@ -53,6 +53,8 @@ pub struct MacPlatform {
     prepared_pids: HashSet<i32>,
     snapshot: Vec<Snapshot>,
     next_hotkey: u32,
+    /// Registered chords by id; a chord registered twice is [`PlatformError::HotkeyTaken`].
+    hotkeys: Vec<(u32, Hotkey)>,
     limits: Limits,
 }
 
@@ -100,6 +102,7 @@ impl MacPlatform {
             prepared_pids: HashSet::new(),
             snapshot: Vec::new(),
             next_hotkey: 1,
+            hotkeys: Vec::new(),
             limits: Limits::default(),
         })
     }
@@ -328,17 +331,22 @@ impl InputInjector for MacPlatform {
 
 impl HotkeySource for MacPlatform {
     fn register(&mut self, hotkey: Hotkey) -> Result<HotkeyId, PlatformError> {
+        if self.hotkeys.iter().any(|(_, held)| *held == hotkey) {
+            return Err(PlatformError::HotkeyTaken(hotkey));
+        }
         let chord = chord(hotkey).ok_or_else(|| {
             PlatformError::Unsupported(format!("{hotkey}: macOS keyboards have no such key"))
         })?;
         let id = self.next_hotkey;
         self.next_hotkey = self.next_hotkey.wrapping_add(1).max(1);
         self.tap.register(id, chord);
+        self.hotkeys.push((id, hotkey));
         Ok(HotkeyId(id))
     }
 
     fn unregister(&mut self, id: HotkeyId) -> Result<(), PlatformError> {
         self.tap.unregister(id.0);
+        self.hotkeys.retain(|(held, _)| *held != id.0);
         Ok(())
     }
 

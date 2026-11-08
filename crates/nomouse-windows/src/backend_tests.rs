@@ -128,7 +128,12 @@ impl System for Fake {
         modifiers: HotkeyModifiers,
         vk: u32,
     ) -> Result<(), SysError> {
-        if self.taken.contains(&vk) {
+        // Like RegisterHotKey: a chord already registered (by anyone) is taken.
+        let duplicate = self
+            .hotkeys
+            .iter()
+            .any(|(_, held, held_vk)| *held == modifiers && *held_vk == vk);
+        if self.taken.contains(&vk) || duplicate {
             return Err(SysError {
                 kind: SysErrorKind::HotkeyTaken,
                 call: "RegisterHotKey",

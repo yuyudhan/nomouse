@@ -22,7 +22,8 @@ use crate::platform::{
     PlatformError, Scope,
 };
 
-/// How long [`HotkeySource::next_event`] may overrun its timeout before the contract fails.
+/// How long [`HotkeySource::next_event`] may overrun its timeout before the contract fails
+/// (the default [`Probe::event_slack`]).
 pub const EVENT_TIMEOUT_SLACK: Duration = Duration::from_secs(2);
 
 /// One broken contract rule: which check and what the backend did.
@@ -45,12 +46,15 @@ impl fmt::Display for Violation {
 pub struct Probe {
     /// A point on screen that is safe to hover (nothing happens on hover there).
     pub hover_at: Point,
+    /// How long `next_event` may overrun its timeout.
+    pub event_slack: Duration,
 }
 
 impl Default for Probe {
     fn default() -> Self {
         Self {
             hover_at: Point::new(5, 5),
+            event_slack: EVENT_TIMEOUT_SLACK,
         }
     }
 }
@@ -63,7 +67,7 @@ pub fn check_platform<P: Platform + ?Sized>(platform: &mut P, probe: Probe) -> V
     check_elements(platform, &mut violations);
     check_overlay(platform, probe, &mut violations);
     check_hotkeys(platform, &mut violations);
-    check_events(platform, &mut violations);
+    check_events(platform, probe, &mut violations);
     check_input(platform, probe, &mut violations);
     violations
 }
@@ -209,6 +213,26 @@ fn check_hotkeys<P: Platform + ?Sized>(platform: &mut P, out: &mut Vec<Violation
     if ids.len() == 2 && ids[0].1 == ids[1].1 {
         violation(out, "hotkeys: distinct ids", format!("{ids:?}"));
     }
+    for &(hotkey, _) in &ids {
+        match platform.register(hotkey) {
+            Err(PlatformError::HotkeyTaken(_)) => {}
+            Ok(duplicate) => {
+                violation(
+                    out,
+                    "hotkeys: a chord registered twice is HotkeyTaken",
+                    format!("{hotkey}: got a second id {duplicate:?}"),
+                );
+                if let Err(error) = platform.unregister(duplicate) {
+                    violation(out, "hotkeys: unregister", format!("{hotkey}: {error:?}"));
+                }
+            }
+            Err(error) => violation(
+                out,
+                "hotkeys: a chord registered twice is HotkeyTaken",
+                format!("{hotkey}: {error:?}"),
+            ),
+        }
+    }
     for (hotkey, id) in ids {
         if let Err(error) = platform.unregister(id) {
             violation(out, "hotkeys: unregister", format!("{hotkey}: {error:?}"));
@@ -229,7 +253,7 @@ fn check_hotkeys<P: Platform + ?Sized>(platform: &mut P, out: &mut Vec<Violation
     }
 }
 
-fn check_events<P: Platform + ?Sized>(platform: &mut P, out: &mut Vec<Violation>) {
+fn check_events<P: Platform + ?Sized>(platform: &mut P, probe: Probe, out: &mut Vec<Violation>) {
     let timeout = Duration::from_millis(50);
     let started = Instant::now();
     let result = platform.next_event(timeout);
@@ -241,7 +265,7 @@ fn check_events<P: Platform + ?Sized>(platform: &mut P, out: &mut Vec<Violation>
             format!("{error:?}"),
         );
     }
-    if waited > timeout + EVENT_TIMEOUT_SLACK {
+    if waited > timeout + probe.event_slack {
         violation(
             out,
             "events: next_event honours its timeout",
@@ -423,9 +447,94 @@ mod tests {
             "overlay: hide after show",
             "hotkeys: unregistering an unknown id is a no-op",
             "hotkeys: distinct ids",
+            "hotkeys: a chord registered twice is HotkeyTaken",
             "hotkeys: unregister",
             "events: next_event on an idle session",
             "input: hover",
+        ] {
+            assert!(
+                checks.contains(expected),
+                "{expected} not reported: {checks:?}"
+            );
+        }
+    }
+
+    /// Breaks the checks [`Broken`] cannot reach: undocumented element and register errors, a
+    /// chord that stays taken after unregister, and a `next_event` that overruns its timeout.
+    #[derive(Default)]
+    struct Sticky {
+        held: Vec<Hotkey>,
+        released: Vec<Hotkey>,
+    }
+
+    impl ElementSource for Sticky {
+        fn elements(&mut self, _scope: Scope) -> Result<Vec<Element>, PlatformError> {
+            Err(PlatformError::Backend("tree exploded".to_owned()))
+        }
+    }
+
+    impl Overlay for Sticky {
+        fn show(&mut self, _hints: &[Hint], _typed: &str) -> Result<(), PlatformError> {
+            Ok(())
+        }
+
+        fn hide(&mut self) -> Result<(), PlatformError> {
+            Ok(())
+        }
+    }
+
+    impl InputInjector for Sticky {
+        fn perform(&mut self, _action: &Action) -> Result<(), PlatformError> {
+            Ok(())
+        }
+    }
+
+    impl HotkeySource for Sticky {
+        fn register(&mut self, hotkey: Hotkey) -> Result<HotkeyId, PlatformError> {
+            if hotkey.key == crate::hotkey::Key::F(23) {
+                return Err(PlatformError::Backend("grab failed".to_owned()));
+            }
+            if self.held.contains(&hotkey) || self.released.contains(&hotkey) {
+                return Err(PlatformError::HotkeyTaken(hotkey));
+            }
+            self.held.push(hotkey);
+            Ok(HotkeyId(1))
+        }
+
+        fn unregister(&mut self, id: HotkeyId) -> Result<(), PlatformError> {
+            if id == HotkeyId(1) {
+                self.released.append(&mut self.held);
+            }
+            Ok(())
+        }
+
+        fn next_event(&mut self, timeout: Duration) -> Result<Option<InputEvent>, PlatformError> {
+            std::thread::sleep(timeout * 2);
+            Ok(None)
+        }
+    }
+
+    impl Platform for Sticky {
+        fn name(&self) -> &'static str {
+            "sticky"
+        }
+    }
+
+    #[test]
+    fn the_remaining_checks_can_fail() {
+        let probe = Probe {
+            event_slack: Duration::from_millis(1),
+            ..Probe::default()
+        };
+        let checks: HashSet<&str> = check_platform(&mut Sticky::default(), probe)
+            .into_iter()
+            .map(|v| v.check)
+            .collect();
+        for expected in [
+            "elements: only documented errors",
+            "hotkeys: register",
+            "hotkeys: a chord is free again after unregister",
+            "events: next_event honours its timeout",
         ] {
             assert!(
                 checks.contains(expected),
