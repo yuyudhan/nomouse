@@ -8,9 +8,10 @@
 #
 # The snapshot lives under target/ (git-ignored) and is updated in place with rsync --checksum,
 # so unchanged files keep their modification times and cargo rebuilds only what changed. Cargo
-# builds into the repository's own target/ directory. Inside the snapshot, git sees the
-# snapshot as its work tree and the snapshot's index, so git-based guards list exactly the
-# committed files.
+# builds into target/hook-target/NAME: workspace crates get the same metadata hashes in the
+# snapshot as in the real tree, so sharing target/ would overwrite the real tree's artifacts
+# with the snapshot's. Inside the snapshot, git sees the snapshot as its work tree and the
+# snapshot's index, so git-based guards list exactly the committed files.
 set -euo pipefail
 
 if [ "$#" -lt 4 ] || [ "$3" != "--" ]; then
@@ -55,6 +56,6 @@ rm -rf "$stage"
 
 cd "$snapshot"
 export GIT_DIR="$git_dir" GIT_WORK_TREE="$snapshot" GIT_INDEX_FILE="$index"
-export CARGO_TARGET_DIR="${root}/target"
+export CARGO_TARGET_DIR="${root}/target/hook-target/${name}"
 echo "hook: checking the ${name} snapshot (${source}) in target/hook-tree/${name}" >&2
 exec "$@"

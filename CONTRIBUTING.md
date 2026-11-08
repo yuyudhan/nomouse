@@ -22,7 +22,8 @@ and pull request to it.
 
 The pre-commit and pre-push hooks check exactly what is committed, not the working tree:
 `scripts/hooks/in-snapshot.sh` exports the staged index (or the pushed commit) to
-`target/hook-tree/<hook>/` and runs the checks there, building into the normal `target/`. So
+`target/hook-tree/<hook>/` and runs the checks there, building into `target/hook-target/<hook>/`
+(never the main `target/`, whose artifacts it would otherwise overwrite). So
 someone else's uncommitted files can neither break nor sneak past your commit. The snapshot is
 updated in place, so repeated runs rebuild only what changed.
 
@@ -33,7 +34,9 @@ updated in place, so repeated runs rebuild only what changed.
 | `just fmt` | `cargo fmt` and `taplo fmt` in place |
 | `just pre-commit` | the pre-commit subset: format check, guards, typos, shellcheck, host clippy |
 | `just check` | format check, guards, typos, shellcheck, clippy `-D warnings` for `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-gnu`, `aarch64-apple-darwin` |
-| `just test` | all unit, integration and property tests |
+| `just test` | all unit, integration, property and backend-contract tests |
+| `just e2e` | Linux X11 end to end on a private Xvfb/i3/AT-SPI session: GTK, Chromium, Qt, the real-backend contract |
+| `just coverage` | line coverage of `nomouse-core` and the binary's non-OS logic; fails below `scripts/coverage-floors.txt` |
 | `just deny` | cargo-deny: advisories, licences, duplicate versions, sources |
 | `just verify` | check, test, deny |
 | `just release-dry-run` | every Linux release asset into `target/dist/`, nothing published, then `just test-install` |
@@ -51,7 +54,9 @@ updated in place, so repeated runs rebuild only what changed.
 - **Lints** (workspace `[lints]`): clippy pedantic; `unwrap_used`, `expect_used` and `panic` denied
   outside tests; `undocumented_unsafe_blocks`; `missing_docs` on every public item; `todo!` and
   `unimplemented!` denied. Fix the code instead of adding `#[allow]`.
-- **Tests** accompany every behaviour change; property tests (proptest) for invariants.
+- **Tests** accompany every behaviour change; property tests (proptest) for invariants. The layers,
+  the backend contract every `Platform` must pass, the e2e rules and the coverage floors are in
+  [docs/testing.md](docs/testing.md).
 - **Platform code** lives in its platform crate and compiles on every OS (OS-specific modules are
   `cfg`-gated), so `cargo clippy --target` works from any machine.
 - **Dependencies** must pass cargo-deny: permissive licences only, one version per crate.
