@@ -39,6 +39,9 @@ jobs:
                   scripts/check-unsafe.sh
             - name: Typos
               run: typos
+            - name: Shellcheck
+              if: runner.os == 'Linux'
+              run: git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck --severity=style
             - name: Clippy
               run: cargo clippy --workspace --all-targets --all-features -- -D warnings
             - name: Test

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Enable with: just install-hooks (sets core.hooksPath to .githooks).
+# Runs `just verify` (format, guards, typos, clippy for every target, tests, cargo-deny) on each
+# commit being pushed, checked out into a snapshot so uncommitted work cannot affect the result.
+set -euo pipefail
+
+zero="0000000000000000000000000000000000000000"
+checked=" "
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+    # Deleting a remote ref pushes nothing to check.
+    if [ "$local_sha" = "$zero" ]; then
+        continue
+    fi
+    commit="$(git rev-parse "${local_sha}^{commit}" 2>/dev/null)" || continue
+    case "$checked" in
+        *" ${commit} "*) continue ;;
+    esac
+    echo "pre-push: verifying ${local_ref} (${commit})" >&2
+    scripts/hooks/in-snapshot.sh pre-push "$commit" -- just verify </dev/null
+    checked="${checked}${commit} "
+done

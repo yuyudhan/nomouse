@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Enable with: just install-hooks (sets core.hooksPath to .githooks).
+# Enforces the repository's subject style: `<gitmoji> [scope: ]summary`, e.g.
+# "✨ core: continuous hotkey" or "🔖 Release v0.1.0". The subject is one line of at most 100
+# characters with no trailing period; a body after a blank line is allowed. Authorship stays
+# with the human committing: trailers or notes crediting a tool or assistant are rejected.
+set -euo pipefail
+
+msg_file="$1"
+
+# Git strips comment lines and trailing blank lines after this hook runs, so ignore them here.
+lines=()
+while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    case "$line" in
+        "# ------------------------ >8 ------------------------"*) break ;;
+        "#"*) continue ;;
+    esac
+    lines+=("$line")
+done <"$msg_file"
+
+fail() {
+    echo "commit-msg: FAILED - $1" >&2
+    if [ "${#lines[@]}" -gt 0 ]; then
+        echo "  subject: ${lines[0]}" >&2
+    fi
+    echo "  expected: <gitmoji> [scope: ]summary (<= 100 chars), e.g. ✨ core: continuous hotkey" >&2
+    exit 1
+}
+
+[ "${#lines[@]}" -gt 0 ] || fail "commit message is empty"
+subject="${lines[0]}"
+[ -n "${subject// /}" ] || fail "commit subject is empty"
+
+# Merge and revert subjects come from git itself.
+case "$subject" in
+    "Merge "* | "Revert \""*) exit 0 ;;
+esac
+
+if printf '%s\n' "${lines[@]}" | grep -qiE 'co-authored-by|generated (with|by)|claude|chatgpt|copilot|codex|anthropic|(ai|coding) assistant|🤖'; then
+    fail "commit messages must not credit a tool or assistant"
+fi
+
+if [ "${#lines[@]}" -gt 1 ] && [ -n "${lines[1]// /}" ]; then
+    fail "separate the subject from the body with a blank line"
+fi
+
+length="$(printf '%s' "$subject" | LC_ALL=C.UTF-8 wc -m | tr -d '[:space:]')"
+[ "$length" -le 100 ] || fail "commit subject is ${length} characters, max is 100"
+
+case "$subject" in
+    *.) fail "commit subject ends in '.' - drop the trailing period" ;;
+esac
+
+# The first token is non-ASCII (a gitmoji, possibly with a variation selector), then one space
+# and a non-space character.
+if ! printf '%s' "$subject" | LC_ALL=C grep -qE $'^[\x80-\xff]+ [^ ]'; then
+    fail "subject must start with a gitmoji, one space, then the summary"
+fi

@@ -26,6 +26,10 @@ guards:
 typos:
     typos
 
+# shellcheck over every tracked shell script and git hook.
+shellcheck:
+    git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck --severity=style
+
 # Clippy with -D warnings for the host only.
 clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -34,8 +38,11 @@ clippy:
 clippy-all:
     for target in {{targets}}; do cargo clippy --workspace --all-targets --all-features --target "$target" -- -D warnings; done
 
-# Everything the pre-commit hook runs.
-check: fmt-check guards typos clippy-all
+# Fast checks on the host: what the pre-commit hook runs on the staged tree.
+pre-commit: fmt-check guards typos shellcheck clippy
+
+# Format check, guards, typos, shellcheck and clippy for every target.
+check: fmt-check guards typos shellcheck clippy-all
 
 # Unit, integration and property tests.
 test:
@@ -45,9 +52,18 @@ test:
 deny:
     cargo deny check
 
-# The full local gate: check, test, deny.
+# The full local gate (what the pre-push hook runs on each pushed commit): check, test, deny.
 verify: check test deny
 
-# Use the repo's git hooks.
+# Use the repo's git hooks (pre-commit, commit-msg, pre-push). Safe to run again.
 install-hooks:
     git config core.hooksPath .githooks
+    @echo "hooks: core.hooksPath = $(git config core.hooksPath)"
+
+# Build every Linux release asset into target/dist/ without tagging or publishing.
+release-dry-run:
+    scripts/release/dry-run.sh
+
+# Cut release VERSION: bump, changelog, verify, commit, tag, push. Only on the owner's word.
+release version:
+    scripts/release/release.sh {{version}}
