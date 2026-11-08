@@ -28,9 +28,7 @@ private = { ignore = true }
 multiple-versions = "deny"
 wildcards = "deny"
 allow-wildcard-paths = true
-skip = [
-    { crate = "syn@2", reason = "windows-rs 0.62 proc macros (windows-implement/interface)" },
-]
+skip = [{ crate = "syn@2", reason = "windows-rs 0.62 proc macros (windows-implement/interface)" }]
 
 [sources]
 unknown-registry = "deny"
