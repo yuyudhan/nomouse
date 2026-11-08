@@ -29,3 +29,31 @@ nomouse-windows.workspace = true
 
 [lints]
 workspace = true
+
+# .deb for the release (scripts/release/deb.sh); no maintainer scripts, only the binary.
+[package.metadata.deb]
+maintainer = "yuyudhan <yuyudhan@users.noreply.github.com>"
+copyright = "yuyudhan"
+section = "utils"
+priority = "optional"
+depends = "libc6 (>= 2.35)"
+extended-description = """\
+nomouse labels every clickable element of the focused window from the accessibility tree; \
+typing a label clicks it. Needs an X11 session with the AT-SPI accessibility bus."""
+assets = [
+    [
+        "target/release/nomouse",
+        "usr/bin/",
+        "755",
+    ],
+    [
+        "../../README.md",
+        "usr/share/doc/nomouse/README.md",
+        "644",
+    ],
+    [
+        "../../CHANGELOG.md",
+        "usr/share/doc/nomouse/CHANGELOG.md",
+        "644",
+    ],
+]

@@ -1,0 +1,174 @@
+name: Release
+
+# A pushed tag vX.Y.Z (from `just release X.Y.Z`) builds every platform and publishes the
+# GitHub release. Running it by hand (workflow_dispatch) is a dry run: it builds and packs
+# everything and uploads the assets as a workflow artifact, but creates no release and no tag.
+on:
+    push:
+        tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    version:
+        name: Version
+        runs-on: ubuntu-latest
+        outputs:
+            version: ${{ steps.version.outputs.version }}
+        steps:
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+            - id: version
+              name: Read the workspace version
+              run: |
+                  version="$(scripts/release/version.sh)"
+                  if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v${version}" ]; then
+                      echo "::error::tag ${GITHUB_REF_NAME} does not match the workspace version ${version}"
+                      exit 1
+                  fi
+                  scripts/release/notes.sh "$version" >/dev/null
+                  echo "version=${version}" >>"$GITHUB_OUTPUT"
+
+    linux:
+        name: Linux ${{ matrix.target }}
+        needs: version
+        runs-on: ubuntu-22.04
+        strategy:
+            fail-fast: true
+            matrix:
+                target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
+        steps:
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+            - name: Install the pinned toolchain
+              run: rustup show active-toolchain || rustup toolchain install
+            - name: Install the aarch64 linker
+              if: matrix.target == 'aarch64-unknown-linux-gnu'
+              run: sudo apt-get update -q && sudo apt-get install -y -q gcc-aarch64-linux-gnu
+            - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+              with:
+                  key: release-${{ matrix.target }}
+            - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+              with:
+                  tool: cargo-deb
+            - name: Build
+              id: build
+              run: echo "binary=$(scripts/release/build.sh ${{ matrix.target }})" >>"$GITHUB_OUTPUT"
+            - name: Smoke test
+              if: matrix.target == 'x86_64-unknown-linux-gnu'
+              run: |
+                  "${{ steps.build.outputs.binary }}" --version
+                  "${{ steps.build.outputs.binary }}" --version | grep -q "${{ needs.version.outputs.version }}"
+            - name: Package
+              run: |
+                  scripts/release/package.sh ${{ matrix.target }} "${{ steps.build.outputs.binary }}" dist
+                  scripts/release/deb.sh ${{ matrix.target }} dist
+            - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: assets-${{ matrix.target }}
+                  path: dist/*
+                  if-no-files-found: error
+
+    macos:
+        name: macOS universal
+        needs: version
+        runs-on: macos-latest
+        steps:
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+            - name: Install the pinned toolchain
+              run: |
+                  rustup show active-toolchain || rustup toolchain install
+                  rustup target add aarch64-apple-darwin x86_64-apple-darwin
+            - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+              with:
+                  key: release-macos
+            - name: Build arm64 and x86_64, join them with lipo
+              id: build
+              run: |
+                  arm="$(scripts/release/build.sh aarch64-apple-darwin)"
+                  intel="$(scripts/release/build.sh x86_64-apple-darwin)"
+                  mkdir -p target/universal-apple-darwin
+                  lipo -create -output target/universal-apple-darwin/nomouse "$arm" "$intel"
+                  lipo -info target/universal-apple-darwin/nomouse
+                  echo "binary=target/universal-apple-darwin/nomouse" >>"$GITHUB_OUTPUT"
+            # Unsigned and not notarized: the installers use curl, which sets no quarantine
+            # flag, so Gatekeeper does not block the binary. Signing needs the owner's Developer
+            # ID certificate as a secret - see CONTRIBUTING.md#releases.
+            - name: Smoke test
+              run: |
+                  "${{ steps.build.outputs.binary }}" --version
+                  "${{ steps.build.outputs.binary }}" --version | grep -q "${{ needs.version.outputs.version }}"
+            - name: Package
+              run: scripts/release/package.sh universal-apple-darwin "${{ steps.build.outputs.binary }}" dist
+            - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: assets-universal-apple-darwin
+                  path: dist/*
+                  if-no-files-found: error
+
+    windows:
+        name: Windows x86_64
+        needs: version
+        runs-on: windows-latest
+        defaults:
+            run:
+                shell: bash
+        steps:
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+            - name: Install the pinned toolchain
+              run: |
+                  rustup show active-toolchain || rustup toolchain install
+                  rustup target add x86_64-pc-windows-msvc
+            - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+              with:
+                  key: release-windows
+            - name: Build
+              id: build
+              run: echo "binary=$(scripts/release/build.sh x86_64-pc-windows-msvc)" >>"$GITHUB_OUTPUT"
+            - name: Smoke test
+              run: |
+                  "${{ steps.build.outputs.binary }}" --version
+                  "${{ steps.build.outputs.binary }}" --version | grep -q "${{ needs.version.outputs.version }}"
+            - name: Package
+              run: scripts/release/package.sh x86_64-pc-windows-msvc "${{ steps.build.outputs.binary }}" dist
+            - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: assets-x86_64-pc-windows-msvc
+                  path: dist/*
+                  if-no-files-found: error
+
+    assemble:
+        name: Assemble${{ github.ref_type == 'tag' && ' and publish' || ' (dry run)' }}
+        needs: [version, linux, macos, windows]
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+            - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+              with:
+                  pattern: assets-*
+                  path: dist
+                  merge-multiple: true
+            - name: Installers, Homebrew formula and SHA256SUMS
+              run: scripts/release/finish.sh "${{ needs.version.outputs.version }}" dist
+            - name: Test install.sh against the built Linux archive
+              run: scripts/test-install.sh dist
+            - name: List assets
+              run: ls -l dist && cat dist/SHA256SUMS
+            - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: release-${{ needs.version.outputs.version }}
+                  path: dist/*
+                  if-no-files-found: error
+            - name: Publish the GitHub release
+              if: github.ref_type == 'tag'
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  scripts/release/notes.sh "${{ needs.version.outputs.version }}" >notes.md
+                  gh release create "$GITHUB_REF_NAME" dist/* \
+                      --title "nomouse ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag

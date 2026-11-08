@@ -31,6 +31,29 @@ in progress; Wayland is detected and refused until M4. See [docs/roadmap.md](doc
 
 GNOME Wayland has no layer-shell or virtual pointer; see the roadmap for what is planned there.
 
+## Install
+
+Each release ships archives for Linux (x86_64, aarch64), macOS (one universal binary) and
+Windows (x86_64), each with a `.sha256`, plus `.deb` packages and a Homebrew formula. The
+installers need no administrator rights; they verify the checksum and install for the current
+user only.
+
+Linux and macOS (into `~/.local/bin`):
+
+    curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash
+
+Windows (PowerShell, into `%LOCALAPPDATA%\Programs\nomouse`, added to the user PATH):
+
+    irm https://github.com/yuyudhan/nomouse/releases/latest/download/install.ps1 | iex
+
+Options go after `bash -s --` (or run `install.ps1` as a file): `--version X.Y.Z`,
+`--uninstall`, `--uninstall --purge` (also deletes the config); on Windows `-Version`,
+`-Uninstall`, `-Purge`. `NOMOUSE_INSTALL_DIR` changes the install folder. Then run
+`nomouse doctor`.
+
+While the repository is private, release downloads need a GitHub login, so these one-liners work
+only once it is public; until then download the assets with `gh release download`.
+
 ## Building
 
 Rust (toolchain pinned in `rust-toolchain.toml`) and [just](https://github.com/casey/just):

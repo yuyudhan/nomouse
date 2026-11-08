@@ -1,0 +1,39 @@
+# Homebrew formula for nomouse, rendered by scripts/release/homebrew.sh for every release and
+# attached to it as nomouse.rb. To publish, copy it into a tap repository (Formula/nomouse.rb in
+# yuyudhan/homebrew-tap); then: brew install yuyudhan/tap/nomouse
+class Nomouse < Formula
+    desc "Keyboard-driven clicking via the accessibility tree"
+    homepage "https://github.com/yuyudhan/nomouse"
+    version "@VERSION@"
+
+    on_macos do
+        url "https://github.com/yuyudhan/nomouse/releases/download/v@VERSION@/nomouse-universal-apple-darwin.tar.gz"
+        sha256 "@SHA256_UNIVERSAL_APPLE_DARWIN@"
+    end
+
+    on_linux do
+        on_intel do
+            url "https://github.com/yuyudhan/nomouse/releases/download/v@VERSION@/nomouse-x86_64-unknown-linux-gnu.tar.gz"
+            sha256 "@SHA256_X86_64_UNKNOWN_LINUX_GNU@"
+        end
+        on_arm do
+            url "https://github.com/yuyudhan/nomouse/releases/download/v@VERSION@/nomouse-aarch64-unknown-linux-gnu.tar.gz"
+            sha256 "@SHA256_AARCH64_UNKNOWN_LINUX_GNU@"
+        end
+    end
+
+    def install
+        bin.install "nomouse"
+    end
+
+    def caveats
+        <<~EOS
+            On macOS grant Accessibility and Input Monitoring to your terminal (or to nomouse) in
+            System Settings > Privacy & Security, then run: nomouse doctor
+        EOS
+    end
+
+    test do
+        assert_match version.to_s, shell_output("#{bin}/nomouse --version")
+    end
+end

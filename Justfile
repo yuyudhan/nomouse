@@ -60,9 +60,15 @@ install-hooks:
     git config core.hooksPath .githooks
     @echo "hooks: core.hooksPath = $(git config core.hooksPath)"
 
-# Build every Linux release asset into target/dist/ without tagging or publishing.
+# Build every Linux release asset into target/dist/ without tagging or publishing, then test
+# install.sh against them.
 release-dry-run:
     scripts/release/dry-run.sh
+    scripts/test-install.sh target/dist
+
+# install.sh end to end against a release directory, in an env -i sandbox with a temp HOME.
+test-install dist="target/dist":
+    scripts/test-install.sh {{dist}}
 
 # Cut release VERSION: bump, changelog, verify, commit, tag, push. Only on the owner's word.
 release version:
