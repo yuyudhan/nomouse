@@ -13,6 +13,8 @@ pub mod action;
 pub mod config;
 pub mod element;
 pub mod filter;
+#[cfg(feature = "glyph")]
+pub mod glyph;
 pub mod hints;
 pub mod hotkey;
 pub mod platform;

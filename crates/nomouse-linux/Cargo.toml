@@ -11,13 +11,13 @@ publish.workspace = true
 nomouse-core.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-ab_glyph = "0.2"
 async-io = "2"
 atspi = { version = "0.30", default-features = false, features = ["proxies", "zbus"] }
 futures-util = { version = "0.3", default-features = false, features = [
     "alloc",
     "async-await-macro",
 ] }
+nomouse-core = { workspace = true, features = ["glyph"] }
 rustix = { version = "1", default-features = false, features = ["event", "std"] }
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 tracing = "0.1"

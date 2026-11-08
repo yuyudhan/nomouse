@@ -57,7 +57,7 @@ Hint alphabet: `asdfghjk` by default, configurable; `i`, `l`, `o` are rejected a
   missing; calls are pipelined per level with a 400 ms per-call timeout. `x11rb` for an
   override-redirect ARGB overlay per RandR monitor, shaped to the label boxes (so it looks right
   without a compositor) with an empty input region (click-through); labels are tiny-skia paths
-  from `ab_glyph` outlines. `XGrabKeyboard` while shown, `XGrabKey` on the root for hotkeys (all
+  from skrifa outlines (the shared `nomouse_core::glyph` module, feature `glyph`). `XGrabKeyboard` while shown, `XGrabKey` on the root for hotkeys (all
   Caps/Num Lock variants, layout-aware keysyms), XTest for input; `semantic_click` uses the
   element's AT-SPI action instead. Wayland sessions get a typed `Unsupported` error. 100% safe Rust.
 - **Linux Wayland (wlroots)**: the same AT-SPI tree; `wayland-client` with `wlr-layer-shell` for

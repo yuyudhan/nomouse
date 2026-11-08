@@ -13,8 +13,6 @@ ignore = [
     # to read the AT-SPI interface XML bundled in the crate: no untrusted XML is ever parsed.
     { id = "RUSTSEC-2026-0194", reason = "quick-xml 0.38: build-time parse of bundled XML only" },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml 0.38: build-time parse of bundled XML only" },
-    # ttf-parser is unmaintained; ab_glyph (overlay label rendering) still depends on it.
-    { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained (not a vulnerability), pulled by ab_glyph for overlay label rendering; replacing the font stack is tracked as a separate task" },
 ]
 
 [licenses]

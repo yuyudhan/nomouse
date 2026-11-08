@@ -1,12 +1,12 @@
-//! Label rendering: glyph outlines from `ab_glyph` filled as tiny-skia paths, converted to X's
-//! premultiplied BGRA byte order.
+//! Label rendering: glyph outlines from the shared `nomouse_core::glyph` rasteriser (skrifa)
+//! filled as tiny-skia paths, converted to X's premultiplied BGRA byte order.
 
 use std::path::{Path, PathBuf};
 
-use ab_glyph::{Font, FontVec, OutlineCurve, PxScale, ScaleFont};
 use nomouse_core::config::OverlayConfig;
+use nomouse_core::glyph::LabelFont;
 use nomouse_core::{PlatformError, Rect};
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Transform};
+use tiny_skia::{Color, Paint, Pixmap, Transform};
 
 /// Bold sans fonts tried first; any TrueType font under the system font directories after.
 const FONT_CANDIDATES: [&str; 6] = [
@@ -69,7 +69,7 @@ pub(crate) struct Label {
 
 /// Draws labels with one loaded font.
 pub(crate) struct Renderer {
-    font: FontVec,
+    font: LabelFont,
     style: Style,
 }
 
@@ -139,10 +139,8 @@ impl Renderer {
                     .to_owned(),
             )
         })?;
-        let data = std::fs::read(&path)
-            .map_err(|e| PlatformError::Backend(format!("{}: {e}", path.display())))?;
-        let font = FontVec::try_from_vec(data)
-            .map_err(|e| PlatformError::Backend(format!("{}: {e}", path.display())))?;
+        let font =
+            LabelFont::from_file(&path).map_err(|e| PlatformError::Backend(e.to_string()))?;
         tracing::debug!("label font {}", path.display());
         Ok(Self { font, style })
     }
@@ -157,16 +155,13 @@ impl Renderer {
         anchor: Rect,
         area: Rect,
     ) -> Option<Label> {
-        let scale = PxScale::from(self.style.font_px);
-        let scaled = self.font.as_scaled(scale);
+        let px = self.style.font_px;
+        let metrics = self.font.line(px);
         let upper: Vec<char> = text.chars().flat_map(char::to_uppercase).collect();
-        let text_width: f32 = upper
-            .iter()
-            .map(|c| scaled.h_advance(self.font.glyph_id(*c)))
-            .sum();
-        let pad_x = (self.style.font_px * 0.3).ceil();
-        let pad_y = (self.style.font_px * 0.15).ceil();
-        let line = (scaled.ascent() - scaled.descent()).ceil();
+        let text_width = self.font.text_width(&upper, px);
+        let pad_x = (px * 0.3).ceil();
+        let pad_y = (px * 0.15).ceil();
+        let line = (metrics.ascent + metrics.descent).ceil();
         let size =
             tiny_skia::Rect::from_xywh(0.0, 0.0, text_width + pad_x * 2.0, line + pad_y * 2.0)?
                 .round_out()?;
@@ -189,51 +184,16 @@ impl Renderer {
             None,
         );
 
-        let (sx, sy) = (scaled.h_scale_factor(), scaled.v_scale_factor());
-        let baseline = pad_y + scaled.ascent();
-        let mut pen = pad_x;
-        for (index, c) in upper.iter().enumerate() {
-            let id = self.font.glyph_id(*c);
-            let advance = scaled.h_advance(id);
-            if let Some(path) = self.font.outline(id).and_then(|outline| {
-                let mut builder = PathBuilder::new();
-                let mut last = None;
-                for curve in &outline.curves {
-                    let (start, end) = match curve {
-                        OutlineCurve::Line(a, b)
-                        | OutlineCurve::Quad(a, _, b)
-                        | OutlineCurve::Cubic(a, _, _, b) => (*a, *b),
-                    };
-                    if last != Some(start) {
-                        builder.move_to(start.x, start.y);
-                    }
-                    match curve {
-                        OutlineCurve::Line(_, b) => builder.line_to(b.x, b.y),
-                        OutlineCurve::Quad(_, c, b) => builder.quad_to(c.x, c.y, b.x, b.y),
-                        OutlineCurve::Cubic(_, c1, c2, b) => {
-                            builder.cubic_to(c1.x, c1.y, c2.x, c2.y, b.x, b.y);
-                        }
-                    }
-                    last = Some(end);
-                }
-                builder.finish()
-            }) {
+        let baseline = pad_y + metrics.ascent;
+        self.font
+            .draw(&mut pixmap, &upper, px, pad_x, baseline, |index| {
                 let rgb = if index < typed {
                     self.style.typed
                 } else {
                     self.style.foreground
                 };
-                let transform = Transform::from_row(sx, 0.0, 0.0, -sy, pen, baseline);
-                pixmap.fill_path(
-                    &path,
-                    &paint(rgb, opacity),
-                    FillRule::Winding,
-                    transform,
-                    None,
-                );
-            }
-            pen += advance;
-        }
+                paint(rgb, opacity)
+            });
 
         let center_y = i64::from(anchor.y) + i64::from(anchor.height) / 2;
         let bounds = Rect::new(

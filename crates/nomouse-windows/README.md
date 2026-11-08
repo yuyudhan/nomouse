@@ -17,7 +17,8 @@ covered by a window above them.
 
 The process opts into per-monitor DPI awareness (v2), so every coordinate is in physical pixels;
 labels are scaled by the DPI of the monitor they sit on. Labels are drawn with Segoe UI Bold (or
-another font from `%WINDIR%\Fonts`) through `ab_glyph` and `tiny-skia`, the same approach as the
+another font from `%WINDIR%\Fonts`) through the shared `nomouse_core::glyph` rasteriser (skrifa
+outlines filled with `tiny-skia`), the same code as the
 Linux backend, in the `[overlay]` colours, size and opacity.
 
 Scans are bounded like the Linux backend's: at most 5000 elements across all windows and a
