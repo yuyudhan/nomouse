@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+repository = "https://github.com/yuyudhan/nomouse"
+publish = false
+
+[workspace.dependencies]
+nomouse-core = { path = "crates/nomouse-core" }
+nomouse-linux = { path = "crates/nomouse-linux" }
+nomouse-macos = { path = "crates/nomouse-macos" }
+nomouse-sys-macos = { path = "crates/nomouse-sys-macos" }
+nomouse-windows = { path = "crates/nomouse-windows" }
+nomouse-sys-windows = { path = "crates/nomouse-sys-windows" }
+clap = { version = "4.6", features = ["derive"] }
+proptest = "1.12"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+toml = "1.2"
+
+[workspace.lints.rust]
+missing_docs = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+struct_excessive_bools = "allow"
+undocumented_unsafe_blocks = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+print_stdout = "warn"
+print_stderr = "warn"

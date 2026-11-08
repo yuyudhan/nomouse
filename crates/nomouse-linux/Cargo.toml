@@ -1,0 +1,21 @@
+[package]
+name = "nomouse-linux"
+description = "Linux backend for nomouse: AT-SPI elements, X11 and wlroots Wayland overlays and input."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = ["x11", "wayland"]
+# X11 session: override-redirect overlay windows, XTest input, XGrabKey hotkeys.
+x11 = []
+# wlroots Wayland session: layer-shell overlay, virtual-pointer/uinput input.
+wayland = []
+
+[dependencies]
+nomouse-core.workspace = true
+
+[lints]
+workspace = true

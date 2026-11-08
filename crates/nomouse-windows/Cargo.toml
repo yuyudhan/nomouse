@@ -1,0 +1,15 @@
+[package]
+name = "nomouse-windows"
+description = "Windows backend for nomouse: UI Automation elements, layered-window overlay, SendInput input."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+nomouse-core.workspace = true
+nomouse-sys-windows.workspace = true
+
+[lints]
+workspace = true

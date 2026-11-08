@@ -1,0 +1,13 @@
+[package]
+name = "nomouse-sys-macos"
+description = "The only crate allowed to call Accessibility (AXUIElement), CGEvent and AppKit FFI for nomouse; exposes safe APIs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

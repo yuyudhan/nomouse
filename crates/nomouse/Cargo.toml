@@ -1,0 +1,24 @@
+[package]
+name = "nomouse"
+description = "Keyboard-driven clicking for Linux, macOS and Windows via the accessibility tree."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+clap.workspace = true
+nomouse-core.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nomouse-linux.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nomouse-macos.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+nomouse-windows.workspace = true
+
+[lints]
+workspace = true

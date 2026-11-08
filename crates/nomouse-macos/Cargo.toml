@@ -1,0 +1,15 @@
+[package]
+name = "nomouse-macos"
+description = "macOS backend for nomouse: AXUIElement elements, NSPanel overlay, CGEvent input."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+nomouse-core.workspace = true
+nomouse-sys-macos.workspace = true
+
+[lints]
+workspace = true
