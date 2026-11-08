@@ -59,12 +59,24 @@ Hint alphabet: `asdfghjk` by default, configurable; `i`, `l`, `o` are rejected a
   without a compositor) with an empty input region (click-through); labels are tiny-skia paths
   from skrifa outlines (the shared `nomouse_core::glyph` module, feature `glyph`). `XGrabKeyboard` while shown, `XGrabKey` on the root for hotkeys (all
   Caps/Num Lock variants, layout-aware keysyms), XTest for input; `semantic_click` uses the
-  element's AT-SPI action instead. Wayland sessions get a typed `Unsupported` error. 100% safe Rust.
-- **Linux Wayland (wlroots)**: the same AT-SPI tree; `wayland-client` with `wlr-layer-shell` for
-  the overlay and keyboard focus; `wlr-virtual-pointer` (or uinput) for input; hotkeys through the
-  compositor's bindings calling `nomouse` or the XDG GlobalShortcuts portal where available.
-  GNOME has neither layer-shell nor virtual pointer: it needs a GNOME Shell extension or the
-  RemoteDesktop portal, tracked separately.
+  element's AT-SPI action instead. 100% safe Rust.
+- **Linux Wayland (wlroots)**, feature `wayland` (default): the same AT-SPI tree. AT-SPI gives
+  native Wayland windows' extents relative to the window, so the focused window's process and
+  each native window's origin come from the compositor's IPC (Sway `get_tree` content rect,
+  Hyprland `j/clients`) and are added to that process's elements; XWayland elements are global
+  already. `wayland-client` (pure Rust backend) with one `zwlr_layer_shell_v1` overlay-layer
+  surface per output (`xdg-output` logical geometry), anchored to all edges, empty input
+  region, `keyboard_interactivity = exclusive` while shown and destroyed when hidden; frames are
+  composed into ARGB8888 and written to a memfd with `pwrite` (no `mmap`). Keys come from
+  `wl_keyboard` through `xkbcommon` with the compositor's keymap and the X11 keysym table.
+  Input replays the XTest plan through `zwlr_virtual_pointer_v1` (absolute motion over the
+  layout box, buttons, discrete wheel) and `zwp_virtual_keyboard_v1` (modifiers, keymap copied
+  from the seat), else an absolute-pointer `/dev/uinput` device (`evdev`). Hotkeys: the
+  compositor binds `nomouse hints|continuous|scroll|search`, which reach the daemon over its
+  Unix socket (`crates/nomouse/src/ipc.rs`, also used on X11 and macOS). GNOME (no
+  layer-shell, no virtual pointer, no client hotkeys) is refused with that reason; KDE works with
+  uinput input and XWayland-only placement. 100% safe Rust; `xkbcommon` and `evdev` hold the
+  FFI.
 - **macOS**: `AXUIElementCopyAttributeValue` over the focused app's window, a non-activating
   `NSPanel` at screen-saver level, `CGEventPost` for input, a `CGEventTap` or Carbon hotkey.
   Requires the Accessibility permission.

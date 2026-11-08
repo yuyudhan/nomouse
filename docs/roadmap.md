@@ -8,9 +8,12 @@
   Accessibility permission flow.
 - **M3, Windows**: `nomouse-sys-windows` wrappers (UIA, SendInput, layered windows), the Windows
   backend, per-monitor DPI.
-- **M4, Wayland (wlroots)**: layer-shell overlay, virtual-pointer/uinput input, portal or compositor
-  hotkeys. GNOME note: no layer-shell or virtual pointer; needs a Shell extension or the
-  RemoteDesktop portal, evaluated here.
+- **M4, Wayland (wlroots), done**: layer-shell overlay, virtual pointer/keyboard or uinput input,
+  compositor-bound hotkeys over the daemon socket, native window placement from Sway/Hyprland
+  IPC; e2e on headless Sway. Evaluated and not done: GNOME needs a Shell extension (no
+  layer-shell, no virtual pointer, no client hotkeys); the GlobalShortcuts portal is not needed
+  since every supported compositor binds commands, and KDE's KWin offers no window positions to
+  clients (native apps there are placed only through XWayland).
 - **M5, packaging**: `cargo install`, a Homebrew tap, an apt repository or PPA, winget and an MSI.
 
 Open: the licence (undecided).

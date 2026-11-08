@@ -22,6 +22,15 @@ the release's section; add entries under Unreleased as changes land.
 - Scroll mode targets scrollable areas (AT-SPI scroll panes, AX scroll areas, UIA Scroll
   pattern) instead of a control inside them.
 - Linux backend: AT-SPI elements, X11 overlay, XTEST input and XGrabKey hotkeys.
+- Wayland backend (Linux feature `wayland`, on by default) for wlroots compositors (Sway,
+  Hyprland): layer-shell overlay that takes the keyboard while labels are up, virtual pointer
+  and keyboard input (or `/dev/uinput`), native Wayland windows placed with the compositor's
+  IPC; `nomouse doctor` explains what GNOME and KDE Wayland lack.
+- `nomouse continuous`, and the daemon's command socket (`$XDG_RUNTIME_DIR/nomouse.sock`):
+  `nomouse hints|continuous|scroll|search` hand the mode to a running daemon (how Wayland
+  compositors bind hotkeys); `--standalone` runs it in-process.
+- `scripts/e2e-wayland.sh`: end-to-end test on a private headless Sway with native and
+  XWayland GTK windows.
 - macOS backend: AX tree walk, NSPanel overlay, CGEvent input and event-tap hotkeys.
 - Windows backend: UI Automation elements, layered overlay, SendInput and hotkeys.
 - `nomouse doctor` reports whether the platform's accessibility and input access work.
