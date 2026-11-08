@@ -294,8 +294,11 @@ mod tests {
         let narrow = font.text_width(&text, 10.0);
         let wide = font.text_width(&text, 20.0);
         assert!(narrow > 0.0);
-        // Some system fonts (macOS CI) scale advances non-linearly at small sizes; allow ~10 %.
-        assert!((wide / narrow - 2.0).abs() < 0.2, "{narrow} {wide}");
+        // Fonts flagged "integer ppem" truncate the scale slightly (~0.2 % on macOS CI).
+        assert!((wide / narrow - 2.0).abs() < 0.02, "{narrow} {wide}");
+        // Two capitals at a 20 px line height span roughly one line height; a wrong scale
+        // (ppem = px, or unscaled font units) falls far outside this range.
+        assert!((12.0..36.0).contains(&wide), "AS at 20 px is {wide} px wide");
     }
 
     #[test]
