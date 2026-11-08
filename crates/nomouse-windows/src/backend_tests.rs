@@ -558,10 +558,7 @@ fn the_fake_system_passes_the_contract() {
     let Some(mut backend) = make(app()) else {
         return;
     };
-    nomouse_core::contract::assert_platform(
-        &mut backend,
-        nomouse_core::contract::Probe::default(),
-    );
+    nomouse_core::contract::assert_platform(&mut backend, nomouse_core::contract::Probe::default());
     assert_eq!(backend.system.hotkeys, Vec::new());
     assert!(!backend.system.grabbed);
 }
