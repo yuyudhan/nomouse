@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use nomouse_core::config::{self, Config};
+use nomouse_core::settings::{Change, Settings as ConfigFile};
 use nomouse_core::{ActionKind, Alphabet, InputEvent, Platform, generate_labels};
 
 use run::{Mode, Outcome, Settings};
@@ -294,21 +295,20 @@ fn start(config: Config) -> Result<Running, String> {
     })
 }
 
-/// Re-reads the configuration. An unreadable or invalid file, or an unchanged one, keeps the
-/// running state. Otherwise the old platform goes first (releasing its hotkeys and overlay)
-/// and a new one starts with the new configuration, or with the old one again when the new
-/// one fails to start.
+/// Re-reads the configuration file and puts a changed configuration in effect. An
+/// unreadable or invalid file, or an unchanged configuration, keeps the running state.
+/// Otherwise the old platform goes first (releasing its hotkeys and overlay) and a new one
+/// starts with the new configuration, or with the old one again when the new one fails to
+/// start.
 ///
 /// # Errors
 /// When neither configuration can start a platform.
-fn reload(running: Running) -> Result<Running, String> {
-    let config = match load_or_default() {
-        Ok(config) => config,
-        Err(error) => {
-            tracing::warn!("config reload: {error}; keeping the running configuration");
-            return Ok(running);
-        }
-    };
+fn reload(running: Running, file: &mut ConfigFile) -> Result<Running, String> {
+    if let Change::Invalid(error) = file.reload() {
+        tracing::warn!("config reload: {error}; keeping the running configuration");
+        return Ok(running);
+    }
+    let config = file.config().clone();
     if config == running.config {
         tracing::info!("config reload: unchanged");
         return Ok(running);
@@ -330,44 +330,20 @@ fn reload(running: Running) -> Result<Running, String> {
     }
 }
 
-/// How often the daemon looks at the configuration file's modification time.
-const WATCH_INTERVAL: Duration = Duration::from_secs(1);
-
-/// Notices changes to the configuration file (written, created or removed) by its
-/// modification time, looked at no more than once per [`WATCH_INTERVAL`].
-struct Watch {
-    path: Option<PathBuf>,
-    stamp: Option<std::time::SystemTime>,
-    checked: Instant,
-}
-
-fn modified(path: Option<&std::path::Path>) -> Option<std::time::SystemTime> {
-    std::fs::metadata(path?)
-        .and_then(|meta| meta.modified())
-        .ok()
-}
-
-impl Watch {
-    fn new(path: Option<PathBuf>) -> Self {
-        Self {
-            stamp: modified(path.as_deref()),
-            path,
-            checked: Instant::now(),
+/// Whether the configuration file changed into a new valid configuration since the last look
+/// (at most once per [`nomouse_core::settings::WATCH_INTERVAL`]). An invalid edit, from a
+/// settings window or a text editor, is logged once and the running configuration stays.
+fn file_changed(file: &mut ConfigFile) -> bool {
+    match file.watch() {
+        Change::Unchanged => false,
+        Change::Reloaded => {
+            tracing::info!("the config file changed");
+            true
         }
-    }
-
-    /// Whether the file changed since the last look.
-    fn changed(&mut self) -> bool {
-        if self.checked.elapsed() < WATCH_INTERVAL {
-            return false;
+        Change::Invalid(error) => {
+            tracing::warn!("config file: {error}; keeping the running configuration");
+            false
         }
-        self.checked = Instant::now();
-        let stamp = modified(self.path.as_deref());
-        if stamp == self.stamp {
-            return false;
-        }
-        self.stamp = stamp;
-        true
     }
 }
 
@@ -378,8 +354,11 @@ fn daemon() -> Result<String, String> {
     );
     let _lock = lock::acquire(&path).map_err(|e| e.to_string())?;
     first_run::before_daemon()?;
-    let mut watch = Watch::new(config::default_path());
-    let running = start(load_or_default()?)?;
+    let mut file = ConfigFile::open_default().map_err(|e| e.to_string())?;
+    if let Some(problem) = file.problem() {
+        return Err(problem.to_owned());
+    }
+    let running = start(file.config().clone())?;
     #[cfg(unix)]
     {
         let bound = ipc::current_path().and_then(|socket| match ipc::Server::bind(&socket) {
@@ -393,7 +372,7 @@ fn daemon() -> Result<String, String> {
             Ok(bound) => bound,
             Err(error) if !running.modes.is_empty() => {
                 tracing::warn!("command socket: {error}");
-                return serve(running, &NoRequests, &mut watch);
+                return serve(running, &NoRequests, &mut file);
             }
             Err(error) => {
                 return Err(format!(
@@ -407,7 +386,7 @@ fn daemon() -> Result<String, String> {
             running.modes.len(),
             socket.display()
         );
-        serve(running, &server, &mut watch)
+        serve(running, &server, &mut file)
     }
     #[cfg(not(unix))]
     {
@@ -419,7 +398,7 @@ fn daemon() -> Result<String, String> {
             running.platform.name(),
             running.modes.len()
         );
-        serve(running, &NoRequests, &mut watch)
+        serve(running, &NoRequests, &mut file)
     }
 }
 
@@ -462,7 +441,7 @@ impl Requests for ipc::Server {
 fn serve(
     mut running: Running,
     requests: &dyn Requests,
-    watch: &mut Watch,
+    file: &mut ConfigFile,
 ) -> Result<String, String> {
     loop {
         let event = running
@@ -479,16 +458,11 @@ fn serve(
                 .map(|(_, mode)| Request::Run(*mode)),
             _ => requests.next(),
         }
-        .or_else(|| {
-            watch.changed().then(|| {
-                tracing::info!("the config file changed");
-                Request::Reload
-            })
-        });
+        .or_else(|| file_changed(file).then_some(Request::Reload));
         let mode = match request {
             Some(Request::Run(mode)) => mode,
             Some(Request::Reload) => {
-                running = reload(running)?;
+                running = reload(running, file)?;
                 continue;
             }
             None => continue,
@@ -517,7 +491,7 @@ fn serve(
             tracing::info!("ignored {ignored} request(s) made while the session ran");
         }
         if reload_pending || reload_requested.get() {
-            running = reload(running)?;
+            running = reload(running, file)?;
         }
     }
 }

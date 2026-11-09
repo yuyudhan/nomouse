@@ -16,6 +16,11 @@ the release's section; add entries under Unreleased as changes land.
   in view. The default, `"fast"`, keeps reading only the viewport. The click waits until the
   scrolled element has stopped moving (browsers scroll smoothly and ignore a click meanwhile)
   and fails with an error, instead of clicking elsewhere, when it never settles in view.
+- A shared settings model (`nomouse_core::settings`) for the settings windows and the daemon:
+  changes are saved at once and atomically into the user's own `config.toml`, writing only the
+  keys that changed and keeping comments, blank lines, key order and unknown keys. The daemon
+  now notices a changed file by its content, so a save within the same second as the last one
+  is not missed, and reports an invalid edit once while the last good settings stay.
 
 ## [0.1.2] - 2026-11-09
 

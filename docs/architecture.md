@@ -177,13 +177,16 @@ enhanced_ui_apps = []        # bundle ids that get AXEnhancedUserInterface (Chro
 ```
 
 New keys land in `nomouse-core/src/config.rs` with a default, a validation rule when the type
-alone does not constrain them, a unit test, and an entry here and in the README.
+alone does not constrain them, a unit test, an entry in `settings::FIELDS` (so the settings
+windows show it), and an entry here and in the README.
 
-The daemon re-reads the file when its modification time changes (checked every second) and on
-`nomouse reload` (a `reload` line on the command socket). An unreadable or invalid file is
-logged and the running configuration stays; an unchanged one does nothing. Otherwise the old
-platform is dropped first, releasing its hotkeys and overlay, and a new one starts with the
-new configuration (or the previous one again if the new one cannot start).
+The daemon holds the file as a `nomouse_core::Settings` (below) and re-reads it when its
+content changes (looked at every second, whoever wrote it: a settings window or a text editor)
+and on `nomouse reload` (a `reload` line on the command socket). An unreadable or invalid file
+is logged once and the running configuration stays; an unchanged configuration (a comment
+edited) does nothing. Otherwise the old platform is dropped first, releasing its hotkeys and
+overlay, and a new one starts with the new configuration (or the previous one again if the
+new one cannot start).
 `ElementSource::focused_app` names the focused window's app (`AppIdentity`) for
 `ignore.apps`; an ignored activation scans nothing and shows nothing.
 `overlay.theme = "auto"` resolves to `light` or `dark` through `OverlayConfig::colours(appearance)`.
@@ -192,6 +195,55 @@ On Linux the appearance is the XDG desktop portal's `org.freedesktop.appearance 
 older `Read`) before each activation's scan, so a switch applies to the next labels. On macOS
 it is `NSApp.effectiveAppearance` (Dark Aqua or not, which follows System Settings, its Auto
 schedule included), read the same way before each scan. Windows uses the light colours for now.
+
+### Settings model
+
+`nomouse_core::settings` is the one way anything edits `config.toml`: the daemon, the macOS
+settings window and menu bar, and the Linux tray and settings window all use it, so they agree
+on the file and on validation. It has no threads and no OS code; callers poll it from their own
+event loop.
+
+```rust
+use nomouse_core::settings::{Change, Settings, Value};
+
+let mut file = Settings::open_default()?;        // or Settings::open(path)
+file.config();                                   // &Config in effect
+file.problem();                                  // Some(message) while the file is invalid
+file.set("overlay.theme", Value::Text("dark".into()))?; // validate, then save at once
+file.update(|config| config.scroll.step = 5)?;   // typed form of the same
+file.value("hotkeys.hints")?;                    // Value::Text("ctrl+space")
+file.reset()?;                                   // every setting back to its default
+match file.watch() {                             // call every tick; looks once a second
+    Change::Unchanged => {}
+    Change::Reloaded => { /* file.config() changed: apply it */ }
+    Change::Invalid(error) => { /* report it; the last good config stays */ }
+}
+```
+
+| Item | Meaning |
+|------|---------|
+| `Settings::open(path)` / `open_default()` | Reads the file. Missing: every default. Invalid: the defaults stay in effect and `problem()` says why. Errors only when the file exists but cannot be read (or no path: `NoPath`). |
+| `config()`, `problem()`, `path()` | The configuration in effect (the last good one while the file is invalid), why the file on disk is not in effect, the file. |
+| `refresh()` | Re-reads the file when its content changed since the last read or write. `Change::Unchanged`, `Reloaded` (a different valid configuration is now in effect) or `Invalid(SettingsError)` (reported once per edit). |
+| `watch()` | `refresh()` at most once per `WATCH_INTERVAL` (1 s); call it every loop. |
+| `reload()` | Re-reads even when the content looks unchanged (`nomouse reload`), so an invalid file is reported again. |
+| `update(fn(&mut Config))`, `replace(Config)` | Reads edits made meanwhile, applies the change, validates (`SettingsError::Rejected`, nothing written), then saves. Returns whether the file changed. |
+| `value(key)`, `set(key, Value)` | One setting by its `section.key`, as `Value::Text` (text, a choice, a hotkey, a `#rrggbb` colour), `Number`, `Bool`, `List` (app ids) or `Unset` (an optional colour). `UnknownKey` and `WrongKind` errors. Hotkeys come back in canonical spelling (`shift+super+space`). |
+| `reset()` | Removes every setting from the file; comments and unknown keys stay. |
+| `settings::FIELDS`, `Section::ALL`, `Section::fields()` | Every key with its section (Hotkeys, Labels, Appearance, Scroll, Search, Ignored apps, Advanced), title, help and `Kind` (`Text`, `Choice(&[Choice])`, `Number { min, max }`, `Toggle`, `Hotkey`, `Colour`, `Apps`), plus `only_on` (`Some("macos")` for `macos.enhanced_ui_apps`). A test checks they list exactly the keys `Config` has, and that every choice and number limit matches validation. |
+
+How a save writes the file:
+
+- Only the keys whose value the change touched are written, through `toml_edit` into the
+  user's own document: a value is replaced in place (its trailing comment stays), a value set
+  back to its default is removed, and a table left empty goes with its comments moved to the
+  next table. Untouched keys stay as written, even when they hold the default. Comments, blank
+  lines, key order, inline and dotted tables, and keys this version does not know are kept.
+- A file that is not TOML at all is never written (`SettingsError::Syntax`); an invalid but
+  well-formed one (an unknown key, a value out of range) takes the change and keeps reporting
+  its problem.
+- Atomic: a temporary file in the same directory, flushed, given the old file's permissions,
+  then renamed over it. A symbolic link (dotfiles) is followed, so the link stays.
 
 ## Logging
 

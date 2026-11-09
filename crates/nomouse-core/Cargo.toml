@@ -23,6 +23,7 @@ tiny-skia = { version = "0.12", default-features = false, features = [
     "simd",
 ], optional = true }
 toml.workspace = true
+toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
 
 [dev-dependencies]
 proptest.workspace = true

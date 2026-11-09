@@ -5,6 +5,8 @@
 //! - [`action`]: pointer actions.
 //! - [`hotkey`]: hotkey chords and overlay key presses.
 //! - [`config`]: the TOML configuration.
+//! - [`settings`]: the settings model over `config.toml`: edited, saved atomically and
+//!   watched, plus the fields a settings window shows.
 //! - [`platform`]: the traits each OS backend implements.
 //! - [`session`]: one hint-mode activation, tying the above together.
 //! - [`search`]: fuzzy matching of a typed query against element names (search-by-text).
@@ -31,6 +33,7 @@ pub mod reveal;
 pub mod scroll;
 pub mod search;
 pub mod session;
+pub mod settings;
 pub mod setup;
 
 pub use action::{Action, ActionKind, MouseButton};
@@ -46,3 +49,4 @@ pub use platform::{
 };
 pub use scroll::{ScrollEvent, ScrollSession};
 pub use session::{HintSession, KeyBindings, SessionEvent};
+pub use settings::{Settings, SettingsError};
