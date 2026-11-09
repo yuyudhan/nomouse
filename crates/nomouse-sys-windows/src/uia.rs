@@ -1,5 +1,6 @@
 //! UI Automation: one cached bulk query per window and pattern-based activation.
 
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use windows::Win32::Foundation::HWND;
@@ -92,9 +93,18 @@ impl Automation {
     /// Enters a single-threaded COM apartment and creates the UIA client (`CUIAutomation8` when
     /// available, else `CUIAutomation`).
     ///
+    /// Creation is serialised process-wide: when clients are created at the same moment on
+    /// several threads (parallel tests, a doctor check beside the backend), `UIAutomationCore`
+    /// fails `CreateCacheRequest` with `E_FAIL` (reproduced on windows-latest by
+    /// `tests/concurrent_clients.rs`, T96). Clients are created once per backend, so the lock
+    /// costs nothing in practice.
+    ///
     /// # Errors
     /// Fails when COM or UI Automation cannot be initialised.
     pub fn new() -> Result<Self, SysError> {
+        static CREATION: Mutex<()> = Mutex::new(());
+        // A poisoned lock only means another creation panicked; the guard protects no data.
+        let _serialised = CREATION.lock().unwrap_or_else(PoisonError::into_inner);
         let apartment = ComApartment::enter()?;
         // SAFETY: COM is initialised on this thread (apartment above); the CLSIDs are static and
         // CoCreateInstance returns an owned interface pointer wrapped by the windows crate.
