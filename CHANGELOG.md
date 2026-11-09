@@ -21,6 +21,16 @@ the release's section; add entries under Unreleased as changes land.
   keys that changed and keeping comments, blank lines, key order and unknown keys. The daemon
   now notices a changed file by its content, so a save within the same second as the last one
   is not missed, and reports an invalid edit once while the last good settings stay.
+- Linux: nomouse is in the app launcher. `install.sh` installs the desktop entry
+  `io.github.yuyudhan.nomouse.desktop` and its icons (hicolor 16 to 512 px and a scalable SVG)
+  into `~/.local/share`, refreshes the desktop and icon caches, and `--uninstall` removes them;
+  the `.deb` and the tarball ship the same files. On GNOME, press Super and type `nomouse`.
+- `nomouse launch`, what the entry runs: it starts the daemon unless one runs and shows a
+  notification with its state and the hotkeys, and on GNOME Wayland says to log in with
+  "Ubuntu on Xorg". The entry's "nomouse doctor" action (`nomouse launch --doctor`) opens
+  `nomouse doctor` in a terminal, or shows the report as a notification without one.
+- The command socket answers `ping`, which `nomouse launch` uses to see that a daemon it
+  started is up.
 
 ## [0.1.2] - 2026-11-09
 

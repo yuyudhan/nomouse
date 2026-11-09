@@ -40,7 +40,8 @@ nomouse-windows.workspace = true
 [lints]
 workspace = true
 
-# .deb for the release (scripts/release/deb.sh); no maintainer scripts, only the binary.
+# .deb for the release (scripts/release/deb.sh); no maintainer scripts: the binary, its docs and
+# the app launcher entry with its icons (packaging/linux/share, the same files as the tarball).
 [package.metadata.deb]
 maintainer = "yuyudhan <yuyudhan@users.noreply.github.com>"
 copyright = "yuyudhan"
@@ -65,6 +66,60 @@ assets = [
     [
         "../../CHANGELOG.md",
         "usr/share/doc/nomouse/CHANGELOG.md",
+        "644",
+    ],    [
+        "../../packaging/linux/share/applications/io.github.yuyudhan.nomouse.desktop",
+        "usr/share/applications/io.github.yuyudhan.nomouse.desktop",
+        "644",
+    ],
+    [
+        "../../packaging/linux/share/icons/hicolor/scalable/apps/io.github.yuyudhan.nomouse.svg",
+        "usr/share/icons/hicolor/scalable/apps/io.github.yuyudhan.nomouse.svg",
+        "644",
+    ],
+    [
+        "../../packaging/linux/share/icons/hicolor/16x16/apps/io.github.yuyudhan.nomouse.png",
+        "usr/share/icons/hicolor/16x16/apps/io.github.yuyudhan.nomouse.png",
+        "644",
+    ],
+    [
+        "../../packaging/linux/share/icons/hicolor/22x22/apps/io.github.yuyudhan.nomouse.png",
+        "usr/share/icons/hicolor/22x22/apps/io.github.yuyudhan.nomouse.png",
+        "644",
+    ],
+    [
+        "../../packaging/linux/share/icons/hicolor/24x24/apps/io.github.yuyudhan.nomouse.png",
+        "usr/share/icons/hicolor/24x24/apps/io.github.yuyudhan.nomouse.png",
+        "644",
+    ],
+    [
+        "../../packaging/linux/share/icons/hicolor/32x32/apps/io.github.yuyudhan.nomouse.png",
+        "usr/share/icons/hicolor/32x32/apps/io.github.yuyudhan.nomouse.png",
+        "644",
+    ],
+    [
+        "../../packaging/linux/share/icons/hicolor/48x48/apps/io.github.yuyudhan.nomouse.png",
+        "usr/share/icons/hicolor/48x48/apps/io.github.yuyudhan.nomouse.png",
+        "644",
+    ],
+    [
+        "../../packaging/linux/share/icons/hicolor/64x64/apps/io.github.yuyudhan.nomouse.png",
+        "usr/share/icons/hicolor/64x64/apps/io.github.yuyudhan.nomouse.png",
+        "644",
+    ],
+    [
+        "../../packaging/linux/share/icons/hicolor/128x128/apps/io.github.yuyudhan.nomouse.png",
+        "usr/share/icons/hicolor/128x128/apps/io.github.yuyudhan.nomouse.png",
+        "644",
+    ],
+    [
+        "../../packaging/linux/share/icons/hicolor/256x256/apps/io.github.yuyudhan.nomouse.png",
+        "usr/share/icons/hicolor/256x256/apps/io.github.yuyudhan.nomouse.png",
+        "644",
+    ],
+    [
+        "../../packaging/linux/share/icons/hicolor/512x512/apps/io.github.yuyudhan.nomouse.png",
+        "usr/share/icons/hicolor/512x512/apps/io.github.yuyudhan.nomouse.png",
         "644",
     ],
 ]

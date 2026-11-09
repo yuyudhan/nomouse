@@ -7,8 +7,9 @@
 #   OUTDIR   where nomouse-NAME.tar.gz (or .zip for Windows) and its .sha256 go
 #
 # The archive holds one folder, nomouse-NAME/, with the binary, README.md, CHANGELOG.md,
-# LICENSE-MIT and LICENSE-APACHE. Asset names carry no version, so releases/latest/download/<asset>
-# always resolves.
+# LICENSE-MIT and LICENSE-APACHE; Linux archives also hold share/ from packaging/linux/share
+# (the app launcher entry and its hicolor icons, which install.sh and the .deb install). Asset
+# names carry no version, so releases/latest/download/<asset> always resolves.
 set -euo pipefail
 
 if [ "$#" -ne 3 ]; then
@@ -32,6 +33,9 @@ mkdir -p "${work}/${folder}"
 cp "$binary" "${work}/${folder}/"
 cp "${root}/README.md" "${root}/CHANGELOG.md" "${root}/LICENSE-MIT" "${root}/LICENSE-APACHE" \
     "${work}/${folder}/"
+if [[ "$name" == *-linux-* ]]; then
+    cp -R "${root}/packaging/linux/share" "${work}/${folder}/"
+fi
 chmod 755 "${work}/${folder}/$(basename "$binary")"
 
 if [[ "$name" == *-windows-* ]]; then

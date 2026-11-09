@@ -15,6 +15,14 @@ pub(crate) fn lock_path(runtime_dir: Option<PathBuf>, user: Option<String>) -> P
     }
 }
 
+/// [`lock_path`] for this process's `XDG_RUNTIME_DIR` and `USER`.
+pub(crate) fn current_path() -> PathBuf {
+    lock_path(
+        std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
+        std::env::var("USER").ok(),
+    )
+}
+
 /// Holds the lock until dropped (the OS releases it when the process exits).
 #[derive(Debug)]
 pub(crate) struct InstanceLock {

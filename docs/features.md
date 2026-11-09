@@ -159,15 +159,16 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-DIST-06 | AUR `nomouse-bin` | n/a | PKGBUILD from the release tarball | P1 | missing |
 | NM-DIST-07 | AppImage | n/a | linuxdeploy (bundles nothing: AT-SPI and X11 come from the host) | P2 | missing |
 | NM-DIST-08 | udev rule and autostart files shipped in the Linux packages | n/a | `/usr/lib/udev/rules.d/70-nomouse-uinput.rules`, `/etc/xdg/autostart/nomouse.desktop` | P1 | missing |
+| NM-DIST-09 | App launcher entry and icons (find nomouse with Super; picking it starts the daemon and notifies the hotkeys) | `nomouse.app` in Applications | `io.github.yuyudhan.nomouse.desktop` and hicolor icons from `install.sh` and the `.deb`; `nomouse launch` | P1 | done |
 
 ## Counts
 
 | Priority | Features | Done | Partial | Missing |
 | --- | --- | --- | --- | --- |
 | P0 | 29 | 26 | 3 | 0 |
-| P1 | 25 | 20 | 0 | 5 |
+| P1 | 26 | 21 | 0 | 5 |
 | P2 | 17 | 0 | 3 | 14 |
-| **All** | **71** | **46** | **6** | **19** |
+| **All** | **72** | **47** | **6** | **19** |
 
 A feature counts as done when it is done on macOS and Linux X11 (Wayland limits are listed per
 row). The three open P0 items are all macOS distribution and onboarding: the signed and

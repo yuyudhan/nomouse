@@ -8,7 +8,8 @@
 //! mode 0700 and refused when it is a symlink, not ours, or open to group or others. A request
 //! is one line of at most [`MAX_REQUEST`] bytes (`hints click`, `continuous right-click`,
 //! `scroll`, `search`, `reload`); the daemon answers `ok` before it acts, or
-//! `error: <reason>`.
+//! `error: <reason>`. `ping` is answered `ok` and does nothing: `nomouse launch` uses it to see
+//! that a daemon it started is up.
 
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
@@ -32,6 +33,8 @@ pub(crate) const MAX_REQUEST: usize = 4096;
 const MAX_CLIENTS: usize = 8;
 /// The socket's file name.
 const SOCKET: &str = "nomouse.sock";
+/// The request that only asks whether the daemon is up.
+const PING: &str = "ping";
 
 /// Where the socket lives: `$XDG_RUNTIME_DIR`, else a private per-user directory in the temp
 /// dir, created (mode 0700) and checked by [`private_dir`].
@@ -194,6 +197,24 @@ pub(crate) fn send(path: &Path, request: Request) -> Result<(), SendError> {
     }
 }
 
+/// Whether a daemon answers `ping` on the socket at `path`.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn ping(path: &Path) -> bool {
+    let Ok(mut stream) = UnixStream::connect(path) else {
+        return false;
+    };
+    if stream
+        .set_read_timeout(Some(TIMEOUT))
+        .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)))
+        .and_then(|()| writeln!(stream, "{PING}"))
+        .is_err()
+    {
+        return false;
+    }
+    let mut reply = String::new();
+    BufReader::new(&stream).read_line(&mut reply).is_ok() && reply.trim_end() == "ok"
+}
+
 /// The daemon's listening socket, served by a thread that acknowledges each request at once
 /// (so a bound key never waits on a running session); removed when dropped.
 #[derive(Debug)]
@@ -326,6 +347,10 @@ fn answer(stream: &UnixStream) -> Option<Request> {
     if line.len() >= MAX_REQUEST && !line.ends_with('\n') {
         tracing::warn!("command socket: request longer than {MAX_REQUEST} bytes");
         let _ = writeln!(writer, "error: request too long");
+        return None;
+    }
+    if line.trim() == PING {
+        let _ = writeln!(writer, "ok");
         return None;
     }
     match decode(line.trim()) {
@@ -463,6 +488,16 @@ mod tests {
         let server = Server::bind(&path).unwrap();
         assert_eq!(request(&path, b"scroll\n"), "ok\n");
         assert_eq!(wait_poll(&server), Some(Request::Run(Mode::Scroll)));
+    }
+
+    #[test]
+    fn ping_is_answered_and_queues_nothing() {
+        let path = scratch("ping.sock");
+        assert!(!ping(&path), "nothing listens yet");
+        let server = Server::bind(&path).unwrap();
+        assert!(ping(&path));
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(server.poll(), None);
     }
 
     #[test]

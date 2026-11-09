@@ -27,7 +27,7 @@ drop `--retry-all-errors` there.
 | System | What you get |
 |--------|--------------|
 | macOS 11+, Apple silicon and Intel | `nomouse.app` in `/Applications` (`~/Applications` when `/Applications` is not writable), and a `nomouse` command in `~/.local/bin` that runs the app's binary |
-| Linux x86_64 and aarch64 | the `nomouse` binary in `~/.local/bin` |
+| Linux x86_64 and aarch64 | the `nomouse` binary in `~/.local/bin`, and nomouse in the app launcher: the desktop entry `io.github.yuyudhan.nomouse.desktop` in `~/.local/share/applications` with its icons in `~/.local/share/icons/hicolor` |
 
 If `~/.local/bin` is not on your `PATH`, the installer says so and gives the line to add to
 `~/.profile` or `~/.zshrc`.
@@ -75,7 +75,10 @@ start the app.
 1. Run the one-line install above.
 2. `nomouse setup` turns on the accessibility bus (`org.a11y.Status.IsEnabled`) if your desktop
    left it off and explains anything else that is missing.
-3. `nomouse` starts the daemon; `ctrl+space` shows the labels.
+3. `nomouse` starts the daemon; `ctrl+space` shows the labels. Or start it from the app
+   launcher: press Super, type `nomouse` and pick it. Picking it starts the daemon unless it is
+   running already and shows a notification with its state and the hotkeys; right-click it for
+   **nomouse doctor**, which opens the doctor's report in a terminal.
 4. Start at login: add `nomouse daemon` to your desktop's startup applications (GNOME Tweaks ›
    Startup Applications, KDE System Settings › Autostart, or `exec nomouse daemon` in an i3
    config).
@@ -133,13 +136,15 @@ echo 'KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node
 
 **GNOME on Wayland** is not supported yet: Mutter offers no overlay layer, no virtual pointer and
 no client hotkeys. Choose **GNOME on Xorg** (**Ubuntu on Xorg** on Ubuntu) under the gear on the
-login screen; the installer and `nomouse doctor` both say so when they run on GNOME Wayland. See
+login screen; the installer, `nomouse doctor` and the app launcher's nomouse entry all say so
+when they run on GNOME Wayland. See
 [platform-support.md](platform-support.md) for each compositor.
 
 ## Debian and Ubuntu package
 
 Every release also has `nomouse_amd64.deb` and `nomouse_arm64.deb`, which install
-`/usr/bin/nomouse`:
+`/usr/bin/nomouse` and the same app launcher entry and icons as the installer, under
+`/usr/share/applications` and `/usr/share/icons/hicolor`:
 
 ```sh
 sudo apt install ./nomouse_amd64.deb
@@ -190,8 +195,9 @@ keeps working until you restart it. Your config is never touched.
 curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash -s -- --uninstall
 ```
 
-This removes `~/.local/bin/nomouse` and, on macOS, `nomouse.app` (only when it is nomouse's bundle,
-`com.yuyudhan.nomouse`). Add `--purge` to delete `~/.config/nomouse` too. On macOS, also remove
+This removes `~/.local/bin/nomouse`, on Linux the app launcher entry and its icons, and on macOS
+`nomouse.app` (only when it is nomouse's bundle, `com.yuyudhan.nomouse`). Add `--purge` to
+delete `~/.config/nomouse` too. On macOS, also remove
 nomouse from **Privacy & Security › Accessibility** and from **Login Items**.
 
 ## Building from source

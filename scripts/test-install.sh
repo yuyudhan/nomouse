@@ -80,11 +80,35 @@ else
     fail "nomouse --version: ${version:-no output}"
 fi
 
+# 3b. The app launcher entry and its icons are installed, and the .deb ships the same files.
+entry="${home}/.local/share/applications/io.github.yuyudhan.nomouse.desktop"
+if grep -qxF "Exec=\"${home}/.local/bin/nomouse\" launch" "$entry" 2>/dev/null &&
+    [ -f "${home}/.local/share/icons/hicolor/256x256/apps/io.github.yuyudhan.nomouse.png" ]; then
+    pass "the app launcher entry runs the installed nomouse and has its icons"
+else
+    fail "no app launcher entry at ${entry}"
+fi
+deb="${dist}/nomouse_amd64.deb"
+if [ -f "$deb" ] && command -v dpkg-deb >/dev/null 2>&1; then
+    mkdir -p "${work}/deb" "${work}/tar"
+    dpkg-deb -x "$deb" "${work}/deb"
+    tar -xzf "${dist}/nomouse-x86_64-unknown-linux-gnu.tar.gz" -C "${work}/tar"
+    if diff -r "${work}/deb/usr/share/applications" "${work}/tar/nomouse-x86_64-unknown-linux-gnu/share/applications" &&
+        diff -r "${work}/deb/usr/share/icons" "${work}/tar/nomouse-x86_64-unknown-linux-gnu/share/icons"; then
+        pass "the .deb and the tarball ship the same launcher entry and icons"
+    else
+        fail "the .deb's usr/share differs from the tarball's share/"
+    fi
+else
+    echo "skip - no ${deb} or no dpkg-deb: the .deb's launcher files are not compared"
+fi
+
 # 4. Uninstall keeps the config.
 sandbox "${home}/.local/bin/nomouse" config init >/dev/null
 out="$(sandbox bash "${dist}/install.sh" --uninstall 2>&1)"
-if [ ! -e "${home}/.local/bin/nomouse" ] && [ -f "${home}/.config/nomouse/config.toml" ]; then
-    pass "--uninstall removes the binary and keeps the config"
+if [ ! -e "${home}/.local/bin/nomouse" ] && [ -f "${home}/.config/nomouse/config.toml" ] &&
+    [ ! -e "$entry" ]; then
+    pass "--uninstall removes the binary and the launcher entry and keeps the config"
 else
     fail "--uninstall: ${out}"
 fi

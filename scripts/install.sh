@@ -10,7 +10,9 @@
 #   macOS (Apple silicon and Intel): nomouse.app into /Applications (~/Applications when
 #     /Applications is not writable), quarantine removed, plus a `nomouse` command in
 #     ~/.local/bin that points into the app.
-#   Linux (x86_64, aarch64; X11 and Wayland): the `nomouse` binary into ~/.local/bin.
+#   Linux (x86_64, aarch64; X11 and Wayland): the `nomouse` binary into ~/.local/bin, plus the
+#     app launcher entry (GNOME: press Super, type nomouse) and its icons into
+#     ${XDG_DATA_HOME:-~/.local/share}/applications and .../icons/hicolor.
 #
 # Options:
 #   --version X.Y.Z    Install that release instead of the latest.
@@ -32,6 +34,9 @@ set -euo pipefail
 
 repo="yuyudhan/nomouse"
 bundle_id="com.yuyudhan.nomouse"
+# The Linux desktop entry's id and icon name, and the hicolor sizes the release ships.
+app_id="io.github.yuyudhan.nomouse"
+icon_sizes="16 22 24 32 48 64 128 256 512"
 # Every request: retry failures, give up on a connection that never opens, and abort a transfer
 # that stalls (under 1 KB/s for 30 s) instead of hanging. --retry alone retries only timeouts and
 # HTTP 408/429/5xx; install_release adds --retry-all-errors where curl has it (7.71+), so a
@@ -280,10 +285,98 @@ install_linux() {
     place_binary "${work}/nomouse-${target}/nomouse" "${bin_dir}/nomouse"
 
     say "installed $("${bin_dir}/nomouse" --version) to ${bin_dir}/nomouse"
+    if [ -d "${work}/nomouse-${target}/share" ]; then
+        install_desktop_entry "${work}/nomouse-${target}/share" "$bin_dir"
+    else
+        say "this release has no app launcher entry (nomouse 0.1.3 and later have one)"
+    fi
     echo
     say "next steps:"
     path_hint "$bin_dir"
     linux_next_steps "$bin_dir"
+}
+
+# Where desktop entries and icons go: the XDG data home, which every desktop's app launcher
+# reads.
+data_dir() {
+    echo "${XDG_DATA_HOME:-${HOME}/.local/share}"
+}
+
+# The desktop entry's Exec and TryExec lines run the nomouse in BIN_DIR, which need not be on
+# the desktop session's PATH. Exec quotes the path; one with a character Exec quoting would
+# have to escape (" ` $ \ %) keeps plain `nomouse`, found on PATH.
+desktop_exec_path() {
+    case "$1" in
+        *[\"\`\$\\%]*) echo nomouse ;;
+        *) echo "$1/nomouse" ;;
+    esac
+}
+
+# Copies the release's desktop entry from SHARE (the archive's share/ folder) with Exec and
+# TryExec pointing at BIN_DIR, and its icons, into the data dir; then refreshes the launcher's
+# caches.
+install_desktop_entry() {
+    local share="$1" bin_dir="$2" data exe line size icon
+    data="$(data_dir)"
+    exe="$(desktop_exec_path "$bin_dir")"
+    [ -f "${share}/applications/${app_id}.desktop" ] || fail "the archive has no ${app_id}.desktop"
+    mkdir -p "${data}/applications"
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            "Exec=nomouse "*)
+                if [ "$exe" = nomouse ]; then
+                    printf '%s\n' "$line"
+                else
+                    printf 'Exec="%s" %s\n' "$exe" "${line#Exec=nomouse }"
+                fi
+                ;;
+            "TryExec=nomouse") printf 'TryExec=%s\n' "$exe" ;;
+            *) printf '%s\n' "$line" ;;
+        esac
+    done <"${share}/applications/${app_id}.desktop" >"${data}/applications/.${app_id}.new"
+    mv -f "${data}/applications/.${app_id}.new" "${data}/applications/${app_id}.desktop"
+    for size in $icon_sizes scalable; do
+        if [ "$size" = scalable ]; then
+            icon="scalable/apps/${app_id}.svg"
+        else
+            icon="${size}x${size}/apps/${app_id}.png"
+        fi
+        [ -f "${share}/icons/hicolor/${icon}" ] || fail "the archive has no icon ${icon}"
+        mkdir -p "$(dirname "${data}/icons/hicolor/${icon}")"
+        cp "${share}/icons/hicolor/${icon}" "${data}/icons/hicolor/${icon}"
+    done
+    refresh_desktop_caches "$data"
+    say "added nomouse to the app launcher: ${data}/applications/${app_id}.desktop"
+}
+
+# Removes the desktop entry and icons install_desktop_entry put in place.
+remove_desktop_entry() {
+    local data size removed=false
+    data="$(data_dir)"
+    if [ -e "${data}/applications/${app_id}.desktop" ]; then
+        rm -f "${data}/applications/${app_id}.desktop"
+        removed=true
+    fi
+    for size in $icon_sizes; do
+        rm -f "${data}/icons/hicolor/${size}x${size}/apps/${app_id}.png"
+    done
+    rm -f "${data}/icons/hicolor/scalable/apps/${app_id}.svg"
+    if [ "$removed" = true ]; then
+        refresh_desktop_caches "$data"
+        say "removed nomouse from the app launcher: ${data}/applications/${app_id}.desktop"
+    fi
+}
+
+# Updates the desktop entry database and the hicolor icon cache under DATA, with whichever of
+# the tools is installed; launchers without the caches read the files directly.
+refresh_desktop_caches() {
+    local data="$1"
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database -q "${data}/applications" 2>/dev/null || true
+    fi
+    if command -v gtk-update-icon-cache >/dev/null 2>&1 && [ -d "${data}/icons/hicolor" ]; then
+        gtk-update-icon-cache -q -t -f "${data}/icons/hicolor" 2>/dev/null || true
+    fi
 }
 
 # The numbered next steps for the Linux desktop this runs in: X11, GNOME on Wayland (which
@@ -317,6 +410,8 @@ linux_next_steps() {
         step "3. start at login: add \"${bin_dir}/nomouse daemon\" to your desktop's"
         step "   startup applications"
     fi
+    step "nomouse is in the app launcher too (GNOME: press Super, type nomouse): picking it"
+    step "starts the daemon and shows the hotkeys; its \"nomouse doctor\" action checks the setup"
     step "check everything at any time with: nomouse doctor"
 }
 
@@ -365,6 +460,9 @@ uninstall() {
         say "removed ${bin_dir}/nomouse"
     else
         say "nomouse is not installed in ${bin_dir}"
+    fi
+    if [ "$(uname -s)" = Linux ]; then
+        remove_desktop_entry
     fi
     dir="$(config_dir)"
     if [ "$purge" = true ]; then

@@ -1,10 +1,12 @@
 //! The `nomouse` command line: the hotkey daemon, one-shot hint and scroll modes, `doctor`,
-//! and configuration commands.
+//! the app launcher's `launch`, and configuration commands.
 #![forbid(unsafe_code)]
 
 mod first_run;
 #[cfg(unix)]
 mod ipc;
+#[cfg(target_os = "linux")]
+mod launch;
 mod lock;
 mod run;
 
@@ -104,6 +106,14 @@ enum Command {
     Doctor,
     /// Walk through the permissions nomouse needs: explain each, ask the OS, wait for it.
     Setup,
+    /// What the app launcher's nomouse entry runs: start the daemon unless it is running,
+    /// then show a notification with its state and the hotkeys.
+    #[cfg(target_os = "linux")]
+    Launch {
+        /// Open `nomouse doctor` in a terminal instead (shown as a notification without one).
+        #[arg(long)]
+        doctor: bool,
+    },
     /// Configuration commands.
     Config {
         #[command(subcommand)]
@@ -348,11 +358,7 @@ fn file_changed(file: &mut ConfigFile) -> bool {
 }
 
 fn daemon() -> Result<String, String> {
-    let path = lock::lock_path(
-        std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
-        std::env::var("USER").ok(),
-    );
-    let _lock = lock::acquire(&path).map_err(|e| e.to_string())?;
+    let _lock = lock::acquire(&lock::current_path()).map_err(|e| e.to_string())?;
     first_run::before_daemon()?;
     let mut file = ConfigFile::open_default().map_err(|e| e.to_string())?;
     if let Some(problem) = file.problem() {
@@ -497,6 +503,20 @@ fn serve(
 }
 
 fn doctor() -> Result<String, String> {
+    let (out, failed) = doctor_report()?;
+    if failed {
+        // Print the report and still exit non-zero.
+        let mut stdout = std::io::stdout().lock();
+        stdout
+            .write_all(out.as_bytes())
+            .map_err(|e| e.to_string())?;
+        return Err("some checks failed".to_owned());
+    }
+    Ok(out)
+}
+
+/// The `nomouse doctor` report, and whether any check failed.
+pub(crate) fn doctor_report() -> Result<(String, bool), String> {
     let path = config_path(None)?;
     let (config, status) = if path.exists() {
         match Config::load(&path) {
@@ -531,14 +551,8 @@ fn doctor() -> Result<String, String> {
     }
     if failed {
         let _ = writeln!(out, "hint: {}", backend::ACCESSIBILITY_REQUIREMENT);
-        // Print the report and still exit non-zero.
-        let mut stdout = std::io::stdout().lock();
-        stdout
-            .write_all(out.as_bytes())
-            .map_err(|e| e.to_string())?;
-        return Err("some checks failed".to_owned());
     }
-    Ok(out)
+    Ok((out, failed))
 }
 
 fn run_command(command: Command, standalone: bool) -> Result<String, String> {
@@ -571,6 +585,10 @@ fn run_command(command: Command, standalone: bool) -> Result<String, String> {
         Command::Reload => reload_daemon(),
         Command::Doctor => doctor(),
         Command::Setup => first_run::setup_command(),
+        #[cfg(target_os = "linux")]
+        Command::Launch { doctor: false } => launch::launch(load_or_default()),
+        #[cfg(target_os = "linux")]
+        Command::Launch { doctor: true } => launch::doctor(),
         Command::Config { command } => config_command(command),
         Command::Labels { count, alphabet } => {
             let alphabet = match alphabet {

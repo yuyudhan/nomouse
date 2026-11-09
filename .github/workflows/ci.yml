@@ -61,6 +61,9 @@ jobs:
             # the Finder test on macOS (it skips itself without an Accessibility grant).
             - name: Test (Windows + macOS backends, integration on their OS)
               run: cargo test -p nomouse-windows -p nomouse-macos --all-features -- --nocapture
+            - name: desktop-file-validate for the installer test
+              if: runner.os == 'Linux'
+              run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends desktop-file-utils
             - name: install.sh against a fake release
               if: runner.os != 'Windows'
               run: scripts/test-installer.sh

@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Version=1.4
+Name=nomouse
+GenericName=Keyboard Clicking
+Comment=Click anything with the keyboard: type the label nomouse puts on it
+Keywords=mouse;keyboard;click;hints;homerow;accessibility;
+Categories=Utility;Accessibility;
+Icon=io.github.yuyudhan.nomouse
+Exec=nomouse launch
+TryExec=nomouse
+Terminal=false
+StartupNotify=false
+Actions=doctor;
+
+[Desktop Action doctor]
+Name=nomouse doctor
+Exec=nomouse launch --doctor

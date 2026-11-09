@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Tests install.sh without building nomouse: its pure functions (target and asset names, the
 # GitHub release JSON parser) by sourcing it, then whole installs from a fake release for this
-# machine's OS: a stub `nomouse` in the archive layout the release uses (a tarball on Linux,
-# nomouse.app zipped on macOS). The fake release is installed with --from DIR and through a
-# local fake GitHub API that refuses requests without the token, all into a throwaway HOME in
-# an env -i sandbox.
+# machine's OS: a stub `nomouse` in the archive layout the release uses (a tarball with the app
+# launcher entry and icons from packaging/linux/share on Linux, nomouse.app zipped on macOS).
+# The fake release is installed with --from DIR and through a local fake GitHub API that
+# refuses requests without the token, all into a throwaway HOME in an env -i sandbox.
 #
 # scripts/test-install.sh is the other half: the same installer against real release assets.
 #
@@ -183,6 +183,7 @@ else
     mkdir -p "${stage}/nomouse-${target}"
     printf '%s\n' "$stub" >"${stage}/nomouse-${target}/nomouse"
     chmod 755 "${stage}/nomouse-${target}/nomouse"
+    cp -R "${root}/packaging/linux/share" "${stage}/nomouse-${target}/"
     tar -C "$stage" -czf "${release}/${archive}" "nomouse-${target}"
 fi
 "${root}/scripts/release/checksum.sh" "${release}/${archive}"
@@ -209,7 +210,26 @@ installed() {
     fi
 }
 absent() {
-    [ ! -e "$bin" ] && [ ! -L "$bin" ] && [ ! -e "${home}/Applications/nomouse.app" ]
+    [ ! -e "$bin" ] && [ ! -L "$bin" ] && [ ! -e "${home}/Applications/nomouse.app" ] &&
+        [ -z "$(launcher_files)" ]
+}
+
+# The app launcher entry (Linux): the desktop entry and its icons in the sandbox's data dir.
+app_id="io.github.yuyudhan.nomouse"
+data="${home}/.local/share"
+entry="${data}/applications/${app_id}.desktop"
+icon_sizes="16 22 24 32 48 64 128 256 512"
+# Every launcher file present, one per line.
+launcher_files() {
+    local size file
+    for file in "$entry" "${data}/icons/hicolor/scalable/apps/${app_id}.svg"; do
+        [ -e "$file" ] && echo "$file"
+    done
+    for size in $icon_sizes; do
+        file="${data}/icons/hicolor/${size}x${size}/apps/${app_id}.png"
+        [ -e "$file" ] && echo "$file"
+    done
+    return 0
 }
 
 # --- Installs from a directory ---------------------------------------------------------------
@@ -219,6 +239,48 @@ if out="$(sandbox bash "$installer" --from "$release" 2>&1)" && installed &&
     pass "--from installs, verifies and prints the next steps"
 else
     fail "--from install: ${out}"
+fi
+
+if [ "$os" = Linux ]; then
+    expected=$(($(echo "$icon_sizes" | wc -w) + 2))
+    check "the launcher entry and every icon size are installed" "$expected" \
+        "$(launcher_files | wc -l | tr -d ' ')"
+    check "the entry runs the installed nomouse" "Exec=\"${bin}\" launch" \
+        "$(grep -m 1 '^Exec=' "$entry" || true)"
+    check "the doctor action runs it too" "Exec=\"${bin}\" launch --doctor" \
+        "$(grep '^Exec=' "$entry" | sed -n 2p)"
+    check "TryExec names the installed nomouse" "TryExec=${bin}" "$(grep '^TryExec=' "$entry" || true)"
+    for key in "Name=nomouse" "Icon=${app_id}" "Categories=Utility;Accessibility;" \
+        "Keywords=mouse;keyboard;click;hints;homerow;accessibility;" "Actions=doctor;"; do
+        if grep -qxF "$key" "$entry"; then pass "the entry has ${key}"; else fail "the entry lacks ${key}"; fi
+    done
+    if cmp -s "${root}/packaging/linux/share/icons/hicolor/48x48/apps/${app_id}.png" \
+        "${data}/icons/hicolor/48x48/apps/${app_id}.png"; then
+        pass "the icons are the release's"
+    else
+        fail "the installed 48x48 icon differs from packaging/linux/share"
+    fi
+    if command -v desktop-file-validate >/dev/null 2>&1; then
+        for file in "$entry" "${root}/packaging/linux/share/applications/${app_id}.desktop"; do
+            if out="$(desktop-file-validate "$file" 2>&1)" && [ -z "$out" ]; then
+                pass "desktop-file-validate accepts ${file#"${work}/"}"
+            else
+                fail "desktop-file-validate ${file}: ${out}"
+            fi
+        done
+    else
+        echo "skip - desktop-file-validate is not installed (Debian/Ubuntu: desktop-file-utils)"
+    fi
+    spaced="${work}/with space"
+    if out="$(sandbox NOMOUSE_INSTALL_DIR="${spaced}/bin" bash "$installer" --from "$release" 2>&1)" &&
+        grep -qxF "Exec=\"${spaced}/bin/nomouse\" launch" "$entry"; then
+        pass "a bin dir with a space is quoted in Exec"
+    else
+        fail "bin dir with a space: ${out}"
+    fi
+    sandbox NOMOUSE_INSTALL_DIR="${spaced}/bin" bash "$installer" --uninstall >/dev/null 2>&1
+    check "--uninstall removes the launcher entry and icons" "" "$(launcher_files)"
+    sandbox bash "$installer" --from "$release" >/dev/null 2>&1
 fi
 
 if out="$(sandbox bash "$installer" --from "$release" 2>&1)" && installed; then

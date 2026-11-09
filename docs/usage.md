@@ -3,6 +3,11 @@
 nomouse runs as a small background daemon. A hotkey starts a **mode**; the mode draws labels
 over the elements of the focused window, you type, and it acts. Escape always cancels.
 
+On Linux, nomouse is in the app launcher: press Super (the Windows key), type `nomouse` (or
+`mouse`, `click`, `hints`) and pick it. That starts the daemon unless it already runs, and a
+notification shows its state and the hotkeys (and, on GNOME Wayland, to log in with **Ubuntu on
+Xorg** instead). Right-click the entry for **nomouse doctor**.
+
 - [Hints: click anything](#hints-click-anything)
 - [Other clicks: right, double, hover, drag](#other-clicks-right-double-hover-drag)
 - [Modifier clicks: cmd-click, shift-click](#modifier-clicks-cmd-click-shift-click)
@@ -136,6 +141,7 @@ daemon, the mode runs in the command's own process.
 | `nomouse search` | search mode |
 | `nomouse reload` | make the daemon re-read the config now |
 | `nomouse setup` | walk through the permissions nomouse needs, ask the system, wait for them |
+| `nomouse launch [--doctor]` | Linux, what the app launcher runs: start the daemon unless it runs and notify its state and hotkeys; `--doctor` opens `nomouse doctor` in a terminal |
 | `nomouse doctor` | check the session, accessibility, input and config, and print the fix for anything missing |
 | `nomouse config init` / `path` / `show` / `check [FILE]` | [configuration](configuration.md) helpers |
 | `nomouse labels COUNT [--alphabet LETTERS]` | print the labels COUNT elements would get |
