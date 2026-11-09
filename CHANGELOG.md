@@ -51,3 +51,9 @@ the release's section; add entries under Unreleased as changes land.
   labels only); `HintSession::search`, `HintSession::query`, `SessionEvent::ModifiersChanged`;
   new `nomouse_core::search` module. `LinuxPlatform::perform_with_modifiers` and the Windows
   `Backend::modifier_click` are removed: `perform` holds the action's modifiers.
+
+### Fixed
+
+- macOS: after a scan that took longer than about a second (a cold or busy app), the first key
+  typed went to the app instead of nomouse, because macOS had switched the event tap off. The
+  tap is now replaced before nomouse waits for keys whenever macOS disabled it.

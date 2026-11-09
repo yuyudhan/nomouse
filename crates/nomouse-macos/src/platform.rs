@@ -351,6 +351,11 @@ impl HotkeySource for MacPlatform {
     }
 
     fn next_event(&mut self, timeout: Duration) -> Result<Option<InputEvent>, PlatformError> {
+        // A scan longer than about a second gets the tap disabled; without this the next key
+        // would slip past it to the app.
+        self.tap
+            .ensure_enabled()
+            .map_err(|error| PlatformError::PermissionDenied(error.to_string()))?;
         let deadline = Instant::now() + timeout;
         loop {
             while let Some(event) = self.tap.pop() {

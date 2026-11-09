@@ -4,9 +4,10 @@
 //! The tap is an active (filtering) session tap, which macOS allows only for processes trusted
 //! for Accessibility. It lives on the run loop of the thread that created it; events arrive
 //! while that thread runs its run loop (see [`crate::app::pump`]). When macOS disables the tap
-//! because a callback was slow, or because of secure input, the callback re-enables it.
+//! because a callback was slow, or because of secure input, the callback re-enables it, and
+//! [`EventTap::ensure_enabled`] replaces a tap found disabled before the callback heard of it.
 
-use std::cell::{Cell, OnceCell, RefCell};
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::ptr::{self, NonNull};
@@ -45,12 +46,12 @@ struct TapState {
 }
 
 /// What the callback reaches through `user_info`. The port and the re-enable counter live
-/// outside the `RefCell`, so a disable event re-enables the tap even while the state is
-/// borrowed (for example when the event arrives re-entrantly during `register`).
+/// outside the state's `RefCell`, so a disable event re-enables the tap even while the state
+/// is borrowed (for example when the event arrives re-entrantly during `register`).
 #[derive(Default)]
 struct Shared {
     state: RefCell<TapState>,
-    port: OnceCell<CFRetained<CFMachPort>>,
+    port: RefCell<Option<CFRetained<CFMachPort>>>,
     reenabled: Cell<u32>,
 }
 
@@ -102,12 +103,58 @@ impl TapState {
     }
 }
 
+/// One `CGEventTapCreate` port and its run-loop source.
+struct Installed {
+    port: CFRetained<CFMachPort>,
+    source: CFRetained<CFRunLoopSource>,
+}
+
+impl Installed {
+    /// Creates an enabled tap whose callback reaches `shared`, on `run_loop`.
+    fn new(shared: &Shared, run_loop: &CFRunLoop) -> Result<Self, TapUnavailable> {
+        let user_info: *mut c_void = ptr::from_ref::<Shared>(shared).cast_mut().cast();
+        let mask = bit(CGEventType::KeyDown) | bit(CGEventType::KeyUp);
+        // SAFETY: `callback` matches CGEventTapCallBack and dereferences `user_info` only as the
+        // `Shared` box of the `EventTap`, which outlives every port: each is invalidated
+        // (`remove`) before release, and the box is freed after `Drop` removed the last one.
+        let port = unsafe {
+            CGEvent::tap_create(
+                CGEventTapLocation::SessionEventTap,
+                CGEventTapPlacement::HeadInsertEventTap,
+                CGEventTapOptions::Default,
+                mask,
+                Some(callback),
+                user_info,
+            )
+        }
+        .ok_or(TapUnavailable)?;
+        let Some(source) = CFMachPort::new_run_loop_source(None, Some(&port), 0) else {
+            port.invalidate();
+            return Err(TapUnavailable);
+        };
+        // SAFETY: kCFRunLoopCommonModes is an immutable CFString constant.
+        let modes = unsafe { kCFRunLoopCommonModes };
+        run_loop.add_source(Some(&source), modes);
+        CGEvent::tap_enable(&port, true);
+        Ok(Self { port, source })
+    }
+
+    /// Disables the tap and takes it off `run_loop`; the callback never runs for it again.
+    fn remove(&self, run_loop: &CFRunLoop) {
+        CGEvent::tap_enable(&self.port, false);
+        // SAFETY: kCFRunLoopCommonModes is an immutable CFString constant.
+        let modes = unsafe { kCFRunLoopCommonModes };
+        run_loop.remove_source(Some(&self.source), modes);
+        self.source.invalidate();
+        self.port.invalidate();
+    }
+}
+
 /// An installed event tap. Dropping it removes the tap.
 pub struct EventTap {
     // Boxed so the address handed to the callback stays fixed; dropped after the tap is gone.
     shared: Box<Shared>,
-    port: CFRetained<CFMachPort>,
-    source: CFRetained<CFRunLoopSource>,
+    installed: Installed,
     run_loop: CFRetained<CFRunLoop>,
 }
 
@@ -122,34 +169,12 @@ impl EventTap {
     /// [`TapUnavailable`] when macOS refuses the tap (missing permission).
     pub fn new() -> Result<Self, TapUnavailable> {
         let shared = Box::new(Shared::default());
-        let user_info: *mut c_void = ptr::from_ref::<Shared>(&shared).cast_mut().cast();
-        let mask = bit(CGEventType::KeyDown) | bit(CGEventType::KeyUp);
-        // SAFETY: `callback` matches CGEventTapCallBack and only dereferences `user_info` as the
-        // `Shared` it is; the box outlives the tap because `Drop` disables and
-        // invalidates the port before the box is freed.
-        let port = unsafe {
-            CGEvent::tap_create(
-                CGEventTapLocation::SessionEventTap,
-                CGEventTapPlacement::HeadInsertEventTap,
-                CGEventTapOptions::Default,
-                mask,
-                Some(callback),
-                user_info,
-            )
-        }
-        .ok_or(TapUnavailable)?;
-        let source = CFMachPort::new_run_loop_source(None, Some(&port), 0).ok_or(TapUnavailable)?;
         let run_loop = CFRunLoop::current().ok_or(TapUnavailable)?;
-        // SAFETY: kCFRunLoopCommonModes is an immutable CFString constant.
-        let modes = unsafe { kCFRunLoopCommonModes };
-        run_loop.add_source(Some(&source), modes);
-        // The cell is fresh, so this cannot fail.
-        shared.port.set(port.clone()).ok();
-        CGEvent::tap_enable(&port, true);
+        let installed = Installed::new(&shared, &run_loop)?;
+        shared.port.replace(Some(installed.port.clone()));
         Ok(Self {
             shared,
-            port,
-            source,
+            installed,
             run_loop,
         })
     }
@@ -183,10 +208,33 @@ impl EventTap {
 
     /// Whether the tap is currently enabled.
     pub fn is_enabled(&self) -> bool {
-        CGEvent::tap_is_enabled(&self.port)
+        CGEvent::tap_is_enabled(&self.installed.port)
     }
 
-    /// How many times the callback re-enabled the tap after macOS disabled it.
+    /// Replaces the tap with a fresh one when macOS switched it off and the callback has not
+    /// been told yet; returns whether it had to. macOS disables a tap whose callback answers
+    /// late (the main thread scanned for more than about a second) and reports it only along
+    /// with the next event, which passes through untapped even when the tap is re-enabled in
+    /// the meantime: the first key typed after a slow scan, or the next hotkey press, would
+    /// reach the app. A new tap has no such notice pending. Chords, the grab and queued
+    /// events are kept.
+    ///
+    /// # Errors
+    /// [`TapUnavailable`] when macOS refuses the new tap; the disabled one stays installed.
+    pub fn ensure_enabled(&mut self) -> Result<bool, TapUnavailable> {
+        if self.is_enabled() {
+            return Ok(false);
+        }
+        let fresh = Installed::new(&self.shared, &self.run_loop)?;
+        let stale = std::mem::replace(&mut self.installed, fresh);
+        stale.remove(&self.run_loop);
+        self.shared.port.replace(Some(self.installed.port.clone()));
+        let count = &self.shared.reenabled;
+        count.set(count.get().saturating_add(1));
+        Ok(true)
+    }
+
+    /// How many times the tap was re-enabled or replaced after macOS disabled it.
     pub fn reenable_count(&self) -> u32 {
         self.shared.reenabled.get()
     }
@@ -194,12 +242,7 @@ impl EventTap {
 
 impl Drop for EventTap {
     fn drop(&mut self) {
-        CGEvent::tap_enable(&self.port, false);
-        // SAFETY: kCFRunLoopCommonModes is an immutable CFString constant.
-        let modes = unsafe { kCFRunLoopCommonModes };
-        self.run_loop.remove_source(Some(&self.source), modes);
-        self.source.invalidate();
-        self.port.invalidate();
+        self.installed.remove(&self.run_loop);
         self.shared.port.take();
     }
 }
@@ -240,9 +283,11 @@ unsafe extern "C-unwind" fn callback(
         return passed;
     };
     if is_disable(kind) {
-        reenable(shared.port.get(), &shared.reenabled, |port| {
-            CGEvent::tap_enable(port, true);
-        });
+        if let Ok(port) = shared.port.try_borrow() {
+            reenable(port.as_deref(), &shared.reenabled, |port| {
+                CGEvent::tap_enable(port, true);
+            });
+        }
         return passed;
     }
     let Ok(mut state) = shared.state.try_borrow_mut() else {
