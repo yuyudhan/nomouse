@@ -76,7 +76,7 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-ACT-07 | Semantic click without moving the pointer | `AXPress`, `AXShowMenu` | AT-SPI `do_action` | P1 | done (all; `hints.semantic_click`) |
 | NM-ACT-08 | Middle click | `CGEvent` other button | button 2 | P2 | partial (backends inject `MouseButton::Middle`; no `ActionKind` binds it) |
 | NM-ACT-09 | Homerow key bindings as an option: Return click, Return twice double click, Shift-Return right click, Cmd-Return cmd click | core | core | P1 | partial (`hints.keys = "homerow"`; macOS e2e pending; Windows reports Shift only, so no Cmd-Return) / done / done / partial |
-| NM-ACT-10 | Focus a text field and leave the keyboard there (no chain click into inputs) | `AXFocused` | AT-SPI `grab_focus` | P1 | partial (clicking focuses; continuous mode does not stop at inputs) |
+| NM-ACT-10 | Focus a text field and leave the keyboard there (no chain click into inputs) | `AXFocused` | AT-SPI `grab_focus` | P1 | partial (core: continuous mode ends after a left click on a text field, on every backend; macOS e2e pending) / done / done / done |
 
 ### Search (SRCH)
 

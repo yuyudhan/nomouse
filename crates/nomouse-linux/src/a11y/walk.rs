@@ -24,6 +24,8 @@ pub(crate) struct NodeInfo {
     pub enabled: bool,
     /// `FOCUSABLE` is set.
     pub focusable: bool,
+    /// `EDITABLE` is set (GTK 3 entries are `TEXT` objects with it).
+    pub editable: bool,
     /// The object implements the Action interface with at least one action.
     pub has_action: bool,
     /// Screen extents, `None` without the Component interface.
@@ -221,8 +223,11 @@ fn qualifies(info: &NodeInfo, clip: Rect) -> Option<(Role, Reason)> {
     if !info.showing || bounds.is_empty() || !bounds.intersects(&clip) {
         return None;
     }
-    let role = map_role(info.role)?;
-    if is_interactive_role(info.role) {
+    let role = match map_role(info.role)? {
+        Role::Text if info.editable => Role::TextField,
+        role => role,
+    };
+    if is_interactive_role(info.role) || role == Role::TextField {
         Some((role, Reason::Role))
     } else if role == Role::ScrollArea {
         // Scroll mode's target. Weak, so the controls inside it keep their labels.
@@ -524,6 +529,7 @@ mod tests {
             showing: true,
             enabled: true,
             focusable: false,
+            editable: false,
             has_action: false,
             extents: Some(rect),
         }
@@ -562,6 +568,23 @@ mod tests {
         custom.focusable = true;
         tree.add(10, Some(1), custom);
         tree
+    }
+
+    #[test]
+    fn editable_text_is_a_text_field() {
+        let mut tree = sample();
+        // A GTK 3 entry: role TEXT, focusable and editable, no Action interface.
+        let mut entry = node(AtRole::Text, Rect::new(500, 10, 120, 30));
+        entry.focusable = true;
+        entry.editable = true;
+        tree.add(11, Some(1), entry);
+        let mut read_only = node(AtRole::Text, Rect::new(500, 50, 120, 30));
+        read_only.focusable = true;
+        tree.add(12, Some(1), read_only);
+        let found = collect(&mut tree, &[0], CLIP, limits());
+        let role = |id| found.iter().find(|f| f.node == id).map(|f| f.element.role);
+        assert_eq!(role(11), Some(Role::TextField));
+        assert_eq!(role(12), Some(Role::Other));
     }
 
     fn ids(found: &[Found<u32>]) -> Vec<u32> {

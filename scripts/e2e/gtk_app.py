@@ -4,7 +4,8 @@
 Ten buttons "Button 1".."Button 10" set the window title to "left: Button N" on a click
 ("ctrl-left: Button N" when Control was held) and "right: Button N" on a right click; a
 button with no label, whose only text is its tooltip "Keep a copy", sets it to
-"left: tooltip button". Below them, a large scrolled list of 200 rows sets it to
+"left: tooltip button"; typing into the text field "Note" beside it sets it to
+"typed: <text>". Below them, a large scrolled list of 200 rows sets it to
 "scrolled: <offset>" when scrolled, and a narrow list of 40 items beside it to
 "scrolled 2: <offset>"; " (top)" or " (bottom)" follows the offset at either end. A running
 click count is appended ("#<n>") so repeated clicks are visible.
@@ -81,8 +82,12 @@ def main():
     tooltip_only.add(drawing)
     tooltip_only.set_tooltip_text("Keep a copy")
     tooltip_only.connect("clicked", lambda _b: on_clicked(window, "tooltip button"))
-    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+    note = Gtk.Entry()
+    note.get_accessible().set_name("Note")
+    note.connect("changed", lambda entry: set_title(window, f"typed: {entry.get_text()}"))
+    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     row.pack_start(tooltip_only, False, False, 0)
+    row.pack_start(note, False, False, 0)
     box.pack_start(row, False, False, 0)
     lists = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     lists.pack_start(scrolled_list(window, "Row", 200, "scrolled"), True, True, 0)

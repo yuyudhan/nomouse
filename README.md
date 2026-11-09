@@ -68,7 +68,7 @@ Then run:
 | Hotkey (default) | Mode |
 |------------------|------|
 | `ctrl+space` | hints: label the focused window, type a label to click |
-| `ctrl+shift+space` | continuous: keep labelling after every click until Escape |
+| `ctrl+shift+space` | continuous: keep labelling after every click until Escape or a click into a text field |
 | `ctrl+alt+space` | scroll: label scrollable areas, then scroll with keys |
 | `ctrl+alt+/` | search: type part of an element's text |
 

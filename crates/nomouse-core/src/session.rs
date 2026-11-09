@@ -252,6 +252,23 @@ impl HintSession {
         self.modifiers
     }
 
+    /// Whether `action` (just performed from this session) left-clicked a text field, where
+    /// continuous mode ends so the keyboard stays with the app for typing.
+    pub fn types_into(&self, action: &Action) -> bool {
+        let Action::Click {
+            at,
+            button: MouseButton::Left,
+            ..
+        } = *action
+        else {
+            return false;
+        };
+        self.hints
+            .iter()
+            .find(|hint| hint.element.target() == at)
+            .is_some_and(|hint| hint.element.role.takes_text())
+    }
+
     /// Whether there is nothing to label (a search session is never empty while it has
     /// candidates, even before a query is typed).
     pub fn is_empty(&self) -> bool {
@@ -492,6 +509,24 @@ mod tests {
             session.key(KeyPress::Char('s')),
             SessionEvent::Perform(Action::click(Point::new(5, 105)))
         );
+    }
+
+    #[test]
+    fn a_left_click_on_a_text_field_types_into_it() {
+        let mut fields = elements();
+        fields[1].role = Role::TextField;
+        let mut session = HintSession::new(&Alphabet::default(), fields, ActionKind::Click);
+        let SessionEvent::Perform(action) = session.key(KeyPress::Char('s')) else {
+            panic!("no click");
+        };
+        assert!(session.types_into(&action));
+        // The button above, a right click on the field, and a hover over it do not.
+        assert!(!session.types_into(&Action::click(Point::new(5, 5))));
+        assert!(!session.types_into(&Action::right_click(Point::new(5, 105))));
+        assert!(!session.types_into(&Action::hover(Point::new(5, 105))));
+        // A ctrl-click or a double click still focuses the field.
+        assert!(session.types_into(&Action::double_click(Point::new(5, 105))));
+        assert!(session.types_into(&action.with_modifiers(Modifiers::CTRL)));
     }
 
     #[test]

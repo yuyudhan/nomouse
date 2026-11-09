@@ -138,6 +138,12 @@ impl Role {
         !matches!(self, Self::Text | Self::ScrollArea)
     }
 
+    /// Whether a click puts the keyboard focus in the element for typing (a text field), so
+    /// continuous mode ends there and leaves the keyboard to the app.
+    pub const fn takes_text(self) -> bool {
+        matches!(self, Self::TextField)
+    }
+
     /// The role in plain lowercase words (`"check box"`), as search matches it; `None` for
     /// [`Role::Other`], which says nothing about the element.
     pub const fn words(self) -> Option<&'static str> {

@@ -314,6 +314,10 @@ pub(crate) fn activate(
         if !matches!(mode, Mode::Continuous(_)) {
             return Ok(Outcome::Performed(performed));
         }
+        if session.types_into(&action) {
+            tracing::debug!("continuous mode ends at a text field");
+            return Ok(Outcome::Performed(performed));
+        }
         std::thread::sleep(SETTLE);
     }
 }
@@ -705,6 +709,28 @@ mod tests {
                 ..
             }
         )));
+        assert!(!p.visible);
+    }
+
+    #[test]
+    fn continuous_mode_ends_after_clicking_a_text_field() {
+        // Buttons a and d, a text field s: the click on s ends the mode, and the keys after it
+        // stay unread for the app.
+        let mut p = fake(3, "asd!");
+        p.elements[1].role = Role::TextField;
+        assert_eq!(
+            run(&mut p, Mode::Continuous(ActionKind::Click)),
+            Ok(Outcome::Performed(2))
+        );
+        assert_eq!(
+            p.performed,
+            [
+                Action::click(Point::new(5, 5)),
+                Action::click(Point::new(105, 5))
+            ]
+        );
+        assert_eq!(p.scans, 2);
+        assert_eq!(p.keys.len(), 2);
         assert!(!p.visible);
     }
 

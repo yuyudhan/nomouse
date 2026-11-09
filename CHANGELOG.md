@@ -31,6 +31,8 @@ the release's section; add entries under Unreleased as changes land.
   follows the desktop's light/dark preference (the XDG portal `color-scheme` on Linux, read
   before each activation). `background`, `foreground`, `typed_foreground` and `border` now
   override the theme's colour only when set.
+- Continuous mode ends after a left click on a text field, so the keyboard stays there for
+  typing. On Linux, editable text objects (GTK 3 entries) now count as text fields.
 - Hint mode: a hotkey labels every clickable element of the focused window from the
   accessibility tree; typing a label clicks it (left, right, double, middle, move, semantic
   click), with a continuous mode that keeps hinting after each click.

@@ -36,6 +36,7 @@ fn node_info(
         showing: states.contains(State::Showing) && states.contains(State::Visible),
         enabled: states.contains(State::Enabled) && states.contains(State::Sensitive),
         focusable: states.contains(State::Focusable),
+        editable: states.contains(State::Editable),
         has_action: interfaces.contains(Interface::Action),
         extents,
     }

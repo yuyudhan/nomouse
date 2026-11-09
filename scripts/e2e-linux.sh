@@ -221,6 +221,31 @@ else
     fail "continuous mode (ok=$continuous_ok, clicks $before -> $after)"
 fi
 
+echo "--- continuous mode ends after clicking a text field; the typed text lands in it"
+focus "$gtk_win"
+log="$tmp/continuous-field.log"
+if run_hints "$log" hints --continuous; then
+    xdotool type --delay 20 "$(label_for "$log" "Button 1")"
+    if wait_for 3 title_is "$gtk_win" "left: Button 1 #*" && wait_for 5 scans_at_least "$log" 2 && wait_for 5 overlay_viewable; then
+        xdotool type --delay 20 "$(label_for "$log" "Note")"
+        if reap "$hints_pid" 5; then
+            xdotool type --delay 20 "hello"
+            if wait_for 3 title_is "$gtk_win" "typed: hello #*"; then
+                pass "continuous mode ended at the text field and the typed text went into it"
+            else
+                fail "after the text field click the title is '$(title "$gtk_win")'"
+            fi
+        else
+            fail "continuous mode kept running after clicking the text field ($(grep -E '"Note"$' "$log" | tail -n1))"
+        fi
+    else
+        fail "continuous mode: the first click or the re-scan did not happen"
+        kill "$hints_pid" 2>/dev/null || true
+    fi
+else
+    fail "continuous mode before the text field: no labels"
+fi
+
 echo "--- right click"
 focus "$gtk_win"
 log="$tmp/right.log"
