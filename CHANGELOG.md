@@ -13,7 +13,9 @@ the release's section; add entries under Unreleased as changes land.
   windows), not only what is in view, so search also finds links and buttons scrolled out of
   view; picking one scrolls it into view first (`AXScrollToVisible` on macOS,
   `Component.ScrollTo` on Linux) and acts where it lands. Hint mode still labels only what is
-  in view. The default, `"fast"`, keeps reading only the viewport.
+  in view. The default, `"fast"`, keeps reading only the viewport. The click waits until the
+  scrolled element has stopped moving (browsers scroll smoothly and ignore a click meanwhile)
+  and fails with an error, instead of clicking elsewhere, when it never settles in view.
 
 ## [0.1.1] - 2026-11-09
 

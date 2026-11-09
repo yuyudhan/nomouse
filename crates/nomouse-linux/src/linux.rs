@@ -107,10 +107,10 @@ impl InputInjector for LinuxPlatform {
         {
             return Ok(());
         }
-        let action = self
-            .source
-            .as_ref()
-            .map_or(*action, |source| source.reveal(*action));
+        let action = match self.source.as_ref() {
+            Some(source) => source.reveal(*action)?,
+            None => *action,
+        };
         self.x.perform(&action)
     }
 }

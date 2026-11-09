@@ -8,6 +8,7 @@
 //! - [`platform`]: the traits each OS backend implements.
 //! - [`session`]: one hint-mode activation, tying the above together.
 //! - [`search`]: fuzzy matching of a typed query against element names (search-by-text).
+//! - [`reveal`]: waiting for an element scrolled into view to come to rest.
 //! - [`setup`]: the guided first run that walks the user through missing permissions.
 //! - [`scroll`]: scroll mode's areas and keys.
 //! - [`apps`]: the focused window's application, for `ignore.apps`.
@@ -26,6 +27,7 @@ pub mod glyph;
 pub mod hints;
 pub mod hotkey;
 pub mod platform;
+pub mod reveal;
 pub mod scroll;
 pub mod search;
 pub mod session;

@@ -132,6 +132,9 @@ pub(crate) struct Found<N> {
     pub has_action: bool,
     /// Where its value is read from.
     pub value: ValueKind,
+    /// The extents as the toolkit reported them at the scan, before a native Wayland window's
+    /// origin is added to the element's bounds: what a later extents reading compares to.
+    pub extents: Rect,
 }
 
 /// Why an object qualifies for a label.
@@ -333,6 +336,7 @@ impl<N> Collector<N> {
                 },
                 has_action: info.has_action,
                 value: ValueKind::of(info.role),
+                extents: bounds,
             },
             reason,
         ));

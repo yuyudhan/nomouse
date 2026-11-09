@@ -5,6 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nomouse_core::config::Config;
+use nomouse_core::reveal::settle;
 use nomouse_core::search::search_box_anchor;
 use nomouse_core::{
     Action, Element, ElementId, ElementSource, Frame, Hint, Hotkey, HotkeyId, HotkeySource,
@@ -41,8 +42,8 @@ const NO_FLAGS: ModifierFlags = modifier_flags(nomouse_core::Modifiers::NONE);
 /// Room kept for a label of an off-screen element pinned to the edge of its viewport, in
 /// points (two or three characters at the default size).
 const EDGE_LABEL_ROOM: (u32, u32) = (40, 20);
-/// How long a scroll into view may take before acting where the element ended up.
-const REVEAL_TIMEOUT: Duration = Duration::from_millis(1000);
+/// How long a scroll into view may take before the action is given up.
+const REVEAL_TIMEOUT: Duration = Duration::from_millis(2000);
 /// How often the element's frame is re-read while it scrolls into view.
 const REVEAL_POLL: Duration = Duration::from_millis(30);
 /// Readings in a row that must agree before the scroll counts as finished: browsers report
@@ -173,39 +174,47 @@ impl MacPlatform {
     /// Where an action aimed at `at` should land: `at` itself, unless it is the centre of an
     /// off-screen element of the last snapshot, which is first scrolled into view
     /// (`AXScrollToVisible`); its new centre once its frame is in view and has stopped moving
-    /// (browsers scroll smoothly), or after [`REVEAL_TIMEOUT`] wherever it ended up.
-    fn reveal(&self, at: Point) -> Point {
+    /// (browsers scroll smoothly).
+    ///
+    /// # Errors
+    /// [`PlatformError::Backend`] when the scroll fails or the element does not come to rest in
+    /// view within [`REVEAL_TIMEOUT`] (its frame is stale or it still moves): acting at `at`,
+    /// a stand-in point outside the page, or wherever it was last seen would click something
+    /// else.
+    fn reveal(&self, at: Point) -> Result<Point, PlatformError> {
         let Some(entry) = self
             .snapshot
             .iter()
             .find(|entry| entry.offscreen && entry.bounds.center() == at)
         else {
-            return at;
+            return Ok(at);
         };
-        if let Err(error) = entry.element.perform_action("AXScrollToVisible") {
-            tracing::debug!("scrolling an off-screen element into view: {error}");
-            return at;
-        }
+        entry
+            .element
+            .perform_action("AXScrollToVisible")
+            .map_err(|error| {
+                PlatformError::Backend(format!(
+                    "scrolling an off-screen element into view: {error}"
+                ))
+            })?;
         let started = Instant::now();
-        let mut last: Option<Rect> = None;
-        let mut steady = 0;
-        while started.elapsed() < REVEAL_TIMEOUT {
-            thread::sleep(REVEAL_POLL);
-            let frame = frame_of(&entry.element).filter(|frame| !frame.is_empty());
-            steady = if frame.is_some() && frame == last {
-                steady + 1
-            } else {
-                0
-            };
-            last = frame.or(last);
-            if steady >= REVEAL_STEADY && last.is_some_and(|frame| frame.intersects(&entry.visible))
-            {
-                break;
-            }
-        }
-        let landed = last.map_or(at, |frame| frame.center());
+        let frame = settle(
+            || frame_of(&entry.element).filter(|frame| !frame.is_empty()),
+            |frame| frame.intersects(&entry.visible),
+            REVEAL_STEADY,
+            || {
+                thread::sleep(REVEAL_POLL);
+                started.elapsed() < REVEAL_TIMEOUT
+            },
+        )
+        .ok_or_else(|| {
+            PlatformError::Backend(format!(
+                "the element did not come to rest in view within {REVEAL_TIMEOUT:?}"
+            ))
+        })?;
+        let landed = frame.center();
         tracing::debug!("scrolled into view: acting at {landed:?} instead of {at:?}");
-        landed
+        Ok(landed)
     }
 
     /// Tries the accessibility action for a click at `at` on the element last labelled there.
@@ -454,7 +463,7 @@ impl InputInjector for MacPlatform {
                 }
                 // The flags on the mouse events are what apps read for cmd/shift/option+click.
                 let flags = modifier_flags(modifiers);
-                let at = self.reveal(at);
+                let at = self.reveal(at)?;
                 post(MouseEventKind::Move, at, 0, flags)?;
                 thread::sleep(INPUT_PAUSE);
                 for click in 1..=count.max(1) {
@@ -462,13 +471,13 @@ impl InputInjector for MacPlatform {
                     post(MouseEventKind::Up(button(b)), at, i64::from(click), flags)?;
                 }
             }
-            Action::Hover { at } => post(MouseEventKind::Move, self.reveal(at), 0, NO_FLAGS)?,
+            Action::Hover { at } => post(MouseEventKind::Move, self.reveal(at)?, 0, NO_FLAGS)?,
             Action::Drag {
                 from,
                 to,
                 button: b,
             } => {
-                let from = self.reveal(from);
+                let from = self.reveal(from)?;
                 post(MouseEventKind::Move, from, 0, NO_FLAGS)?;
                 thread::sleep(INPUT_PAUSE);
                 post(MouseEventKind::Down(button(b)), from, 1, NO_FLAGS)?;
