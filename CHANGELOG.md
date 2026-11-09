@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-11-09
+
 ### Fixed
 
 - macOS: the doctor's report and the update check's answer open in windows that do not block.
