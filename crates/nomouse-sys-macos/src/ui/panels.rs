@@ -3,18 +3,17 @@
 
 use std::path::{Path, PathBuf};
 
+use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAboutPanelOptionApplicationIcon, NSAboutPanelOptionApplicationName,
     NSAboutPanelOptionApplicationVersion, NSAboutPanelOptionCredits, NSAboutPanelOptionVersion,
-    NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSApplication, NSFont, NSImage,
-    NSModalResponseOK, NSOpenPanel, NSPasteboard, NSPasteboardTypeString, NSScrollView, NSTextView,
-    NSWorkspace,
+    NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSApplication, NSImage, NSModalResponseOK,
+    NSOpenPanel, NSPasteboard, NSPasteboardTypeString, NSWorkspace,
 };
 use objc2_foundation::{
-    NSArray, NSAttributedString, NSBundle, NSDictionary, NSPoint, NSRect, NSSize, NSString, NSURL,
+    NSArray, NSAttributedString, NSBundle, NSDictionary, NSSize, NSString, NSURL,
 };
 use objc2_uniform_type_identifiers::UTType;
 
@@ -41,32 +40,6 @@ pub fn alert(
     activate(mtm);
     let response = alert.runModal();
     usize::try_from(response - NSAlertFirstButtonReturn).unwrap_or(0)
-}
-
-/// Shows `text` (a report, such as the doctor's) in a scrollable monospaced box under
-/// `title`, with OK and Copy; Copy puts the text on the clipboard.
-pub fn report(mtm: MainThreadMarker, title: &str, text: &str) {
-    let alert = NSAlert::new(mtm);
-    alert.setMessageText(&NSString::from_str(title));
-    alert.addButtonWithTitle(&NSString::from_str("OK"));
-    alert.addButtonWithTitle(&NSString::from_str("Copy"));
-    let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(560.0, 260.0));
-    let scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), frame);
-    scroll.setHasVerticalScroller(true);
-    scroll.setBorderType(objc2_app_kit::NSBorderType::BezelBorder);
-    let view = NSTextView::initWithFrame(NSTextView::alloc(mtm), frame);
-    view.setEditable(false);
-    view.setSelectable(true);
-    if let Some(font) = NSFont::userFixedPitchFontOfSize(11.0) {
-        view.setFont(Some(&font));
-    }
-    view.setString(&NSString::from_str(text));
-    scroll.setDocumentView(Some(&view));
-    alert.setAccessoryView(Some(&scroll));
-    activate(mtm);
-    if alert.runModal() != NSAlertFirstButtonReturn {
-        copy(text);
-    }
 }
 
 /// Puts `text` on the clipboard.

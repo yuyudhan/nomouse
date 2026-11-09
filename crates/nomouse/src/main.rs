@@ -452,6 +452,8 @@ fn file_changed(file: &mut ConfigFile) -> bool {
 }
 
 fn daemon() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    nomouse_macos::bundle::reexec_from_bundle();
     let _lock = lock::acquire(&lock::current_path()).map_err(|e| e.to_string())?;
     first_run::before_daemon()?;
     let mut file = ConfigFile::open_default().map_err(|e| e.to_string())?;

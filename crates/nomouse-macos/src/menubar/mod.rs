@@ -24,6 +24,7 @@ use nomouse_core::update::{self, UpdateStatus, release_url};
 use nomouse_sys_macos::app::{App, NotMainThread};
 use nomouse_sys_macos::ax;
 use nomouse_sys_macos::login::{self, LoginItem};
+use nomouse_sys_macos::ui::notice::Notice;
 use nomouse_sys_macos::ui::status::{MenuLine, Shortcut, StatusItem};
 use nomouse_sys_macos::ui::{self, UiEvent, panels};
 
@@ -42,6 +43,43 @@ const APP_ICON: &[u8] = include_bytes!("../../../../assets/logo/png/nomouse-256.
 
 /// The menu's Accessibility line (menu action ids are 1 to 14).
 const ACCESSIBILITY_TAG: isize = 50;
+
+/// The tag of the first result window button, above every other control's tag.
+const NOTICE_TAG: isize = 10_000;
+/// The most buttons a result window has: window `n`'s button `i` reports
+/// `NOTICE_TAG + n * NOTICE_BUTTONS + i`.
+const NOTICE_BUTTONS: usize = 4;
+
+/// What a result window's button does besides closing the window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Click {
+    /// Nothing more.
+    Close,
+    /// Put the text on the clipboard.
+    Copy(String),
+    /// Open the address in the browser.
+    OpenUrl(String),
+}
+
+/// A result window on screen and what each of its buttons does.
+#[derive(Debug)]
+struct OpenNotice {
+    id: usize,
+    notice: Notice,
+    clicks: Vec<Click>,
+}
+
+/// The tag of button `index` of result window `id`.
+fn notice_tag(id: usize, index: usize) -> isize {
+    let slot = id * NOTICE_BUTTONS + index;
+    NOTICE_TAG + isize::try_from(slot).unwrap_or(0)
+}
+
+/// The result window and button a tag belongs to.
+fn notice_at(tag: isize) -> Option<(usize, usize)> {
+    let slot = usize::try_from(tag.checked_sub(NOTICE_TAG)?).ok()?;
+    Some((slot / NOTICE_BUTTONS, slot % NOTICE_BUTTONS))
+}
 
 /// What the user asked of the daemon from the menu or the settings window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +104,9 @@ pub struct MenuBar {
     state: MenuState,
     trusted: bool,
     window: Option<SettingsWindow>,
+    /// The result windows on screen (they never block the daemon's loop).
+    notices: Vec<OpenNotice>,
+    next_notice: usize,
     /// The update check running on its own thread, and whether to announce its answer.
     checking: Option<(Receiver<Result<UpdateStatus, String>>, bool)>,
     /// The hotkeys are released while a shortcut is recorded (the daemon was not paused).
@@ -193,6 +234,8 @@ impl MenuBar {
             },
             trusted: ax::is_process_trusted(false),
             window: None,
+            notices: Vec::new(),
+            next_notice: 0,
             checking: None,
             holding: false,
             pending: VecDeque::new(),
@@ -262,11 +305,11 @@ impl MenuBar {
             match SettingsWindow::new(self.app.main_thread()) {
                 Ok(window) => self.window = Some(window),
                 Err(error) => {
-                    panels::alert(
-                        self.app.main_thread(),
+                    self.notify(
                         "nomouse cannot open its settings",
                         &error.to_string(),
-                        &["OK"],
+                        None,
+                        vec![("OK", Click::Close)],
                         true,
                     );
                     return;
@@ -313,9 +356,68 @@ impl MenuBar {
         nomouse_core::settings::field_for(key).map(pages::field_tag)
     }
 
-    /// Shows the doctor's report.
-    pub fn show_report(&self, title: &str, text: &str) {
-        panels::report(self.app.main_thread(), title, text);
+    /// Shows the doctor's report in a window of its own. The window does not block: this
+    /// returns at once and the daemon goes on serving its hotkeys and configuration reloads
+    /// while the report is open.
+    pub fn show_report(&mut self, title: &str, text: &str) {
+        self.notify(
+            title,
+            "",
+            Some(text),
+            vec![("OK", Click::Close), ("Copy", Click::Copy(text.to_owned()))],
+            false,
+        );
+    }
+
+    /// Shows a result window with `message`, an optional monospaced `report` and a button per
+    /// `(title, click)`, and returns at once.
+    fn notify(
+        &mut self,
+        title: &str,
+        message: &str,
+        report: Option<&str>,
+        buttons: Vec<(&str, Click)>,
+        warning: bool,
+    ) {
+        let id = self.next_notice;
+        self.next_notice += 1;
+        let (titles, clicks): (Vec<&str>, Vec<Click>) =
+            buttons.into_iter().take(NOTICE_BUTTONS).unzip();
+        let shown: Vec<(isize, &str)> = titles
+            .iter()
+            .enumerate()
+            .map(|(index, title)| (notice_tag(id, index), *title))
+            .collect();
+        let notice = Notice::show(
+            self.app.main_thread(),
+            title,
+            message,
+            report,
+            &shown,
+            warning,
+        );
+        self.notices.push(OpenNotice { id, notice, clicks });
+    }
+
+    /// Carries out a click on a result window's button and closes the window; whether `tag`
+    /// belongs to one.
+    fn carry_out(&mut self, tag: isize) -> bool {
+        let Some((id, index)) = notice_at(tag) else {
+            return false;
+        };
+        let Some(position) = self.notices.iter().position(|open| open.id == id) else {
+            // The window was closed by then.
+            return true;
+        };
+        let open = self.notices.remove(position);
+        match open.clicks.get(index) {
+            Some(Click::Copy(text)) => panels::copy(text),
+            Some(Click::OpenUrl(url)) => {
+                panels::open_url(url);
+            }
+            Some(Click::Close) | None => {}
+        }
+        true
     }
 
     fn about(&self) {
@@ -330,11 +432,11 @@ impl MenuBar {
 
     fn set_start_at_login(&mut self, on: bool) {
         if let Err(error) = login::set_login_item(on) {
-            panels::alert(
-                self.app.main_thread(),
+            self.notify(
                 "Start at login could not be changed",
                 &error,
-                &["OK"],
+                None,
+                vec![("OK", Click::Close)],
                 true,
             );
         }
@@ -376,29 +478,43 @@ impl MenuBar {
             Err(error) => UpdateLine::Failed(error.clone()),
         };
         self.redraw();
-        if !announce {
-            return;
+        if announce {
+            self.announce(answer);
         }
-        let mtm = self.app.main_thread();
+    }
+
+    /// Shows the update check's answer in a result window.
+    fn announce(&mut self, answer: Result<UpdateStatus, String>) {
         match answer {
-            Ok(status @ UpdateStatus::Available { latest, .. }) => {
-                let choice = panels::alert(
-                    mtm,
+            Ok(status @ UpdateStatus::Available { latest, .. }) => self.notify(
+                &status.message(),
+                "Download it from its release page, or run the installer again.",
+                None,
+                vec![
+                    (
+                        "Open Release Page",
+                        Click::OpenUrl(release_url(&latest.to_string())),
+                    ),
+                    ("Later", Click::Close),
+                ],
+                false,
+            ),
+            Ok(status @ UpdateStatus::UpToDate(_)) => {
+                self.notify(
                     &status.message(),
-                    "Download it from its release page, or run the installer again.",
-                    &["Open Release Page", "Later"],
+                    "",
+                    None,
+                    vec![("OK", Click::Close)],
                     false,
                 );
-                if choice == 0 {
-                    panels::open_url(&release_url(&latest.to_string()));
-                }
             }
-            Ok(status @ UpdateStatus::UpToDate(_)) => {
-                panels::alert(mtm, &status.message(), "", &["OK"], false);
-            }
-            Err(error) => {
-                panels::alert(mtm, "The update check failed", &error, &["OK"], true);
-            }
+            Err(error) => self.notify(
+                "The update check failed",
+                &error,
+                None,
+                vec![("OK", Click::Close)],
+                true,
+            ),
         }
     }
 
@@ -460,6 +576,7 @@ impl MenuBar {
     /// milliseconds.
     pub fn next_command(&mut self) -> Option<Command> {
         self.poll_update();
+        self.notices.retain(|open| open.notice.is_visible());
         let dark = self.dark();
         if let Some(outcome) = self.window.as_mut().and_then(|window| window.tick(dark)) {
             self.outcome(outcome);
@@ -478,6 +595,7 @@ impl MenuBar {
                 Handled::NotMine => {}
             }
             match event {
+                UiEvent::Action(tag) if self.carry_out(tag) => {}
                 UiEvent::Action(ACCESSIBILITY_TAG) => open_accessibility(),
                 UiEvent::Action(tag) => {
                     if let Some(action) = i32::try_from(tag).ok().and_then(MenuAction::from_id) {
@@ -488,6 +606,48 @@ impl MenuBar {
             }
         }
         self.pending.pop_front()
+    }
+}
+
+/// Drivers that work the result windows as a user would, for the UI test.
+#[cfg(feature = "testing")]
+impl MenuBar {
+    /// How many result windows are on screen.
+    pub fn notice_count(&self) -> usize {
+        self.notices
+            .iter()
+            .filter(|open| open.notice.is_visible())
+            .count()
+    }
+
+    /// The report text of the newest result window that has one.
+    pub fn notice_report(&self) -> Option<String> {
+        self.notices
+            .iter()
+            .rev()
+            .find_map(|open| open.notice.report_text())
+    }
+
+    /// Clicks the button titled `title` of the newest result window that has one, as a user
+    /// would; whether there was one. [`MenuBar::next_command`] carries the click out.
+    pub fn press_notice_button(&self, title: &str) -> bool {
+        self.notices.iter().rev().any(|open| {
+            open.notice
+                .button_titles()
+                .iter()
+                .position(|button| button == title)
+                .is_some_and(|index| open.notice.click(notice_tag(open.id, index)))
+        })
+    }
+
+    /// Picks `action` from the menu, as the menu item does.
+    pub fn choose(&mut self, action: MenuAction) {
+        self.menu(action);
+    }
+
+    /// Shows the update check's `answer`, as when the check finishes.
+    pub fn announce_update(&mut self, answer: Result<UpdateStatus, String>) {
+        self.announce(answer);
     }
 }
 

@@ -31,5 +31,15 @@ name = "settings_window"
 harness = false
 required-features = ["testing"]
 
+[[test]]
+name = "result_windows"
+harness = false
+required-features = ["testing"]
+
+[[test]]
+name = "start_at_login"
+harness = false
+required-features = ["testing"]
+
 [lints]
 workspace = true

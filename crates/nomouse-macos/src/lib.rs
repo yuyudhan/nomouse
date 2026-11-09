@@ -14,6 +14,7 @@
 //! - `menubar` (macOS): the menu bar app, its settings window and the first run's window.
 #![forbid(unsafe_code)]
 
+pub mod bundle;
 pub mod geometry;
 pub mod keys;
 pub mod roles;

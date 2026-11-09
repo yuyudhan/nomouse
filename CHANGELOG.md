@@ -7,6 +7,17 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: the doctor's report and the update check's answer open in windows that do not block.
+  They used to be modal alerts, so while one was open the daemon handled no hotkey and no
+  configuration reload until OK was clicked.
+- macOS: Start at login was unavailable (the menu item showed no check mark and did nothing)
+  when the daemon was started as `nomouse` through the symlink `install.sh` makes, because
+  macOS gives a process the bundle of the path it was started by. The daemon now starts itself
+  again from the real path inside `nomouse.app`. Start at login is tested against the real
+  `SMAppService` and the system's login item list, from both paths.
+
 ## [0.1.6] - 2026-11-09
 
 ### Fixed

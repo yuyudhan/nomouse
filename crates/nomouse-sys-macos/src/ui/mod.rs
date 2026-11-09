@@ -7,6 +7,7 @@
 //! thread.
 
 pub mod form;
+pub mod notice;
 pub mod panels;
 mod recorder;
 pub mod snapshot;
