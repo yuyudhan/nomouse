@@ -39,18 +39,26 @@ jobs:
     linux:
         name: Linux ${{ matrix.target }}
         needs: version
-        runs-on: ubuntu-22.04
+        # Native runners for both architectures: the settings window links GTK 4 and
+        # libadwaita, which a cross linker cannot find. 22.04 (GTK 4.6, libadwaita 1.1, glibc
+        # 2.35) is the oldest system the binaries run on.
+        runs-on: ${{ matrix.runner }}
         strategy:
             fail-fast: true
             matrix:
-                target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
+                include:
+                    - target: x86_64-unknown-linux-gnu
+                      runner: ubuntu-22.04
+                    - target: aarch64-unknown-linux-gnu
+                      runner: ubuntu-22.04-arm
         steps:
             - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
             - name: Install the pinned toolchain
               run: rustup show active-toolchain || rustup toolchain install
-            - name: Install the aarch64 linker
-              if: matrix.target == 'aarch64-unknown-linux-gnu'
-              run: sudo apt-get update -q && sudo apt-get install -y -q gcc-aarch64-linux-gnu
+            - name: Install GTK 4 and libadwaita (the settings window)
+              run: |
+                  sudo apt-get update -q
+                  sudo apt-get install -y -q --no-install-recommends libgtk-4-dev libadwaita-1-dev
             - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
               with:
                   key: release-${{ matrix.target }}
@@ -61,10 +69,10 @@ jobs:
               id: build
               run: echo "binary=$(scripts/release/build.sh ${{ matrix.target }})" >>"$GITHUB_OUTPUT"
             - name: Smoke test
-              if: matrix.target == 'x86_64-unknown-linux-gnu'
               run: |
                   "${{ steps.build.outputs.binary }}" --version
                   "${{ steps.build.outputs.binary }}" --version | grep -q "${{ needs.version.outputs.version }}"
+                  "$(dirname "${{ steps.build.outputs.binary }}")/nomouse-settings" --version | grep -q "${{ needs.version.outputs.version }}"
             - name: Package
               run: |
                   scripts/release/package.sh ${{ matrix.target }} "${{ steps.build.outputs.binary }}" dist

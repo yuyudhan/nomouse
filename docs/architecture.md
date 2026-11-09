@@ -117,7 +117,10 @@ thread; the event loop reads its commands without blocking and pushes state chan
   desktop notification), About and Quit. Ids are stable per action, so a host clicking an item
   of an older layout still does the right thing; a click on a disabled item does nothing. The
   icon is the themed `io.github.yuyudhan.nomouse-symbolic` (paused:
-  `io.github.yuyudhan.nomouse-paused-symbolic`).
+  `io.github.yuyudhan.nomouse-paused-symbolic`; sources in `assets/logo`, copied into
+  `packaging/linux/share/icons/hicolor/symbolic/apps` by `scripts/render-logo.sh`), plus the
+  same drawing as ARGB pixmaps
+  at 16 to 48 px (`service/icon.rs`, tiny-skia) for hosts that cannot find the name.
 - **No tray host** (GNOME without the extension, i3 without a tray): nothing changes for the
   hotkeys; the launcher entry opens the settings window, and `nomouse doctor` prints why there
   is no icon and how to get one.
@@ -126,6 +129,25 @@ thread; the event loop reads its commands without blocking and pushes state chan
   (`Active = false`, the reason as the warning, the icon's status `NeedsAttention`), retries
   every 30 seconds and on every configuration change, and starts the backend as soon as it
   can. Without the bus it exits with the error, as before.
+- **Settings window**: `nomouse-settings` (crate `crates/nomouse-settings`, GTK 4 and
+  libadwaita, [ADR 0004](adr/0004-linux-settings-window-and-tray.md)), a separate binary so the
+  daemon never links GUI libraries. Its pages are a General page, the shared
+  `settings::Section`s with one row per `settings::FIELDS` entry that applies on Linux, and a
+  Doctor page (`nomouse doctor`'s report). Every change goes through
+  `nomouse_core::settings::Settings` (saved at once, atomically, only the changed keys), then
+  `Reload` on the control interface; edits of the file by hand show up in the window within a
+  second (`Settings::watch`). The switch and the daemon row follow the control interface's
+  `Paused` and `Active`. The hotkey recorder pauses the daemon while it listens, so the chord
+  being recorded does not fire; on Wayland, where nomouse cannot grab keys
+  (`nomouse_linux::shortcuts`), the page shows the compositor lines to add instead. The
+  Appearance preview is drawn by the overlay's own renderer (`nomouse_linux::preview`). It is a
+  single-instance `GtkApplication` (`io.github.yuyudhan.nomouse`): a second start, from the
+  tray or the launcher, raises the open window on the asked `--page`.
+- **Launcher entry**: `nomouse launch` (the desktop entry's `Exec`) starts the daemon unless
+  it runs, then the settings window; when the window cannot open it shows the notification.
+  The tray's Settings…, Run doctor… and About start `nomouse-settings` the same way
+  (`launch::spawn_settings`: next to `nomouse`, else on `PATH`; errors in
+  `nomouse-settings.log` beside the daemon's lock).
 
 ## Unsafe policy
 

@@ -80,6 +80,19 @@ want labels in (they read the switch when they start).
 Another program grabbed it; `doctor` names the hotkey that could not be registered. Pick
 another in the config.
 
+**No tray icon**
+`doctor`'s "tray icon" line says why. GNOME shows tray icons only with the AppIndicator
+extension: Ubuntu ships it on (`gnome-extensions list --enabled` lists
+`ubuntu-appindicators@ubuntu.com`); elsewhere install "AppIndicator and KStatusNotifierItem
+Support". i3 and Sway need a bar with a tray (i3bar's `tray_output`, waybar's `tray` module).
+Without a tray, open the settings from the app launcher; the hotkeys work either way.
+
+**Picking nomouse in the launcher shows a notification, not the settings window**
+The window is missing or cannot start; the notification says why, and
+`$XDG_RUNTIME_DIR/nomouse-settings.log` has its errors. Usually GTK 4 or libadwaita is not
+installed: `sudo apt install libgtk-4-1 libadwaita-1-0` (Fedora: `gtk4 libadwaita`, Arch:
+`gtk4 libadwaita`). The window needs GTK 4.6 and libadwaita 1.1 or later.
+
 ## Wayland
 
 **`ctrl+space` does nothing**

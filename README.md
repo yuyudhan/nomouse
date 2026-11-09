@@ -33,7 +33,8 @@ source: [docs/install.md](docs/install.md).
 1. **Start it and allow it.**
    - macOS: `open /Applications/nomouse.app`. It asks for **Accessibility** (System Settings ›
      Privacy & Security › Accessibility › switch on nomouse) and restarts itself once allowed.
-   - Linux X11: `nomouse setup`, then `nomouse` to start the daemon.
+   - Linux X11: `nomouse setup`, then pick **nomouse** in the app launcher (Super, type
+     `nomouse`): it starts the daemon and opens its settings. `nomouse` in a terminal works too.
    - Linux Wayland: bind the modes in your compositor, e.g. Sway:
      `bindsym Ctrl+space exec nomouse hints` and `exec nomouse daemon`
      ([Hyprland, KDE](docs/install.md#linux-wayland)).
@@ -102,6 +103,21 @@ apps = ["com.mitchellh.ghostty", "kitty"]
 ```
 
 Every key, its default and its range: [docs/configuration.md](docs/configuration.md).
+
+On Linux the settings window edits the same file (the app launcher's nomouse, the tray menu's
+**Settings…**, or `nomouse-settings`): hotkeys recorded by pressing them, label letters, the
+label theme with a live preview, scrolling, search, ignored apps and start at login. The tray
+icon's menu pauses nomouse, starts each mode and runs the doctor; on GNOME it shows with the
+AppIndicator extension, on by default on Ubuntu.
+
+<p align="center">
+  <img src="docs/media/settings-appearance-light.png" width="420"
+       alt="The Linux settings window's Appearance page: the theme, label size, opacity and colours, with a preview of the labels">
+  <img src="docs/media/tray-menu-dark.png" width="200"
+       alt="The tray menu: nomouse on, Pause, each mode, Settings, Run doctor, Start at login, Check for updates, About, Quit">
+</p>
+
+Every page in light and dark: `docs/media/settings-<page>-<light|dark>.png`.
 
 ## Uninstall
 

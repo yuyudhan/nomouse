@@ -48,6 +48,8 @@ copyright = "yuyudhan"
 section = "utils"
 priority = "optional"
 depends = "libc6 (>= 2.35)"
+# The settings window (nomouse-settings); the daemon and the CLI run without them.
+recommends = "libgtk-4-1 (>= 4.6), libadwaita-1-0 (>= 1.1)"
 extended-description = """\
 nomouse labels every clickable element of the focused window from the accessibility tree; \
 typing a label clicks it. Needs the AT-SPI accessibility bus and an X11 session or a wlroots \
@@ -55,6 +57,11 @@ Wayland compositor (Sway, Hyprland)."""
 assets = [
     [
         "target/release/nomouse",
+        "usr/bin/",
+        "755",
+    ],
+    [
+        "target/release/nomouse-settings",
         "usr/bin/",
         "755",
     ],
@@ -76,6 +83,11 @@ assets = [
     [
         "../../packaging/linux/share/icons/hicolor/scalable/apps/io.github.yuyudhan.nomouse.svg",
         "usr/share/icons/hicolor/scalable/apps/io.github.yuyudhan.nomouse.svg",
+        "644",
+    ],
+    [
+        "../../packaging/linux/share/icons/hicolor/symbolic/apps/io.github.yuyudhan.nomouse-paused-symbolic.svg",
+        "usr/share/icons/hicolor/symbolic/apps/io.github.yuyudhan.nomouse-paused-symbolic.svg",
         "644",
     ],
     [

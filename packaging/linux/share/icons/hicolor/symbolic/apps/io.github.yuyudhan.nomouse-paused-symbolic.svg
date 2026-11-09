@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- The tray icon while nomouse is paused or cannot run: the keycap's outline only, its
+       pointer dimmed; one colour, recoloured by the desktop. -->
+  <path fill="#2e3436" fill-rule="evenodd" d="M4.2 1h7.6A3.2 3.2 0 0 1 15 4.2v7.6a3.2 3.2 0 0 1-3.2 3.2H4.2A3.2 3.2 0 0 1 1 11.8V4.2A3.2 3.2 0 0 1 4.2 1z M4.2 2.2A2 2 0 0 0 2.2 4.2v7.6a2 2 0 0 0 2 2h7.6a2 2 0 0 0 2-2V4.2a2 2 0 0 0-2-2z"/>
+  <path fill="#2e3436" opacity="0.6" d="M5.3 3.3v8.1l1.95-1.8 1.4 3.1 1.45-.6-1.4-3.05h2.75z"/>
+</svg>

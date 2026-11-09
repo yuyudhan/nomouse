@@ -12,6 +12,7 @@ the machine either fails or says `SKIP:` with the reason.
 | Backend contract, real | the same suite over the real backend | Linux (e2e), Windows, macOS | see below |
 | OS integration | `crates/nomouse-windows/tests/winforms.rs`, `crates/nomouse-macos/tests/macos_accessibility.rs` | their OS | `just test` |
 | End to end, Linux X11 | `scripts/e2e-linux.sh` | Linux | `just e2e` |
+| End to end, Linux desktop app (tray, settings window, launcher) | `scripts/e2e-desktop.sh` | Linux | `just e2e-desktop` |
 | End to end, macOS | `scripts/e2e-macos.sh` | a Mac with the Accessibility grant | `just e2e-macos` |
 | Coverage floor | `scripts/coverage.sh` | Linux | `just coverage` |
 
@@ -141,6 +142,44 @@ gir1.2-gtk-3.0`. The `/dev/uinput` path cannot run there (the headless backend r
 libinput devices); it is covered by unit tests of the event translation and needs a manual
 check on a compositor without virtual pointer (KDE).
 
+## End to end: the Linux desktop app
+
+`scripts/e2e-desktop.sh` (`just e2e-desktop`) tests what a desktop user touches: the launcher
+entry, the tray icon and menu, and the settings window, on two private sessions.
+
+On X11 (Xvfb, i3, AT-SPI, `scripts/e2e/sni_watcher.py` as the tray host's watcher and
+`scripts/e2e/fake_portal.py` for the light or dark style) it runs the installed-style desktop
+entry with `gio launch` and checks that the daemon starts and the settings window opens, and
+that a second launch keeps one window. It reads the tray menu over D-Bus as a host does
+(`scripts/e2e/tray_menu.py`) and checks its rows, the icon names, and Pause from the menu
+(the window's switch follows; the switch resumes). It drives the window over AT-SPI
+(`scripts/e2e/settings_driver.py`) with real pointer clicks and key presses from `xdotool`:
+records `super+shift+h` as the hints hotkey and checks `config.toml`, the daemon's reload and
+that the new chord starts hints; picks the Dark theme and checks the file and the reload; asks
+Reset to defaults, checks that nothing changes before the confirmation and everything after;
+closes the window and reopens it from the tray's Settings…; and quits the daemon from the menu.
+
+On headless Sway with waybar as a real tray host it clicks the icon in the bar (Sway's
+`seat cursor` commands) and checks that the menu opens, opens the window natively on Wayland
+from Settings… and checks that its Hotkeys page shows the `bindsym` lines.
+
+`--shots DIR` also saves each settings page and the tray menu in light and dark
+(`settings-<page>-<light|dark>.png`, `tray-menu-<light|dark>.png`); the README's copies live in
+`docs/media`. GTK 4.6 reports widget positions relative to the window, so pointer clicks are
+used only in the main window (which i3 places at 0,0); dialog buttons are pressed through
+their accessible action.
+
+Debian/Ubuntu packages: `xvfb i3-wm xdotool x11-utils imagemagick dbus-daemon at-spi2-core
+libglib2.0-bin python3-gi gir1.2-atspi-2.0 libgtk-4-dev libadwaita-1-dev sway waybar grim`.
+
+The settings window also has an in-process UI test, `crates/nomouse-settings/tests/ui.rs`: it
+opens every page, records hotkeys, sets each kind of control through the real widgets, edits
+the file on disk while the window is open, and answers the reset dialog, checking
+`config.toml` after each step. It needs an X server and skips without one;
+`NOMOUSE_UI_TESTS=1 GDK_BACKEND=x11 xvfb-run -a dbus-run-session -- cargo test -p
+nomouse-settings --test ui` runs it (CI does, in the `e2e-desktop` job). `GDK_BACKEND=x11`
+matters: GTK 4 would otherwise open the window on the Wayland desktop you are logged in to.
+
 ## End to end on macOS
 
 `scripts/e2e-macos.sh` (`just e2e-macos`) runs on the logged-in, unlocked desktop of a Mac:
@@ -226,6 +265,9 @@ Install: `cargo install cargo-llvm-cov` (or `cargo binstall cargo-llvm-cov`) and
   contract run on the Windows desktop, and the Finder test on macOS.
 - `e2e-linux`: installs the packages above and runs
   `scripts/e2e-linux.sh --display :99 --require-chromium --require-qt`.
+- `e2e-wayland`: `scripts/e2e-wayland.sh`.
+- `e2e-desktop`: `scripts/e2e-desktop.sh --display :98` on Ubuntu 22.04 (the oldest GTK 4 and
+  libadwaita the settings window supports).
 - `coverage`: `scripts/coverage.sh`, failing below the floors.
 
 ## Writing tests

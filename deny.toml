@@ -44,6 +44,8 @@ skip = [
     { crate = "quick-xml@0.38.4", reason = "zbus_xml 5.1 (atspi) pins quick-xml 0.38; wayland-scanner 0.31.11 needs 0.41" },
     # zbus 5 / zvariant 5 (via atspi) use winnow 0.7; toml 1.2 uses winnow 1.
     { crate = "winnow@0.7", reason = "zbus 5 parsers lag toml's winnow 1" },
+    # Build scripts only: libadwaita-sys 0.9 (the newest) still uses system-deps 7, gtk4-rs 0.11 uses 9.
+    { crate = "system-deps@7", reason = "libadwaita-sys 0.9 build script lags gtk4-rs 0.11's system-deps 9" },
 ]
 
 [sources]

@@ -37,6 +37,8 @@ bundle_id="com.yuyudhan.nomouse"
 # The Linux desktop entry's id and icon name, and the hicolor sizes the release ships.
 app_id="io.github.yuyudhan.nomouse"
 icon_sizes="16 22 24 32 48 64 128 256 512"
+# The tray icons (symbolic: the panel recolours them), on and paused.
+tray_icons="symbolic/apps/${app_id}-symbolic.svg symbolic/apps/${app_id}-paused-symbolic.svg"
 # Every request: retry failures, give up on a connection that never opens, and abort a transfer
 # that stalls (under 1 KB/s for 30 s) instead of hanging. --retry alone retries only timeouts and
 # HTTP 408/429/5xx; install_release adds --retry-all-errors where curl has it (7.71+), so a
@@ -206,11 +208,34 @@ fetch_verified() {
 # Puts FILE in place as DEST: copied beside it, then renamed over it, so a running daemon keeps
 # its old inode and a failed copy never leaves a half-written binary behind.
 place_binary() {
-    local file="$1" dest="$2"
+    local file="$1" dest="$2" new
+    new="$(dirname "$dest")/.$(basename "$dest").new"
     mkdir -p "$(dirname "$dest")"
-    cp "$file" "$(dirname "$dest")/.nomouse.new"
-    chmod 755 "$(dirname "$dest")/.nomouse.new"
-    mv -f "$(dirname "$dest")/.nomouse.new" "$dest"
+    cp "$file" "$new"
+    chmod 755 "$new"
+    mv -f "$new" "$dest"
+}
+
+# The shared libraries the program at $1 needs and this system lacks, one per line (ldd's
+# "not found" lines); nothing when all are there or ldd is missing.
+missing_libraries() {
+    command -v ldd >/dev/null 2>&1 || return 0
+    { ldd "$1" 2>/dev/null || true; } | awk '/not found/ { print $1 }'
+}
+
+# How to install GTK 4 and libadwaita, the settings window's libraries, on this distribution.
+gtk_install_hint() {
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "sudo apt install libgtk-4-1 libadwaita-1-0"
+    elif command -v dnf >/dev/null 2>&1; then
+        echo "sudo dnf install gtk4 libadwaita"
+    elif command -v pacman >/dev/null 2>&1; then
+        echo "sudo pacman -S gtk4 libadwaita"
+    elif command -v zypper >/dev/null 2>&1; then
+        echo "sudo zypper install libgtk-4-1 libadwaita-1-0"
+    else
+        echo "install GTK 4 (4.6 or later) and libadwaita (1.1 or later) with your package manager"
+    fi
 }
 
 path_hint() {
@@ -276,7 +301,7 @@ install_macos() {
 }
 
 install_linux() {
-    local target="$1" bin_dir="$2" archive
+    local target="$1" bin_dir="$2" archive settings_missing
     command -v tar >/dev/null 2>&1 || fail "tar is required"
     archive="$(archive_for "$target")"
     fetch_verified "$archive"
@@ -285,6 +310,17 @@ install_linux() {
     place_binary "${work}/nomouse-${target}/nomouse" "${bin_dir}/nomouse"
 
     say "installed $("${bin_dir}/nomouse" --version) to ${bin_dir}/nomouse"
+    if [ -f "${work}/nomouse-${target}/nomouse-settings" ]; then
+        place_binary "${work}/nomouse-${target}/nomouse-settings" "${bin_dir}/nomouse-settings"
+        say "installed the settings window to ${bin_dir}/nomouse-settings"
+        settings_missing="$(missing_libraries "${bin_dir}/nomouse-settings")"
+        if [ -n "$settings_missing" ]; then
+            say "the settings window needs GTK 4 and libadwaita, which are missing here"
+            say "($(echo "$settings_missing" | tr '\n' ' ' | sed 's/ $//')); install them with:"
+            step "$(gtk_install_hint)"
+            say "nomouse itself works without them; the launcher then shows a notification"
+        fi
+    fi
     if [ -d "${work}/nomouse-${target}/share" ]; then
         install_desktop_entry "${work}/nomouse-${target}/share" "$bin_dir"
     else
@@ -345,12 +381,12 @@ install_desktop_entry() {
         mkdir -p "$(dirname "${data}/icons/hicolor/${icon}")"
         cp "${share}/icons/hicolor/${icon}" "${data}/icons/hicolor/${icon}"
     done
-    # The monochrome panel and tray icon; releases before 0.1.4 have none.
-    icon="symbolic/apps/${app_id}-symbolic.svg"
-    if [ -f "${share}/icons/hicolor/${icon}" ]; then
+    for icon in $tray_icons; do
+        # Releases before the tray icon have none.
+        [ -f "${share}/icons/hicolor/${icon}" ] || continue
         mkdir -p "$(dirname "${data}/icons/hicolor/${icon}")"
         cp "${share}/icons/hicolor/${icon}" "${data}/icons/hicolor/${icon}"
-    fi
+    done
     refresh_desktop_caches "$data"
     say "added nomouse to the app launcher: ${data}/applications/${app_id}.desktop"
 }
@@ -367,7 +403,9 @@ remove_desktop_entry() {
         rm -f "${data}/icons/hicolor/${size}x${size}/apps/${app_id}.png"
     done
     rm -f "${data}/icons/hicolor/scalable/apps/${app_id}.svg"
-    rm -f "${data}/icons/hicolor/symbolic/apps/${app_id}-symbolic.svg"
+    for icon in $tray_icons; do
+        rm -f "${data}/icons/hicolor/${icon}"
+    done
     if [ "$removed" = true ]; then
         refresh_desktop_caches "$data"
         say "removed nomouse from the app launcher: ${data}/applications/${app_id}.desktop"
@@ -400,7 +438,7 @@ linux_next_steps() {
         step "   screen, choose \"GNOME on Xorg\" (Ubuntu: \"Ubuntu on Xorg\") and log in; then:"
         step "2. nomouse setup     (turns on the accessibility bus, explains anything missing)"
         step "3. nomouse           (starts the daemon; ctrl+space shows the labels)"
-        step "4. start at login: add \"${bin_dir}/nomouse daemon\" to your startup applications"
+        step "4. start at login: nomouse's settings > General > Start at login"
     elif [ "${XDG_SESSION_TYPE:-}" = wayland ]; then
         step "1. nomouse setup     (turns on the accessibility bus, explains anything missing)"
         step "2. Wayland: let your compositor start nomouse and bind its modes, e.g. Sway:"
@@ -414,11 +452,11 @@ linux_next_steps() {
     else
         step "1. nomouse setup     (turns on the accessibility bus, explains anything missing)"
         step "2. nomouse           (starts the daemon; ctrl+space shows the labels)"
-        step "3. start at login: add \"${bin_dir}/nomouse daemon\" to your desktop's"
-        step "   startup applications"
+        step "3. start at login: nomouse's settings > General > Start at login (or the tray menu)"
     fi
-    step "nomouse is in the app launcher too (GNOME: press Super, type nomouse): picking it"
-    step "starts the daemon and shows the hotkeys; its \"nomouse doctor\" action checks the setup"
+    step "nomouse is in the app launcher (GNOME: press Super, type nomouse): picking it starts the"
+    step "daemon and opens its settings; the tray icon's menu has the same (GNOME shows tray icons"
+    step "with the AppIndicator extension, on by default on Ubuntu)"
     step "check everything at any time with: nomouse doctor"
 }
 
@@ -449,7 +487,7 @@ install_release() {
 }
 
 uninstall() {
-    local bin_dir="$1" purge="$2" dir app link
+    local bin_dir="$1" purge="$2" dir app link autostart
     if [ -L "${bin_dir}/nomouse" ]; then
         link="$(readlink "${bin_dir}/nomouse")"
         case "$link" in
@@ -468,8 +506,19 @@ uninstall() {
     else
         say "nomouse is not installed in ${bin_dir}"
     fi
+    if [ -e "${bin_dir}/nomouse-settings" ]; then
+        rm -f "${bin_dir}/nomouse-settings"
+        say "removed ${bin_dir}/nomouse-settings"
+    fi
     if [ "$(uname -s)" = Linux ]; then
         remove_desktop_entry
+        # Start at login (the settings window's or the tray menu's switch) would run a removed
+        # nomouse.
+        autostart="${XDG_CONFIG_HOME:-${HOME}/.config}/autostart/nomouse.desktop"
+        if [ -f "$autostart" ]; then
+            rm -f "$autostart"
+            say "removed start at login: ${autostart}"
+        fi
     fi
     dir="$(config_dir)"
     if [ "$purge" = true ]; then

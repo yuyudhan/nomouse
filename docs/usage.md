@@ -4,9 +4,10 @@ nomouse runs as a small background daemon. A hotkey starts a **mode**; the mode 
 over the elements of the focused window, you type, and it acts. Escape always cancels.
 
 On Linux, nomouse is in the app launcher: press Super (the Windows key), type `nomouse` (or
-`mouse`, `click`, `hints`) and pick it. That starts the daemon unless it already runs, and a
-notification shows its state and the hotkeys (and, on GNOME Wayland, to log in with **Ubuntu on
-Xorg** instead). Right-click the entry for **nomouse doctor**.
+`mouse`, `click`, `hints`) and pick it. That starts the daemon unless it already runs and opens
+the settings window, which shows its state, the hotkeys and, on GNOME Wayland, to log in with
+**Ubuntu on Xorg** instead. Right-click the entry for **nomouse doctor**. The tray icon's menu
+pauses and resumes nomouse, starts each mode and opens the settings.
 
 - [Hints: click anything](#hints-click-anything)
 - [Other clicks: right, double, hover, drag](#other-clicks-right-double-hover-drag)
@@ -143,7 +144,8 @@ daemon, the mode runs in the command's own process.
 | `nomouse pause` / `resume` | release the hotkeys (and ignore the mode commands) until resumed, as the tray menu's Pause does |
 | `nomouse quit` | stop the daemon |
 | `nomouse setup` | walk through the permissions nomouse needs, ask the system, wait for them |
-| `nomouse launch [--doctor]` | Linux, what the app launcher runs: start the daemon unless it runs and notify its state and hotkeys; `--doctor` opens `nomouse doctor` in a terminal |
+| `nomouse launch [--doctor]` | Linux, what the app launcher runs: start the daemon unless it runs and open the settings window (without it: notify the state and hotkeys); `--doctor` opens `nomouse doctor` in a terminal |
+| `nomouse-settings [--page <page>]` | Linux, the settings window, on `general`, `hotkeys`, `labels`, `appearance`, `scroll`, `search`, `ignored`, `advanced` or `doctor`; a second start raises the open window |
 | `nomouse doctor` | check the session, accessibility, input and config, and print the fix for anything missing |
 | `nomouse config init` / `path` / `show` / `check [FILE]` | [configuration](configuration.md) helpers |
 | `nomouse labels COUNT [--alphabet LETTERS]` | print the labels COUNT elements would get |

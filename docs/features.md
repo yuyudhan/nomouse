@@ -132,11 +132,11 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-APP-05 | Ignored apps: no activation in listed apps (bundle id / app id / process name) | frontmost bundle id or executable name | `WM_CLASS` and `/proc/<pid>/comm` (X11); compositor app id, `WM_CLASS` (Sway, Hyprland) | P1 | done / done / done (Sway, Hyprland) / missing |
 | NM-APP-06 | Per-app settings overrides (alphabet, action, scope, semantic click) | bundle id | app id | P2 | partial (only `macos.enhanced_ui_apps`) |
 | NM-APP-07 | Config reload without restarting the daemon (file watch or `nomouse reload`) | mtime watch / socket | mtime watch / socket | P1 | done / done / done / partial (file watch only, not run) |
-| NM-APP-08 | Menu bar / tray icon: enabled state, open config, doctor, quit | `NSStatusItem` | StatusNotifierItem (KDE, GNOME with the AppIndicator extension) | P1 | missing |
-| NM-APP-09 | Launch at login | `SMAppService` (needs the `.app`) | XDG autostart `.desktop`, systemd user unit | P1 | missing |
+| NM-APP-08 | Menu bar / tray icon: enabled state, open config, doctor, quit | `NSStatusItem` | StatusNotifierItem with a dbusmenu menu (KDE, Xfce, waybar, GNOME with the AppIndicator extension), the menu model shared with macOS | P1 | missing / done / done / missing |
+| NM-APP-09 | Launch at login | `SMAppService` (needs the `.app`) | XDG autostart `.desktop` from the settings window or the tray menu | P1 | missing / done / done / missing |
 | NM-APP-10 | First-run onboarding: explain and request each permission, then verify with a live probe | AX prompt + System Settings deep link | enable `org.a11y.Status.IsEnabled`, explain Qt/Chromium flags and uinput | P0 | partial (`nomouse setup` and the daemon's start walk through missing permissions; macOS: dialogs or terminal, Settings pane, waits for trust, restarts itself. Linux: `nomouse setup` turns the AT-SPI switch on, not yet run on Linux; the uinput rule is not printed yet) |
-| NM-APP-11 | Settings window (GUI over `config.toml`) | SwiftUI-free: AppKit via `objc2` | GTK 4 or a TOML-editing TUI | P2 | missing |
-| NM-APP-12 | Update check (notify only; package managers update) | GitHub releases API | same | P2 | missing |
+| NM-APP-11 | Settings window (GUI over `config.toml`) | SwiftUI-free: AppKit via `objc2` | `nomouse-settings`: GTK 4 and libadwaita ([ADR 0004](adr/0004-linux-settings-window-and-tray.md)); hotkeys recorded on X11, compositor lines on Wayland | P2 | missing / done / done / missing |
+| NM-APP-12 | Update check (notify only; package managers update) | GitHub releases API | the latest-release redirect, from the tray menu and the settings window | P2 | missing / done / done / missing |
 
 ### Fallbacks for apps without an accessibility tree (FALL)
 
@@ -159,7 +159,7 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-DIST-06 | AUR `nomouse-bin` | n/a | PKGBUILD from the release tarball | P1 | missing |
 | NM-DIST-07 | AppImage | n/a | linuxdeploy (bundles nothing: AT-SPI and X11 come from the host) | P2 | missing |
 | NM-DIST-08 | udev rule and autostart files shipped in the Linux packages | n/a | `/usr/lib/udev/rules.d/70-nomouse-uinput.rules`, `/etc/xdg/autostart/nomouse.desktop` | P1 | missing |
-| NM-DIST-09 | App launcher entry and icons (find nomouse with Super; picking it starts the daemon and notifies the hotkeys) | `nomouse.app` in Applications | `io.github.yuyudhan.nomouse.desktop` and hicolor icons from `install.sh` and the `.deb`; `nomouse launch` | P1 | done |
+| NM-DIST-09 | App launcher entry and icons (find nomouse with Super; picking it starts the daemon and opens the settings window) | `nomouse.app` in Applications | `io.github.yuyudhan.nomouse.desktop` and hicolor icons from `install.sh` and the `.deb`; `nomouse launch` | P1 | done |
 
 ## Counts
 

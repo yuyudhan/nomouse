@@ -131,6 +131,26 @@ else
     fail "asset_api_url (large release) failed with status $?"
 fi
 
+# The settings window's missing libraries come from ldd's "not found" lines; a program ldd
+# cannot read (a script) has none.
+fakebin="${work}/fakebin"
+mkdir -p "$fakebin"
+cat >"${fakebin}/ldd" <<'LDD'
+#!/bin/sh
+case "$1" in
+    *nomouse-settings)
+        printf '\tlinux-vdso.so.1 (0x00007ffd)\n\tlibgtk-4.so.1 => not found\n'
+        printf '\tlibadwaita-1.so.0 => not found\n\tlibc.so.6 => /lib/libc.so.6 (0x00007f)\n'
+        ;;
+    *) echo "	not a dynamic executable" >&2; exit 1 ;;
+esac
+LDD
+chmod 755 "${fakebin}/ldd"
+check "missing_libraries lists ldd's not-found libraries" "libgtk-4.so.1 libadwaita-1.so.0" \
+    "$(PATH="${fakebin}:${PATH}" lib missing_libraries /opt/bin/nomouse-settings | tr '\n' ' ' | sed 's/ $//')"
+check "missing_libraries is empty for a program ldd cannot read" "" \
+    "$(PATH="${fakebin}:${PATH}" lib missing_libraries /opt/bin/script)"
+
 # The next steps name the fix for the desktop the installer runs in: GNOME on Wayland cannot
 # run nomouse, so it must say to log in with GNOME on Xorg instead of printing Sway bindings.
 steps="$(XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=ubuntu:GNOME lib linux_next_steps /opt/bin 2>&1)" || true
@@ -147,8 +167,9 @@ else
     fail "Sway next steps: ${steps}"
 fi
 steps="$(XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=ubuntu:GNOME lib linux_next_steps /opt/bin 2>&1)" || true
-if [[ "$steps" == *'add "/opt/bin/nomouse daemon"'* ]] && [[ "$steps" != *Xorg* ]]; then
-    pass "GNOME on Xorg: the next steps start the daemon and add it at login"
+if [[ "$steps" == *"settings > General > Start at login"* ]] &&
+    [[ "$steps" == *"app launcher"* ]] && [[ "$steps" != *Xorg* ]]; then
+    pass "GNOME on Xorg: the next steps start the daemon and point at Start at login"
 else
     fail "GNOME on Xorg next steps: ${steps}"
 fi
@@ -182,7 +203,8 @@ EOF
 else
     mkdir -p "${stage}/nomouse-${target}"
     printf '%s\n' "$stub" >"${stage}/nomouse-${target}/nomouse"
-    chmod 755 "${stage}/nomouse-${target}/nomouse"
+    printf '#!/bin/sh\necho "nomouse-settings 0.1.0-fake"\n' >"${stage}/nomouse-${target}/nomouse-settings"
+    chmod 755 "${stage}/nomouse-${target}/nomouse" "${stage}/nomouse-${target}/nomouse-settings"
     cp -R "${root}/packaging/linux/share" "${stage}/nomouse-${target}/"
     tar -C "$stage" -czf "${release}/${archive}" "nomouse-${target}"
 fi
@@ -203,15 +225,20 @@ sandbox() {
     env -i HOME="$home" PATH=/usr/bin:/bin:/usr/sbin:/sbin TERM=dumb "${apps[@]}" "$@"
 }
 bin="${home}/.local/bin/nomouse"
+settings="${home}/.local/bin/nomouse-settings"
+autostart="${home}/.config/autostart/nomouse.desktop"
 installed() {
     [ -x "$bin" ] && [ "$("$bin" --version)" = "nomouse 0.1.0-fake" ] || return 1
+    if [ "$os" = Linux ]; then
+        [ -x "$settings" ] && [ "$("$settings")" = "nomouse-settings 0.1.0-fake" ] || return 1
+    fi
     if [ "$os" = Darwin ]; then
         [ -L "$bin" ] && [ -x "${home}/Applications/nomouse.app/Contents/MacOS/nomouse" ] || return 1
     fi
 }
 absent() {
     [ ! -e "$bin" ] && [ ! -L "$bin" ] && [ ! -e "${home}/Applications/nomouse.app" ] &&
-        [ -z "$(launcher_files)" ]
+        [ ! -e "$settings" ] && [ ! -e "$autostart" ] && [ -z "$(launcher_files)" ]
 }
 
 # The app launcher entry (Linux): the desktop entry and its icons in the sandbox's data dir.
@@ -219,10 +246,12 @@ app_id="io.github.yuyudhan.nomouse"
 data="${home}/.local/share"
 entry="${data}/applications/${app_id}.desktop"
 icon_sizes="16 22 24 32 48 64 128 256 512"
-# Every launcher file present, one per line.
+# Every launcher file present (the entry, its icons, the tray icons), one per line.
 launcher_files() {
     local size file
-    for file in "$entry" "${data}/icons/hicolor/scalable/apps/${app_id}.svg"; do
+    for file in "$entry" "${data}/icons/hicolor/scalable/apps/${app_id}.svg" \
+        "${data}/icons/hicolor/symbolic/apps/${app_id}-symbolic.svg" \
+        "${data}/icons/hicolor/symbolic/apps/${app_id}-paused-symbolic.svg"; do
         [ -e "$file" ] && echo "$file"
     done
     for size in $icon_sizes; do
@@ -242,8 +271,8 @@ else
 fi
 
 if [ "$os" = Linux ]; then
-    expected=$(($(echo "$icon_sizes" | wc -w) + 2))
-    check "the launcher entry and every icon size are installed" "$expected" \
+    expected=$(($(echo "$icon_sizes" | wc -w) + 4))
+    check "the launcher entry, every icon size and the tray icons are installed" "$expected" \
         "$(launcher_files | wc -l | tr -d ' ')"
     check "the entry runs the installed nomouse" "Exec=\"${bin}\" launch" \
         "$(grep -m 1 '^Exec=' "$entry" || true)"
@@ -291,6 +320,11 @@ fi
 
 mkdir -p "${home}/.config/nomouse"
 touch "${home}/.config/nomouse/config.toml"
+if [ "$os" = Linux ]; then
+    # Start at login, as the settings window or the tray menu writes it.
+    mkdir -p "$(dirname "$autostart")"
+    printf '[Desktop Entry]\nType=Application\nName=nomouse\nExec=%s daemon\n' "$bin" >"$autostart"
+fi
 out="$(sandbox bash "$installer" --uninstall 2>&1)"
 if absent && [ -f "${home}/.config/nomouse/config.toml" ] && [[ "$out" == *"kept the config"* ]]; then
     pass "--uninstall removes nomouse and keeps the config"

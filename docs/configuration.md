@@ -17,7 +17,8 @@ within two seconds of a save, or at once with `nomouse reload`. A file with a mi
 reported in the daemon's log and the previous settings stay in effect, so a typo never leaves
 you without hotkeys. Unknown keys are errors, which catches misspellings.
 
-The settings window (the menu bar's **Settings...** on macOS) edits this same file and saves
+The settings window (the menu bar's **Settings...** on macOS; on Linux the app launcher's
+nomouse entry, the tray menu's **Settings…** or `nomouse-settings`) edits this same file and saves
 each change at once. It writes only the keys you change, removes a key you set back to its
 default, and keeps your comments, blank lines and key order, so editing by hand and in the
 window mix freely. Whichever wrote it last, the daemon picks the change up within a second.

@@ -60,6 +60,11 @@ deny:
 e2e *args:
     scripts/e2e-linux.sh {{args}}
 
+# The Linux desktop app end to end: launcher entry, tray menu and settings window, on private
+# Xvfb and headless Sway sessions. `--shots docs/media` refreshes the README's screenshots.
+e2e-desktop *args:
+    scripts/e2e-desktop.sh {{args}}
+
 # macOS end-to-end tests against a Swift fixture app on the logged-in desktop (needs the
 # Accessibility grant; moves the real pointer). `--bin <path>` tests another nomouse binary.
 e2e-macos *args:

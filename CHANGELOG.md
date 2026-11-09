@@ -23,9 +23,27 @@ the release's section; add entries under Unreleased as changes land.
   (`~/.config/autostart/nomouse.desktop`) that runs `nomouse daemon`.
 - The update check (tray menu, settings window): reads the latest release from GitHub and says
   whether a newer one is out; installing stays with the installer or the package manager.
+- Linux settings window, `nomouse-settings` (GTK 4 and libadwaita; GNOME 42 / Ubuntu 22.04 and
+  later): a General page (on/off, start at login, the update check, the session), then Hotkeys,
+  Labels, Appearance (with a live preview drawn by the overlay's own renderer), Scroll, Search,
+  Ignored apps and Advanced, the same sections as the macOS window, and a Doctor page. Hotkeys
+  are recorded by pressing them on X11; on Wayland the page shows the lines to add to the
+  compositor's config. Every change is saved at once into `config.toml`, which the daemon
+  reloads; "Open config file" and "Reset to defaults…" (asks first) are on the Advanced page.
+  One window per session: opening it again raises it on the asked page
+  (`nomouse-settings --page hotkeys`).
+- The tray icon is the logo's keycap as a symbolic icon that panels recolour
+  (`io.github.yuyudhan.nomouse-symbolic`), and its outline while paused or unable to run
+  (`io.github.yuyudhan.nomouse-paused-symbolic`), installed with the launcher icons.
 
 ### Changed
 
+- Picking nomouse in the app launcher (`nomouse launch`) now also opens the settings window;
+  without it (not installed, or GTK 4 and libadwaita missing) the notification stays.
+- `install.sh` installs `nomouse-settings` beside `nomouse` and, when GTK 4 or libadwaita is
+  missing, prints the package manager's command to add them (it never runs `sudo`);
+  `--uninstall` also removes the settings window, the tray icons and the start-at-login entry.
+  The `.deb` ships `nomouse-settings` and recommends `libgtk-4-1` and `libadwaita-1-0`.
 - On Linux, when the session cannot run nomouse (GNOME on Wayland, no accessibility bus yet),
   a daemon started from the desktop now stays up with only its tray menu and D-Bus interface,
   showing why, and tries again every 30 seconds and on every config change, instead of

@@ -29,6 +29,11 @@ jobs:
             - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
               with:
                   tool: taplo-cli,typos-cli
+            - name: Install GTK 4 and libadwaita (the Linux settings window)
+              if: runner.os == 'Linux'
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev
             - name: Format
               run: |
                   cargo fmt --all -- --check
@@ -110,6 +115,28 @@ jobs:
             - name: e2e (native Wayland and XWayland GTK)
               run: scripts/e2e-wayland.sh
 
+    e2e-desktop:
+        name: e2e (Linux desktop app, tray + settings window, X11 and headless Sway)
+        # 22.04: the oldest GTK 4 (4.6) and libadwaita (1.1) the settings window supports.
+        runs-on: ubuntu-22.04
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+            - name: Install the pinned toolchain
+              run: rustup show active-toolchain || rustup toolchain install
+            - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+            - name: Install the sessions, AT-SPI, GTK 4, libadwaita and waybar
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends xvfb i3-wm xdotool x11-utils \
+                      imagemagick dbus-daemon dbus-x11 at-spi2-core libglib2.0-bin python3-gi \
+                      gir1.2-atspi-2.0 gir1.2-gdkpixbuf-2.0 libgtk-4-dev libadwaita-1-dev sway waybar grim \
+                      fonts-dejavu-core adwaita-icon-theme
+            - name: e2e (launcher entry, tray menu, settings window)
+              run: scripts/e2e-desktop.sh --display :98
+            - name: Settings window UI test (in-process, every page, recorder, reset)
+              run: NOMOUSE_UI_TESTS=1 GDK_BACKEND=x11 xvfb-run -a dbus-run-session -- cargo test -p nomouse-settings --test ui
+
     coverage:
         name: coverage (floor)
         runs-on: ubuntu-latest
@@ -123,6 +150,10 @@ jobs:
             - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
               with:
                   tool: cargo-llvm-cov
+            - name: Install GTK 4 and libadwaita (the Linux settings window)
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev
             - name: Coverage
               run: scripts/coverage.sh
 

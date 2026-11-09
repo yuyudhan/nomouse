@@ -13,7 +13,7 @@ pub(crate) use other::Desktop;
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::process::{Command, Stdio};
 
     use nomouse_core::ActionKind;
@@ -31,29 +31,6 @@ mod linux {
         service: Option<Service>,
         autostart: Option<PathBuf>,
         action: ActionKind,
-    }
-
-    /// The `nomouse-settings` binary next to this one, else on `PATH`.
-    fn settings_program() -> PathBuf {
-        let sibling = std::env::current_exe()
-            .ok()
-            .and_then(|exe| Some(exe.parent()?.join("nomouse-settings")));
-        sibling
-            .filter(|path| path.is_file())
-            .unwrap_or_else(|| PathBuf::from("nomouse-settings"))
-    }
-
-    /// Starts `program` with `args` without waiting for it, so the daemon never blocks.
-    fn launch(program: &Path, args: &[&str]) -> std::io::Result<()> {
-        let mut child = Command::new(program)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
-        // Reap it when it exits, off the event loop.
-        std::thread::spawn(move || child.wait());
-        Ok(())
     }
 
     impl Desktop {
@@ -132,19 +109,24 @@ mod linux {
             None
         }
 
+        /// Starts the settings window without waiting for it, so the daemon never blocks; a
+        /// thread reaps it when it exits.
         fn open_settings(&self, args: &[&str]) -> Option<Request> {
-            let program = settings_program();
-            if let Err(error) = launch(&program, args) {
-                tracing::warn!("{}: {error}", program.display());
-                if let Some(service) = &self.service {
-                    service.notify(
-                        "nomouse settings are not installed",
-                        &format!(
-                            "{} could not start ({error}). Reinstall nomouse with its installer \
-                             or package to get the settings window.",
-                            program.display()
-                        ),
-                    );
+            match crate::launch::spawn_settings(args) {
+                Ok((mut child, _, _)) => {
+                    std::thread::spawn(move || child.wait());
+                }
+                Err(error) => {
+                    tracing::warn!("settings window: {error}");
+                    if let Some(service) = &self.service {
+                        service.notify(
+                            "nomouse settings could not open",
+                            &format!(
+                                "{error}. Reinstall nomouse with its installer or package to \
+                                 get the settings window."
+                            ),
+                        );
+                    }
                 }
             }
             None
@@ -229,8 +211,16 @@ mod linux {
         if let UpdateLine::Checked(UpdateStatus::Available { latest, .. }) = service.state().update
         {
             let url = release_url(&latest.to_string());
-            if let Err(error) = launch(Path::new("xdg-open"), &[&url]) {
-                tracing::warn!("xdg-open {url}: {error}");
+            let opened = Command::new("xdg-open")
+                .arg(&url)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+            match opened {
+                // Reap it when it exits, off the event loop.
+                Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
+                Err(error) => tracing::warn!("xdg-open {url}: {error}"),
             }
         }
         None

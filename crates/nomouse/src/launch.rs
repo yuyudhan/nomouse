@@ -1,11 +1,13 @@
 //! `nomouse launch`: what the desktop entry `io.github.yuyudhan.nomouse.desktop` runs when
 //! nomouse is picked in the app launcher (GNOME: Super, then type "nomouse"). It starts the
-//! daemon unless one is running and then always shows a desktop notification with the daemon's
-//! state and the hotkeys, so picking nomouse has a visible result. On GNOME Wayland, where
-//! nomouse cannot run, the notification says to log in with "Ubuntu on Xorg".
+//! daemon unless one is running and opens the settings window (`nomouse-settings`, a single
+//! instance: a second launch brings the open window forward). When the window cannot open (not
+//! installed, or GTK 4 and libadwaita missing), it shows a desktop notification with the
+//! daemon's state and the hotkeys instead, so picking nomouse always has a visible result. On
+//! GNOME Wayland, where nomouse cannot run, both say to log in with "Ubuntu on Xorg".
 //!
-//! `nomouse launch --doctor` is the entry's "nomouse doctor" action: it opens `nomouse doctor`
-//! in a terminal, or shows the report as a notification when no terminal is installed.
+//! `nomouse launch --doctor` is the entry's "nomouse doctor" action: the settings window's
+//! doctor page, else `nomouse doctor` in a terminal, else the report as a notification.
 
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
@@ -32,6 +34,11 @@ const POLL: Duration = Duration::from_millis(100);
 const LOG_TAIL: u64 = 600;
 /// The most of the doctor report a notification shows.
 const REPORT_LIMIT: usize = 1500;
+/// How long a settings window gets to fail (missing GTK libraries end it at once) before it
+/// counts as open.
+const SETTINGS_GRACE: Duration = Duration::from_millis(800);
+/// The settings window's program name.
+const SETTINGS: &str = "nomouse-settings";
 
 /// What became of the daemon.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,10 +220,13 @@ fn notify(note: &Note) -> Result<(), String> {
 pub(crate) fn find_program(name: &str, path: Option<&OsStr>) -> Option<PathBuf> {
     std::env::split_paths(path?)
         .map(|dir| dir.join(name))
-        .find(|candidate| {
-            std::fs::metadata(candidate)
-                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-        })
+        .find(|candidate| is_executable(candidate))
+}
+
+/// Whether `path` is an executable file.
+fn is_executable(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
 
 /// Terminals and the arguments that make them run a command, in the order they are tried.
@@ -341,6 +351,69 @@ fn ensure_daemon() -> Daemon {
     }
 }
 
+/// The settings window program: `nomouse-settings` next to `exe` (the tarball and the `.deb`
+/// install them side by side), else on the search path `path`.
+pub(crate) fn settings_program(exe: &Path, path: Option<&OsStr>) -> Option<PathBuf> {
+    let sibling = exe.parent().map(|dir| dir.join(SETTINGS));
+    sibling
+        .filter(|candidate| is_executable(candidate))
+        .or_else(|| find_program(SETTINGS, path))
+}
+
+/// Where the settings window's errors go: `nomouse-settings.log` beside the daemon's lock.
+pub(crate) fn settings_log() -> PathBuf {
+    lock::current_path().with_file_name(format!("{SETTINGS}.log"))
+}
+
+/// Starts the settings window with `args` in its own process group, its errors into
+/// [`settings_log`], without waiting for it.
+///
+/// # Errors
+/// Why it could not start: not installed, the log not writable, or not runnable.
+pub(crate) fn spawn_settings(args: &[&str]) -> Result<(Child, PathBuf, PathBuf), String> {
+    let exe = std::env::current_exe()
+        .map_err(|error| format!("cannot find the nomouse executable: {error}"))?;
+    let program = settings_program(&exe, std::env::var_os("PATH").as_deref())
+        .ok_or_else(|| format!("the settings window ({SETTINGS}) is not installed"))?;
+    let log = settings_log();
+    let stderr = File::create(&log).map_err(|e| format!("cannot write {}: {e}", log.display()))?;
+    let child = Command::new(&program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(stderr)
+        .process_group(0)
+        .spawn()
+        .map_err(|e| format!("cannot run {}: {e}", program.display()))?;
+    Ok((child, program, log))
+}
+
+/// Opens the settings window with `args` and waits [`SETTINGS_GRACE`] for it to fail. A
+/// window already open takes the request over and the new process exits successfully.
+///
+/// # Errors
+/// Why it is not open: not installed, not startable, or it exited with a failure (its stderr).
+fn open_settings(args: &[&str]) -> Result<(), String> {
+    let (mut child, program, log) = spawn_settings(args)?;
+    let started = Instant::now();
+    while started.elapsed() < SETTINGS_GRACE {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => {
+                let tail = log_tail(&log);
+                return Err(if tail.is_empty() {
+                    format!("{} exited ({status})", program.display())
+                } else {
+                    tail
+                });
+            }
+            Ok(None) => std::thread::sleep(POLL),
+            Err(error) => return Err(format!("cannot watch {}: {error}", program.display())),
+        }
+    }
+    Ok(())
+}
+
 /// Shows `note` and returns its text for the terminal, which also gets a notification failure.
 fn show(note: &Note) -> String {
     let mut out = format!("{}\n\n{}\n", note.summary, note.body);
@@ -350,12 +423,15 @@ fn show(note: &Note) -> String {
     out
 }
 
-/// `nomouse launch`: starts the daemon unless it runs, then notifies its state and hotkeys.
-/// `config` is the configuration as loaded; when it failed to load, the daemon is not started
-/// and the notification says why.
+/// `nomouse launch`: starts the daemon unless it runs, then opens the settings window, which
+/// shows the daemon's state, the session warning and every setting. Without the window it
+/// notifies the daemon's state and hotkeys instead. `config` is the configuration as loaded;
+/// when it failed to load, the daemon is not started and the window (or the notification)
+/// says why.
 ///
 /// # Errors
-/// When the daemon could not start (after notifying), so a terminal run exits non-zero.
+/// When the daemon could not start and the window did not open (after notifying), so a
+/// terminal run exits non-zero.
 pub(crate) fn launch(config: Result<Config, String>) -> Result<String, String> {
     let wayland_gnome = gnome_wayland(|name| std::env::var(name).ok());
     let (daemon, hotkeys) = match config {
@@ -365,7 +441,16 @@ pub(crate) fn launch(config: Result<Config, String>) -> Result<String, String> {
             None,
         ),
     };
-    let out = show(&note(&daemon, hotkeys.as_ref(), wayland_gnome));
+    let window = open_settings(&[]);
+    if window.is_ok() {
+        return Ok("opened the nomouse settings\n".to_owned());
+    }
+    let mut note = note(&daemon, hotkeys.as_ref(), wayland_gnome);
+    if let Err(why) = window {
+        tracing::info!("settings window: {why}");
+        let _ = write!(note.body, "\n\nThe settings window did not open: {why}");
+    }
+    let out = show(&note);
     match daemon {
         Daemon::Failed(_) => Err(out.trim_end().to_owned()),
         Daemon::AlreadyRunning | Daemon::Started | Daemon::Starting => Ok(out),
@@ -378,6 +463,10 @@ pub(crate) fn launch(config: Result<Config, String>) -> Result<String, String> {
 /// # Errors
 /// When nomouse cannot find itself or the report cannot be made.
 pub(crate) fn doctor() -> Result<String, String> {
+    match open_settings(&["--page", "doctor"]) {
+        Ok(()) => return Ok("opened the doctor page of the nomouse settings\n".to_owned()),
+        Err(why) => tracing::info!("settings window: {why}"),
+    }
     let exe = std::env::current_exe()
         .map_err(|error| format!("cannot find the nomouse executable: {error}"))?;
     let path = std::env::var_os("PATH");
@@ -524,6 +613,27 @@ mod tests {
         assert_eq!(find_program("tool", Some(&path)), Some(dir.join("tool")));
         assert_eq!(find_program("plain", Some(&path)), None);
         assert_eq!(find_program("sub", Some(&path)), None);
+        // The settings window: next to nomouse first, then on the search path.
+        std::fs::write(dir.join("sub").join(SETTINGS), b"").unwrap();
+        std::fs::set_permissions(
+            dir.join("sub").join(SETTINGS),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        std::fs::write(dir.join(SETTINGS), b"").unwrap();
+        std::fs::set_permissions(dir.join(SETTINGS), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        let exe = dir.join("sub").join("nomouse");
+        assert_eq!(
+            settings_program(&exe, Some(&path)),
+            Some(dir.join("sub").join(SETTINGS))
+        );
+        let elsewhere = Path::new("/nonexistent/nomouse");
+        assert_eq!(
+            settings_program(elsewhere, Some(&path)),
+            Some(dir.join(SETTINGS))
+        );
+        assert_eq!(settings_program(elsewhere, None), None);
         assert_eq!(find_program("tool", None), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }

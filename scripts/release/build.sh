@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Builds the release nomouse binary for one target triple and prints its path.
+# Builds the release nomouse binary for one target triple and prints its path. On Linux it also
+# builds nomouse-settings (the GTK 4 settings window, which needs libgtk-4-dev and
+# libadwaita-1-dev) into the same folder.
 #
 # Usage: scripts/release/build.sh TARGET
 #
@@ -18,6 +20,7 @@ cd "$root"
 rustup target add "$target" >/dev/null 2>&1 || true
 host="$(rustc -vV | sed -n 's/^host: //p')"
 args=(--release --locked --package nomouse --target "$target")
+[[ "$target" == *-linux-* ]] && args+=(--package nomouse-settings)
 
 if [ "$target" = "$host" ] || [[ "$target" == *-apple-darwin ]] || [[ "$target" == *-windows-* ]]; then
     cargo build "${args[@]}" >&2
@@ -37,4 +40,8 @@ binary="${target_dir}/${target}/release/nomouse"
     echo "build: ${binary} was not produced" >&2
     exit 1
 }
+if [[ "$target" == *-linux-* ]] && [ ! -f "$(dirname "$binary")/nomouse-settings" ]; then
+    echo "build: $(dirname "$binary")/nomouse-settings was not produced" >&2
+    exit 1
+fi
 echo "$binary"

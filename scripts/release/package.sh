@@ -7,8 +7,9 @@
 #   OUTDIR   where nomouse-NAME.tar.gz (or .zip for Windows) and its .sha256 go
 #
 # The archive holds one folder, nomouse-NAME/, with the binary, README.md, CHANGELOG.md,
-# LICENSE-MIT and LICENSE-APACHE; Linux archives also hold share/ from packaging/linux/share
-# (the app launcher entry and its hicolor icons, which install.sh and the .deb install). Asset
+# LICENSE-MIT and LICENSE-APACHE; Linux archives also hold nomouse-settings (the settings
+# window, built next to BINARY by build.sh) and share/ from packaging/linux/share (the app
+# launcher entry, its hicolor icons and the tray icons, which install.sh and the .deb install). Asset
 # names carry no version, so releases/latest/download/<asset> always resolves.
 set -euo pipefail
 
@@ -34,6 +35,13 @@ cp "$binary" "${work}/${folder}/"
 cp "${root}/README.md" "${root}/CHANGELOG.md" "${root}/LICENSE-MIT" "${root}/LICENSE-APACHE" \
     "${work}/${folder}/"
 if [[ "$name" == *-linux-* ]]; then
+    settings="$(dirname "$binary")/nomouse-settings"
+    [ -f "$settings" ] || {
+        echo "package: no settings window at ${settings}" >&2
+        exit 1
+    }
+    cp "$settings" "${work}/${folder}/"
+    chmod 755 "${work}/${folder}/nomouse-settings"
     cp -R "${root}/packaging/linux/share" "${work}/${folder}/"
 fi
 chmod 755 "${work}/${folder}/$(basename "$binary")"

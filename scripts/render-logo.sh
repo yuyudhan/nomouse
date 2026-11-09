@@ -8,7 +8,8 @@
 #
 # and copies the Linux app launcher icons into packaging/linux/share/icons/hicolor (the
 # tarball, install.sh and the .deb install them): the app icon as scalable SVG and 16 to
-# 512 px PNG files, and the monochrome symbolic SVG for panels and trays.
+# 512 px PNG files, and the monochrome symbolic SVGs for panels and trays (the tray shows the
+# paused one while nomouse is paused).
 #
 # Run it after changing an SVG and commit the PNG files with it.
 set -euo pipefail
@@ -39,4 +40,5 @@ done
 mkdir -p "${hicolor}/scalable/apps" "${hicolor}/symbolic/apps"
 cp "${logo}/nomouse.svg" "${hicolor}/scalable/apps/${app_id}.svg"
 cp "${logo}/nomouse-symbolic.svg" "${hicolor}/symbolic/apps/${app_id}-symbolic.svg"
+cp "${logo}/nomouse-paused-symbolic.svg" "${hicolor}/symbolic/apps/${app_id}-paused-symbolic.svg"
 echo "rendered into ${out} and ${hicolor}"

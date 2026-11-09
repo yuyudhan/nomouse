@@ -27,10 +27,13 @@ drop `--retry-all-errors` there.
 | System | What you get |
 |--------|--------------|
 | macOS 11+, Apple silicon and Intel | `nomouse.app` in `/Applications` (`~/Applications` when `/Applications` is not writable), and a `nomouse` command in `~/.local/bin` that runs the app's binary |
-| Linux x86_64 and aarch64 | the `nomouse` binary in `~/.local/bin`, and nomouse in the app launcher: the desktop entry `io.github.yuyudhan.nomouse.desktop` in `~/.local/share/applications` with its icons in `~/.local/share/icons/hicolor` |
+| Linux x86_64 and aarch64 | the `nomouse` and `nomouse-settings` (the settings window) binaries in `~/.local/bin`, and nomouse in the app launcher: the desktop entry `io.github.yuyudhan.nomouse.desktop` in `~/.local/share/applications` with its icons, and the tray icons, in `~/.local/share/icons/hicolor` |
 
 If `~/.local/bin` is not on your `PATH`, the installer says so and gives the line to add to
-`~/.profile` or `~/.zshrc`.
+`~/.profile` or `~/.zshrc`. The settings window needs GTK 4 (4.6 or later) and libadwaita (1.1
+or later), which Ubuntu 22.04 and later, Fedora and Arch desktops have; when they are missing the
+installer prints the command that adds them (for example `sudo apt install libgtk-4-1
+libadwaita-1-0`). nomouse itself runs without them.
 
 Offline, or behind a proxy that blocks the script: download the release assets and install from
 the folder (`gh release download --repo yuyudhan/nomouse --pattern '*' --dir nomouse-release`
@@ -75,13 +78,19 @@ start the app.
 1. Run the one-line install above.
 2. `nomouse setup` turns on the accessibility bus (`org.a11y.Status.IsEnabled`) if your desktop
    left it off and explains anything else that is missing.
-3. `nomouse` starts the daemon; `ctrl+space` shows the labels. Or start it from the app
-   launcher: press Super, type `nomouse` and pick it. Picking it starts the daemon unless it is
-   running already and shows a notification with its state and the hotkeys; right-click it for
+3. Open nomouse from the app launcher: press Super, type `nomouse` and pick it. That starts
+   the daemon unless it is running already and opens the settings window; `ctrl+space` shows
+   the labels. (`nomouse` in a terminal starts the daemon too.) Right-click the entry for
    **nomouse doctor**, which opens the doctor's report in a terminal.
-4. Start at login: add `nomouse daemon` to your desktop's startup applications (GNOME Tweaks ›
-   Startup Applications, KDE System Settings › Autostart, or `exec nomouse daemon` in an i3
-   config).
+4. Start at login: the settings window's **General › Start at login**, or the tray menu's
+   **Start at login** (an XDG autostart entry, `~/.config/autostart/nomouse.desktop`). In i3,
+   `exec nomouse daemon` in its config works too.
+
+The tray icon (the nomouse label in the panel) has the menu: on/off, Pause, each mode, Settings…,
+Run doctor…, Start at login, Check for updates…, About and Quit. KDE, Xfce, waybar and most
+panels show it; on GNOME it needs the AppIndicator extension, which Ubuntu turns on by default
+(elsewhere: `gnome-extensions enable ubuntu-appindicators@ubuntu.com`, or install "AppIndicator
+and KStatusNotifierItem Support"). Without a tray, use the app launcher.
 
 Most GTK and KDE apps expose their accessibility tree by default. Two kinds need a switch:
 
@@ -143,8 +152,9 @@ when they run on GNOME Wayland. See
 ## Debian and Ubuntu package
 
 Every release also has `nomouse_amd64.deb` and `nomouse_arm64.deb`, which install
-`/usr/bin/nomouse` and the same app launcher entry and icons as the installer, under
-`/usr/share/applications` and `/usr/share/icons/hicolor`:
+`/usr/bin/nomouse`, `/usr/bin/nomouse-settings` and the same app launcher entry and icons as
+the installer, under `/usr/share/applications` and `/usr/share/icons/hicolor`; apt installs GTK 4
+and libadwaita for the settings window (the package recommends them):
 
 ```sh
 sudo apt install ./nomouse_amd64.deb
@@ -195,7 +205,8 @@ keeps working until you restart it. Your config is never touched.
 curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash -s -- --uninstall
 ```
 
-This removes `~/.local/bin/nomouse`, on Linux the app launcher entry and its icons, and on macOS
+This removes `~/.local/bin/nomouse`, on Linux `nomouse-settings`, the app launcher entry and its
+icons, the tray icons and the start-at-login entry, and on macOS
 `nomouse.app` (only when it is nomouse's bundle, `com.yuyudhan.nomouse`). Add `--purge` to
 delete `~/.config/nomouse` too. On macOS, also remove
 nomouse from **Privacy & Security › Accessibility** and from **Login Items**.

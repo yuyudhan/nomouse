@@ -1,0 +1,25 @@
+[package]
+name = "nomouse-settings"
+description = "The nomouse settings window and launcher app for Linux (GTK 4 and libadwaita)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+nomouse-core.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# GNOME 42 (Ubuntu 22.04) is the oldest desktop we build for: GTK 4.6, libadwaita 1.1.
+adw = { package = "libadwaita", version = "0.9", features = ["v1_1"] }
+gtk = { package = "gtk4", version = "0.11", features = ["gnome_42"] }
+nomouse-linux = { workspace = true }
+
+[[test]]
+name = "ui"
+harness = false
+
+[lints]
+workspace = true
