@@ -4,3 +4,5 @@ extend-exclude = ["target", "Cargo.lock"]
 [default.extend-words]
 # GObject Introspection Repository, as in the Debian package gir1.2-gtk-3.0.
 gir = "gir"
+# Shortcat, the macOS app (prior art in docs/features.md).
+shortcat = "shortcat"

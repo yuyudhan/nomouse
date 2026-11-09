@@ -17,3 +17,6 @@
 - **M5, packaging**: `cargo install`, a Homebrew tap, an apt repository or PPA, winget and an MSI.
 
 Open: the licence (undecided).
+
+The remaining work, in slices with machines and acceptance tests, is in [plan.md](plan.md); the
+feature inventory and gap analysis against Homerow is in [features.md](features.md).
