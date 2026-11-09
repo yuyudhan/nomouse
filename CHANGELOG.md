@@ -7,6 +7,30 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Added
+
+- Linux tray icon: the daemon shows a status icon over the freedesktop StatusNotifierItem
+  protocol (KDE, Xfce, waybar's tray, and GNOME with the AppIndicator extension that Ubuntu
+  enables). Its menu shows whether nomouse is on, the session warning (GNOME on Wayland: log
+  in with "Ubuntu on Xorg"), Pause/Resume, each mode with its hotkey, Settings…, Run doctor…,
+  Start at login, Check for updates…, About and Quit. Without a tray host nomouse runs as
+  before and `nomouse doctor` says why there is no icon.
+- `nomouse pause`, `nomouse resume` and `nomouse quit`, and the same over D-Bus
+  (`io.github.yuyudhan.nomouse.Daemon1`: `Pause`, `Resume`, `Reload`, `Run`, `Quit`, and the
+  `Paused`, `Active`, `Warning` and `Version` properties). While paused the hotkeys are
+  released and mode commands are ignored.
+- Start at login on Linux, from the tray menu or the settings window: an XDG autostart entry
+  (`~/.config/autostart/nomouse.desktop`) that runs `nomouse daemon`.
+- The update check (tray menu, settings window): reads the latest release from GitHub and says
+  whether a newer one is out; installing stays with the installer or the package manager.
+
+### Changed
+
+- On Linux, when the session cannot run nomouse (GNOME on Wayland, no accessibility bus yet),
+  a daemon started from the desktop now stays up with only its tray menu and D-Bus interface,
+  showing why, and tries again every 30 seconds and on every config change, instead of
+  exiting.
+
 ## [0.1.3] - 2026-11-09
 
 ### Added
@@ -33,27 +57,6 @@ the release's section; add entries under Unreleased as changes land.
   `nomouse doctor` in a terminal, or shows the report as a notification without one.
 - The command socket answers `ping`, which `nomouse launch` uses to see that a daemon it
   started is up.
-- Linux tray icon: the daemon shows a status icon over the freedesktop StatusNotifierItem
-  protocol (KDE, Xfce, waybar's tray, and GNOME with the AppIndicator extension that Ubuntu
-  enables). Its menu shows whether nomouse is on, the session warning (GNOME on Wayland: log
-  in with "Ubuntu on Xorg"), Pause/Resume, each mode with its hotkey, Settings…, Run doctor…,
-  Start at login, Check for updates…, About and Quit. Without a tray host nomouse runs as
-  before and `nomouse doctor` says why there is no icon.
-- `nomouse pause`, `nomouse resume` and `nomouse quit`, and the same over D-Bus
-  (`io.github.yuyudhan.nomouse.Daemon1`: `Pause`, `Resume`, `Reload`, `Run`, `Quit`, and the
-  `Paused`, `Active`, `Warning` and `Version` properties). While paused the hotkeys are
-  released and mode commands are ignored.
-- Start at login on Linux, from the tray menu or the settings window: an XDG autostart entry
-  (`~/.config/autostart/nomouse.desktop`) that runs `nomouse daemon`.
-- The update check (tray menu, settings window): reads the latest release from GitHub and says
-  whether a newer one is out; installing stays with the installer or the package manager.
-
-### Changed
-
-- On Linux, when the session cannot run nomouse (GNOME on Wayland, no accessibility bus yet),
-  a daemon started from the desktop now stays up with only its tray menu and D-Bus interface,
-  showing why, and tries again every 30 seconds and on every config change, instead of
-  exiting.
 
 ## [0.1.2] - 2026-11-09
 
