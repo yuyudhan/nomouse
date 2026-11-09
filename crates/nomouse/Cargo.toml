@@ -67,7 +67,8 @@ assets = [
         "../../CHANGELOG.md",
         "usr/share/doc/nomouse/CHANGELOG.md",
         "644",
-    ],    [
+    ],
+    [
         "../../packaging/linux/share/applications/io.github.yuyudhan.nomouse.desktop",
         "usr/share/applications/io.github.yuyudhan.nomouse.desktop",
         "644",
