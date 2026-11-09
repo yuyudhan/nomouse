@@ -78,31 +78,31 @@ EOF
 asset_for() {
     local os="$1" arch="$2"
     case "$os" in
-        Linux)
-            case "$arch" in
-                x86_64 | amd64) echo "x86_64-unknown-linux-gnu" ;;
-                aarch64 | arm64) echo "aarch64-unknown-linux-gnu" ;;
-                *) fail "no Linux build for ${arch}; supported: x86_64, aarch64" ;;
-            esac
-            ;;
-        Darwin)
-            case "$arch" in
-                arm64 | x86_64) echo "universal-apple-darwin" ;;
-                *) fail "no macOS build for ${arch}; supported: arm64, x86_64" ;;
-            esac
-            ;;
-        MINGW* | MSYS* | CYGWIN*)
-            fail "on Windows run install.ps1 in PowerShell instead (see the README)"
-            ;;
-        *) fail "unsupported OS ${os}; nomouse runs on macOS, Linux and Windows" ;;
+    Linux)
+        case "$arch" in
+        x86_64 | amd64) echo "x86_64-unknown-linux-gnu" ;;
+        aarch64 | arm64) echo "aarch64-unknown-linux-gnu" ;;
+        *) fail "no Linux build for ${arch}; supported: x86_64, aarch64" ;;
+        esac
+        ;;
+    Darwin)
+        case "$arch" in
+        arm64 | x86_64) echo "universal-apple-darwin" ;;
+        *) fail "no macOS build for ${arch}; supported: arm64, x86_64" ;;
+        esac
+        ;;
+    MINGW* | MSYS* | CYGWIN*)
+        fail "on Windows run install.ps1 in PowerShell instead (see the README)"
+        ;;
+    *) fail "unsupported OS ${os}; nomouse runs on macOS, Linux and Windows" ;;
     esac
 }
 
 # The archive this target installs from.
 archive_for() {
     case "$1" in
-        *-apple-darwin) echo "nomouse-$1.app.zip" ;;
-        *) echo "nomouse-$1.tar.gz" ;;
+    *-apple-darwin) echo "nomouse-$1.app.zip" ;;
+    *) echo "nomouse-$1.tar.gz" ;;
     esac
 }
 
@@ -215,8 +215,8 @@ place_binary() {
 
 path_hint() {
     case ":${PATH}:" in
-        *":$1:"*) ;;
-        *) step "add $1 to PATH, e.g. in ~/.profile or ~/.zshrc: export PATH=\"$1:\$PATH\"" ;;
+    *":$1:"*) ;;
+    *) step "add $1 to PATH, e.g. in ~/.profile or ~/.zshrc: export PATH=\"$1:\$PATH\"" ;;
     esac
 }
 
@@ -307,8 +307,8 @@ data_dir() {
 # have to escape (" ` $ \ %) keeps plain `nomouse`, found on PATH.
 desktop_exec_path() {
     case "$1" in
-        *[\"\`\$\\%]*) echo nomouse ;;
-        *) echo "$1/nomouse" ;;
+    *[\"\`\$\\%]*) echo nomouse ;;
+    *) echo "$1/nomouse" ;;
     esac
 }
 
@@ -323,15 +323,15 @@ install_desktop_entry() {
     mkdir -p "${data}/applications"
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
-            "Exec=nomouse "*)
-                if [ "$exe" = nomouse ]; then
-                    printf '%s\n' "$line"
-                else
-                    printf 'Exec="%s" %s\n' "$exe" "${line#Exec=nomouse }"
-                fi
-                ;;
-            "TryExec=nomouse") printf 'TryExec=%s\n' "$exe" ;;
-            *) printf '%s\n' "$line" ;;
+        "Exec=nomouse "*)
+            if [ "$exe" = nomouse ]; then
+                printf '%s\n' "$line"
+            else
+                printf 'Exec="%s" %s\n' "$exe" "${line#Exec=nomouse }"
+            fi
+            ;;
+        "TryExec=nomouse") printf 'TryExec=%s\n' "$exe" ;;
+        *) printf '%s\n' "$line" ;;
         esac
     done <"${share}/applications/${app_id}.desktop" >"${data}/applications/.${app_id}.new"
     mv -f "${data}/applications/.${app_id}.new" "${data}/applications/${app_id}.desktop"
@@ -345,6 +345,12 @@ install_desktop_entry() {
         mkdir -p "$(dirname "${data}/icons/hicolor/${icon}")"
         cp "${share}/icons/hicolor/${icon}" "${data}/icons/hicolor/${icon}"
     done
+    # The monochrome panel and tray icon; releases before 0.1.4 have none.
+    icon="symbolic/apps/${app_id}-symbolic.svg"
+    if [ -f "${share}/icons/hicolor/${icon}" ]; then
+        mkdir -p "$(dirname "${data}/icons/hicolor/${icon}")"
+        cp "${share}/icons/hicolor/${icon}" "${data}/icons/hicolor/${icon}"
+    fi
     refresh_desktop_caches "$data"
     say "added nomouse to the app launcher: ${data}/applications/${app_id}.desktop"
 }
@@ -361,6 +367,7 @@ remove_desktop_entry() {
         rm -f "${data}/icons/hicolor/${size}x${size}/apps/${app_id}.png"
     done
     rm -f "${data}/icons/hicolor/scalable/apps/${app_id}.svg"
+    rm -f "${data}/icons/hicolor/symbolic/apps/${app_id}-symbolic.svg"
     if [ "$removed" = true ]; then
         refresh_desktop_caches "$data"
         say "removed nomouse from the app launcher: ${data}/applications/${app_id}.desktop"
@@ -385,7 +392,7 @@ refresh_desktop_caches() {
 linux_next_steps() {
     local bin_dir="$1" gnome=false
     case ":${XDG_CURRENT_DESKTOP:-}:" in
-        *:[Gg][Nn][Oo][Mm][Ee]:*) gnome=true ;;
+    *:[Gg][Nn][Oo][Mm][Ee]:*) gnome=true ;;
     esac
     if [ "${XDG_SESSION_TYPE:-}" = wayland ] && [ "$gnome" = true ]; then
         step "1. GNOME on Wayland cannot show nomouse's labels or click (Mutter has no overlay"
@@ -436,8 +443,8 @@ install_release() {
         say "installing the latest nomouse for ${target}"
     fi
     case "$target" in
-        *-apple-darwin) install_macos "$target" "$bin_dir" ;;
-        *) install_linux "$target" "$bin_dir" ;;
+    *-apple-darwin) install_macos "$target" "$bin_dir" ;;
+    *) install_linux "$target" "$bin_dir" ;;
     esac
 }
 
@@ -446,13 +453,13 @@ uninstall() {
     if [ -L "${bin_dir}/nomouse" ]; then
         link="$(readlink "${bin_dir}/nomouse")"
         case "$link" in
-            */nomouse.app/Contents/MacOS/nomouse)
-                app="${link%/Contents/MacOS/nomouse}"
-                if [ -d "$app" ] && [ "$(bundle_id_of "$app")" = "$bundle_id" ]; then
-                    rm -rf "$app"
-                    say "removed ${app}"
-                fi
-                ;;
+        */nomouse.app/Contents/MacOS/nomouse)
+            app="${link%/Contents/MacOS/nomouse}"
+            if [ -d "$app" ] && [ "$(bundle_id_of "$app")" = "$bundle_id" ]; then
+                rm -rf "$app"
+                say "removed ${app}"
+            fi
+            ;;
         esac
     fi
     if [ -e "${bin_dir}/nomouse" ] || [ -L "${bin_dir}/nomouse" ]; then
@@ -486,30 +493,30 @@ main() {
     local action=install purge=false bin_dir
     while [ "$#" -gt 0 ]; do
         case "$1" in
-            --version)
-                [ "$#" -ge 2 ] || fail "--version needs a value"
-                version="${2#v}"
-                shift 2
-                ;;
-            --from)
-                [ "$#" -ge 2 ] || fail "--from needs a directory"
-                [ -d "$2" ] || fail "--from: no directory $2"
-                from="$(cd "$2" && pwd)"
-                shift 2
-                ;;
-            --uninstall)
-                action=uninstall
-                shift
-                ;;
-            --purge)
-                purge=true
-                shift
-                ;;
-            -h | --help)
-                usage
-                return 0
-                ;;
-            *) fail "unknown option $1 (see --help)" ;;
+        --version)
+            [ "$#" -ge 2 ] || fail "--version needs a value"
+            version="${2#v}"
+            shift 2
+            ;;
+        --from)
+            [ "$#" -ge 2 ] || fail "--from needs a directory"
+            [ -d "$2" ] || fail "--from: no directory $2"
+            from="$(cd "$2" && pwd)"
+            shift 2
+            ;;
+        --uninstall)
+            action=uninstall
+            shift
+            ;;
+        --purge)
+            purge=true
+            shift
+            ;;
+        -h | --help)
+            usage
+            return 0
+            ;;
+        *) fail "unknown option $1 (see --help)" ;;
         esac
     done
     if [ -n "$version" ] && ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

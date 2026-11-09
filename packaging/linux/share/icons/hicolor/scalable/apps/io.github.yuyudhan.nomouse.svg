@@ -1,12 +1,34 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <!-- nomouse's app icon, the same drawing as packaging/macos/icon.swift: a hint label as the
-       overlay draws it (#ffd75f box, #1c1c1c text and border) on a dark rounded square. The
-       letters are outlines, so the icon looks the same without any font installed.
-       packaging/linux/icons.sh renders the hicolor PNG files from this file. -->
-  <rect x="51.2" y="51.2" width="409.6" height="409.6" rx="92.16" fill="#1c1c1c"/>
-  <rect x="112.64" y="168.96" width="286.72" height="174.08" rx="25.6" fill="#ffd75f"
-        stroke="#1c1c1c" stroke-width="6.144"/>
-  <path fill="#1c1c1c" d="M189 300V212H207L232 266V212H249V300H231L206 246V300Z"/>
-  <path fill="#1c1c1c" d="M263 300V212H281L293 250L305 212H323V300H306V248L297 278H289L280 248V300Z"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>nomouse</title>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3d4262"/>
+      <stop offset="1" stop-color="#161824"/>
+    </linearGradient>
+    <linearGradient id="side" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e6ad2e"/>
+      <stop offset="1" stop-color="#b47c16"/>
+    </linearGradient>
+    <linearGradient id="face" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffec9e"/>
+      <stop offset="1" stop-color="#ffd347"/>
+    </linearGradient>
+    <linearGradient id="dish" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd85c"/>
+      <stop offset="1" stop-color="#ffe485"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+  </defs>
+  <!-- The macOS icon grid: an 824 px rounded square on a 1024 px canvas. -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#background)"/>
+  <rect x="102" y="102" width="820" height="820" rx="184" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="4"/>
+  <!-- A keycap in the yellow of nomouse's hint labels. -->
+  <rect x="236" y="290" width="552" height="548" rx="124" fill="#000000" fill-opacity="0.45" filter="url(#shadow)"/>
+  <rect x="226" y="240" width="572" height="572" rx="124" fill="url(#side)"/>
+  <rect x="226" y="212" width="572" height="548" rx="124" fill="url(#face)"/>
+  <rect x="280" y="252" width="464" height="446" rx="98" fill="url(#dish)"/>
+  <!-- The pointer, pressed into the key. -->
+  <path transform="translate(428 326) scale(3.55)" d="M0 0 L0 72 L17 56 L29 83 L41 78 L29 51 L52 51 Z" fill="#1c1c1c" stroke="#1c1c1c" stroke-width="4" stroke-linejoin="round"/>
 </svg>

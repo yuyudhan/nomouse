@@ -123,4 +123,9 @@ assets = [
         "usr/share/icons/hicolor/512x512/apps/io.github.yuyudhan.nomouse.png",
         "644",
     ],
+    [
+        "../../packaging/linux/share/icons/hicolor/symbolic/apps/io.github.yuyudhan.nomouse-symbolic.svg",
+        "usr/share/icons/hicolor/symbolic/apps/io.github.yuyudhan.nomouse-symbolic.svg",
+        "644",
+    ],
 ]
