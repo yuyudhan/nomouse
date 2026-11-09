@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-09
+
 ### Fixed
 
 - 0.1.4 was tagged but never published: the Linux settings window still called the update
