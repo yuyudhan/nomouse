@@ -1,0 +1,67 @@
+# Platform support
+
+What runs where, and how each platform is tested. "e2e" is an end-to-end test that starts real
+apps, shows real labels and asserts the clicks landed; [testing.md](testing.md) describes each.
+
+## At a glance
+
+| Platform | Status | Release asset | How it is tested |
+|----------|--------|---------------|------------------|
+| macOS 11+, Apple silicon | supported | `nomouse-universal-apple-darwin.app.zip` (also `.dmg`, `.tar.gz`) | unit and fake-system tests in CI; desktop e2e (`just e2e-macos`) on an Apple silicon Mac against a Swift fixture app |
+| macOS 11+, Intel | supported | the same universal build | the Intel half is built in CI; no Intel desktop test |
+| Linux X11, x86_64 | supported | `nomouse-x86_64-unknown-linux-gnu.tar.gz`, `nomouse_amd64.deb` | e2e in CI on Xvfb + i3 with GTK, Chromium and Qt apps |
+| Linux X11, aarch64 | supported | `nomouse-aarch64-unknown-linux-gnu.tar.gz`, `nomouse_arm64.deb` | cross-built in CI; same code as x86_64 |
+| Linux Wayland: Sway | supported | the Linux builds | e2e in CI on headless Sway with native Wayland and XWayland GTK windows, hotkey from a Sway `bindsym` |
+| Linux Wayland: Hyprland | supported, not e2e-tested | the Linux builds | the same wlroots protocols as Sway; window positions from Hyprland's IPC (`j/clients`) |
+| Linux Wayland: KDE Plasma | partial | the Linux builds | labels on the layer shell; clicks through `/dev/uinput`; only XWayland apps are placed correctly; no automated test |
+| Linux Wayland: GNOME | not supported | | nomouse explains why and suggests GNOME on Xorg |
+| Windows 10/11 x86_64 | early | `nomouse-x86_64-pc-windows-msvc.zip` | unit tests and a UI Automation integration test on the CI runner's desktop |
+
+## macOS
+
+| Part | How |
+|------|-----|
+| Elements | the `AXUIElement` accessibility tree |
+| Labels | a click-through panel above every window |
+| Clicks | `CGEventPost`; `AXPress` / `AXShowMenu` with `semantic_click` |
+| Hotkeys | a `CGEventTap` |
+| Permission | Accessibility only |
+
+The `.app` runs without a Dock icon. Releases are ad-hoc signed and not notarized yet; the
+installer clears the quarantine flag, so Gatekeeper does not stop it.
+
+Chromium-based browsers and Electron apps expose their tree once asked:
+list them in [`macos.enhanced_ui_apps`](configuration.md#macos-macos-only).
+
+## Linux X11
+
+| Part | How |
+|------|-----|
+| Elements | AT-SPI2 over D-Bus |
+| Labels | an override-redirect, click-through window per monitor |
+| Clicks | XTest; AT-SPI `do_action` with `semantic_click` |
+| Hotkeys | `XGrabKey` |
+| Permission | the AT-SPI switch (`nomouse setup` turns it on) |
+
+Works on any X11 window manager or desktop: GNOME on Xorg, KDE on X11, Xfce, Cinnamon, MATE,
+i3 and others. Qt apps need `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1`; Chromium and Electron apps
+need `--force-renderer-accessibility`.
+
+## Linux Wayland
+
+| Part | Sway, Hyprland (wlroots) | KDE Plasma | GNOME |
+|------|--------------------------|------------|-------|
+| Labels | `zwlr_layer_shell_v1` overlay layer | layer shell | none (Mutter has no layer shell) |
+| Clicks | `zwlr_virtual_pointer_v1` + `zwp_virtual_keyboard_v1` | `/dev/uinput` (needs the udev rule) | none |
+| Hotkeys | compositor binds `nomouse hints` | custom shortcut runs `nomouse hints` | none |
+| Native window positions | Sway `get_tree`, Hyprland `j/clients` | not available: XWayland apps only | |
+
+Apps running on XWayland report global coordinates and work fully on every compositor above.
+Setup for each is in [install.md](install.md#linux-wayland); the internals are in
+[wayland.md](wayland.md).
+
+## Apps
+
+nomouse labels what an app's accessibility tree exposes, so it works with native macOS apps,
+GTK, Qt, Firefox, and Chromium and Electron apps (with accessibility on). Terminals, games and
+apps that draw everything themselves expose no elements and get no labels.

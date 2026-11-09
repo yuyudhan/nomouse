@@ -1,0 +1,104 @@
+# Troubleshooting
+
+Start with `nomouse doctor`. It checks the session, the accessibility API, input, the hotkeys
+and the config file, marks each `ok` or `FAIL`, and prints the fix for every failure.
+
+For more detail, run a mode in the foreground with logs:
+
+```sh
+NOMOUSE_LOG=debug nomouse hints --standalone
+```
+
+## The install
+
+**`curl: (56) The requested URL returned error: 404`**
+The repository is private, so its release downloads need a GitHub login. Install with your
+token, as [install.md](install.md#the-one-line-install) shows, or with
+`gh release download` and `install.sh --from`.
+
+**`checksum mismatch`**
+The download was cut off or changed on the way. Nothing was installed; run the installer
+again. If it keeps failing, a proxy is rewriting downloads.
+
+**`nomouse: command not found` after installing**
+`~/.local/bin` is not on your `PATH`. Add `export PATH="$HOME/.local/bin:$PATH"` to
+`~/.zshrc` (macOS) or `~/.profile` (Linux) and open a new terminal.
+
+## macOS
+
+**Nothing happens on `ctrl+space`**
+1. Is nomouse running? `pgrep -l nomouse`. If not, `open /Applications/nomouse.app`.
+2. Is it allowed? **System Settings › Privacy & Security › Accessibility** must list
+   **nomouse** switched on. Without it, macOS delivers no keys to nomouse and no clicks from
+   it.
+3. Does another app own `ctrl+space`? macOS uses it for "Select the previous input source" when
+   you have more than one keyboard layout (System Settings › Keyboard › Keyboard Shortcuts ›
+   Input Sources). Turn that off or pick another hotkey in the
+   [config](configuration.md#hotkeys-the-global-shortcuts).
+
+**nomouse is switched on in Accessibility but still not trusted**
+A rebuilt or reinstalled app with a different signature is a different app to macOS. Remove
+nomouse from the list with `-`, add `/Applications/nomouse.app` again with `+`, and start it.
+
+**"nomouse.app is damaged" or "cannot be opened because the developer cannot be verified"**
+The app was downloaded in a browser, which adds a quarantine flag, and the release is not
+notarized yet. Clear the flag once:
+`xattr -dr com.apple.quarantine /Applications/nomouse.app`.
+
+**No labels in Chrome, Edge, Brave, Slack or VS Code**
+Chromium and Electron apps build their accessibility tree only when asked. List them in the
+config:
+
+```toml
+[macos]
+enhanced_ui_apps = ["com.google.Chrome", "com.microsoft.VSCode"]
+```
+
+## Linux
+
+**Some apps get no labels**
+- Qt apps: set `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` in your session environment.
+- Chromium, Chrome and Electron apps: start them with `--force-renderer-accessibility`.
+- Terminals and games draw their own text and expose no elements; there is nothing to label.
+
+**`doctor` reports the accessibility bus is off**
+Run `nomouse setup`, which switches `org.a11y.Status.IsEnabled` on, then restart the apps you
+want labels in (they read the switch when they start).
+
+**The hotkey does nothing on X11**
+Another program grabbed it; `doctor` names the hotkey that could not be registered. Pick
+another in the config.
+
+## Wayland
+
+**`ctrl+space` does nothing**
+Expected: Wayland programs cannot grab global keys. Bind `nomouse hints` in your compositor; see
+[install.md](install.md#linux-wayland).
+
+**GNOME says nomouse is not supported**
+GNOME's Wayland compositor offers no overlay layer, no virtual pointer and no hotkeys to
+programs. Log in with **GNOME on Xorg** (the gear on the login screen).
+
+**KDE Plasma: labels appear but clicks do nothing**
+KWin offers no virtual pointer, so nomouse clicks through `/dev/uinput`. Give your user access
+with the udev rule in [install.md](install.md#linux-wayland) and log in again.
+
+**Labels sit in the wrong place in a native Wayland app**
+nomouse asks the compositor where the window is (Sway and Hyprland tell it; KWin does not).
+Apps running on XWayland always place correctly. A native app's popup menus, and all but the
+focused window of an app with several windows open, can be off.
+
+## The config
+
+**My change does nothing**
+`nomouse config check` validates the file and names the first bad key. The daemon keeps its
+previous settings when the new file is invalid, and logs why with `NOMOUSE_LOG=info`.
+
+**Two modes cannot share a hotkey**
+Each of `hotkeys.hints`, `continuous`, `scroll` and `search` needs its own chord.
+
+## Reporting a bug
+
+Open an issue at <https://github.com/yuyudhan/nomouse/issues> with the output of
+`nomouse --version` and `nomouse doctor`, the app you were in, and the log of
+`NOMOUSE_LOG=debug nomouse hints --standalone`.

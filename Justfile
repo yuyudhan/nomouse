@@ -47,9 +47,10 @@ pre-commit: fmt-check guards typos shellcheck clippy
 # Format check, guards, typos, shellcheck and clippy for every target.
 check: fmt-check guards typos shellcheck clippy-all
 
-# Unit, integration and property tests.
+# Unit, integration and property tests, and install.sh against a fake release.
 test:
     cargo test --workspace --all-features
+    scripts/test-installer.sh
 
 # Licences, advisories, duplicate dependencies, sources.
 deny:

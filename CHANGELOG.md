@@ -7,8 +7,14 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-09
+
 ### Added
 
+- macOS reaches the Milestone B features (4e3a367, b08a84a): the `auto` theme follows the
+  system appearance, the focus highlight and the scroll-area outline are drawn, search reads
+  tooltips and values, `ignore.apps` matches executable names, and the desktop end-to-end test
+  covers all of it.
 - Licence: MIT OR Apache-2.0, at your option (`LICENSE-MIT`, `LICENSE-APACHE`); release archives
   carry both files and the Homebrew formula declares it.
 - Focus-then-act: a highlight starts on the first label; Tab, ↓ and Ctrl-N move it forward,
@@ -87,9 +93,19 @@ the release's section; add entries under Unreleased as changes land.
 - macOS backend: AX tree walk, NSPanel overlay, CGEvent input and event-tap hotkeys.
 - Windows backend: UI Automation elements, layered overlay, SendInput and hotkeys.
 - `nomouse doctor` reports whether the platform's accessibility and input access work.
-- Release pipeline: archives for Linux (x86_64, aarch64), macOS (universal) and Windows
-  (x86_64) with SHA-256 checksums, `.deb` packages, a Homebrew formula, and no-sudo installers
-  (`install.sh`, `install.ps1`).
+- Release pipeline: archives for Linux (x86_64, aarch64), macOS (universal, plus `nomouse.app`
+  zipped and in a `.dmg`) and Windows (x86_64) with SHA-256 checksums, `.deb` packages, a
+  Homebrew formula, and no-sudo installers (`install.sh`, `install.ps1`).
+- `install.sh` installs `nomouse.app` into `/Applications` on macOS (quarantine removed, a
+  `nomouse` command in `~/.local/bin` pointing into it) and prints each system's next step:
+  the Accessibility grant, Wayland compositor bindings, the uinput rule, start at login.
+  `--from DIR` installs from a folder of release assets; with `GH_TOKEN` or `GITHUB_TOKEN` it
+  downloads through the GitHub API, which also works while the repository is private.
+  `scripts/test-installer.sh` (in `just test` and CI) tests it against a fake release.
+- User docs in `docs/`: `install.md`, `usage.md`, `configuration.md` (every key and default,
+  checked against the code by a test), `troubleshooting.md` and `platform-support.md`, indexed
+  in `docs/README.md`; the README starts with the install and a 30-second first use, with
+  recordings from macOS and Linux.
 
 ### Changed
 

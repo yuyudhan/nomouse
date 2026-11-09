@@ -230,7 +230,7 @@ turns it on). Windows: nothing to ask.
 
 | Target | Artifact | State |
 |--------|----------|-------|
-| macOS | universal binary tarball + `install.sh` | done |
+| macOS | `install.sh` installs `nomouse.app` (from its zip) into `/Applications` with a `nomouse` command in `~/.local/bin`; the universal binary tarball ships as well | done |
 | macOS | `nomouse.app` (LSUIElement agent, bundle id `com.yuyudhan.nomouse`, icon, version from `Cargo.toml`), ad-hoc signed, zipped: `scripts/release/app.sh` | done |
 | macOS | `nomouse.app` in a `.dmg` with an `/Applications` link (`scripts/release/dmg.sh`, written by `hdiutil makehybrid`, so nothing is mounted) | done (ad-hoc signed) |
 | macOS | Developer ID signed with hardened runtime, notarized and stapled (`signing.sh`, `notarize.sh` in `release.yml`) | wired; waits for the owner's certificate and App Store Connect key as secrets |

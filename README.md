@@ -1,196 +1,161 @@
 # nomouse
 
-**Click anything on screen without touching the mouse.** A free, open-source take on
-[Homerow](https://www.homerow.app/) for macOS and Linux, written in Rust.
+**Click anything on screen without touching the mouse.** A free, open-source
+[Homerow](https://www.homerow.app/) alternative for macOS and Linux, written in Rust.
 
-Press a hotkey and every button, link, tab and field in the focused window gets a short label.
-Type the label, and nomouse clicks it. Right-click, double-click, drag, scroll and search by text
-work the same way.
+Press a hotkey, and every button, link, tab and field gets a short label. Type the label and
+nomouse clicks it.
 
-## Demo
+<p align="center">
+  <img src="docs/media/demo-macos.gif" width="360"
+       alt="Continuous mode on macOS Calculator: labels appear on every key; typing four labels presses 7, ×, 6 and =, and the display shows 42">
+</p>
 
-<!-- TODO: record docs/demo.gif (hint mode in Finder and Firefox, then search and scroll mode). -->
-*A short screen recording goes here.*
+## Install
+
+```sh
+curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash
+```
+
+One command for macOS (Apple silicon and Intel) and Linux (x86_64 and aarch64, X11 and Wayland).
+No sudo: it verifies the download's SHA-256, installs `nomouse.app` on macOS or the `nomouse`
+binary in `~/.local/bin` on Linux, and prints the next step for your system.
+
+> [!NOTE]
+> While the repository is private, that URL answers 404 to anyone not logged in. Until it is
+> public, install with the GitHub CLI:
+>
+> ```sh
+> gh release download --repo yuyudhan/nomouse --dir nomouse-release
+> bash nomouse-release/install.sh --from nomouse-release
+> ```
+
+Debian and Ubuntu `.deb` packages, the Windows build, every installer option and building from
+source: [docs/install.md](docs/install.md).
+
+## First use, in 30 seconds
+
+1. **Start it and allow it.**
+   - macOS: `open /Applications/nomouse.app`. It asks for **Accessibility** (System Settings ›
+     Privacy & Security › Accessibility › switch on nomouse) and restarts itself once allowed.
+   - Linux X11: `nomouse setup`, then `nomouse` to start the daemon.
+   - Linux Wayland: bind the modes in your compositor, e.g. Sway:
+     `bindsym Ctrl+space exec nomouse hints` and `exec nomouse daemon`
+     ([Hyprland, KDE](docs/install.md#linux-wayland)).
+2. **Press `ctrl+space`.** Yellow labels appear on everything clickable in the focused window.
+3. **Type a label** (`dh`): nomouse clicks that element. Escape cancels.
+4. **Scroll**: `ctrl+alt+space`, then `j` `k` to scroll, `gg` / `G` for top and bottom.
+5. **Search**: `ctrl+alt+/`, type part of a button's text, Enter clicks the best match.
+
+| Hotkey | Mode |
+|--------|------|
+| `ctrl+space` | **hints**: label the window, type a label to click |
+| `ctrl+shift+space` | **continuous**: keep labelling after every click (the demo above) |
+| `ctrl+alt+space` | **scroll**: pick a scrollable area and scroll it with `h` `j` `k` `l` |
+| `ctrl+alt+/` | **search**: find an element by its text |
+
+While labels are up: `1`–`4` hold Shift, Ctrl, Alt or Cmd for the click (`4` then a link's
+label opens it in a new tab on macOS), Tab and Return pick the highlighted label, Backspace
+undoes a letter. Every key: [docs/usage.md](docs/usage.md).
+
+<p align="center">
+  <img src="docs/media/demo-linux.gif" width="360"
+       alt="The same on Linux: GNOME Calculator on X11 with labels on every button, typing labels to compute 7 × 6 = 42">
+</p>
 
 ## Why nomouse
 
 | | nomouse | Homerow |
 |---|---|---|
-| Price and source | free, open source | paid, closed source |
+| Price and source | free, open source (MIT or Apache-2.0) | paid, closed source |
 | macOS | yes | yes |
-| Linux (X11; Wayland on Sway, Hyprland, KDE) | yes | no |
+| Linux: X11, and Wayland on Sway and Hyprland (KDE in part) | yes | no |
 | Labels on every clickable element | yes | yes |
 | Search by text, best match first | yes | yes |
-| Scroll mode with `h` `j` `k` `l`, `d` `u` | yes | yes |
+| Scroll mode with `h` `j` `k` `l`, `gg`, `G` | yes | yes |
 | Right-click, double-click, cmd-click | yes | yes |
 | Drag and hover | yes | not documented |
 | Continuous mode (Homerow's click chain) | yes | yes |
-| Click without moving the pointer (accessibility action) | yes, opt-in | not documented |
-| Labels on every window of every monitor | yes, opt-in | not documented |
-| Plain-text config you can keep in your dotfiles | `~/.config/nomouse/config.toml` | settings window |
-| Ignored apps, label themes that follow dark mode | yes | yes |
-| Menu bar icon | [planned](docs/plan.md) | yes |
+| Homerow's own key bindings | yes (`hints.keys = "homerow"`) | yes |
+| Click without moving the pointer | yes (`hints.semantic_click`) | not documented |
+| Labels on every window of every monitor | yes (`hints.scope = "screen"`) | not documented |
+| Ignored apps, label themes (light, dark, auto) | yes | yes |
+| Plain-text config for your dotfiles | `~/.config/nomouse/config.toml` | settings window |
+| Menu bar icon, launch at login from the app | not yet: use Login Items | yes |
 
-Every feature, with how it works on each OS and what is still missing, is in
-[docs/features.md](docs/features.md).
-
-## Install
-
-Release archives come with a `.sha256` and a no-sudo installer that puts `nomouse` in
-`~/.local/bin`.
-
-**macOS** (Apple silicon and Intel, one universal binary):
-
-    curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash
-
-A signed `nomouse.app` and a Homebrew cask are [on the way](docs/plan.md).
-
-**Linux** (x86_64, aarch64):
-
-    curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash
-
-or the `.deb` from the [releases page](https://github.com/yuyudhan/nomouse/releases) on Debian
-and Ubuntu. rpm, AUR and AppImage packages are planned.
-
-Installer options go after `bash -s --`: `--version X.Y.Z`, `--uninstall`, `--uninstall --purge`
-(also deletes the config). `NOMOUSE_INSTALL_DIR` changes the install folder. A Windows build and
-`install.ps1` exist as well; see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-While the repository is private, release downloads need a GitHub login; use
-`gh release download` until it is public.
-
-Then run:
-
-    nomouse setup      # walks you through the permissions nomouse needs
-    nomouse doctor     # checks permissions and prints the platform backend
-    nomouse            # starts the daemon with the default hotkeys
-
-## Keys
-
-| Hotkey (default) | Mode |
-|------------------|------|
-| `ctrl+space` | hints: label the focused window, type a label to click |
-| `ctrl+shift+space` | continuous: keep labelling after every click until Escape or a click into a text field |
-| `ctrl+alt+space` | scroll: label scrollable areas, then scroll with keys |
-| `ctrl+alt+/` | search: type part of an element's text |
-
-While labels are shown:
-
-| Key | Effect |
-|-----|--------|
-| label letters | narrow the labels; a complete label acts on its element |
-| Tab, ↓, Ctrl-N / Shift-Tab, ↑, Ctrl-P | move the highlight to the next / previous label |
-| Return | act on the highlighted label (it starts on the first); modifiers held with Return are held for the click |
-| `1` `2` `3` `4` | hold Shift / Ctrl / Alt / Command (Super) for the next click; `4` then a label is cmd+click |
-| Backspace | remove the last typed letter |
-| Escape, or the mode's hotkey again | cancel |
-
-With `hints.keys = "homerow"` a complete label highlights its element instead of acting: then
-Return clicks, Return twice double clicks, Shift-Return right clicks and Cmd-Return (Super)
-cmd-clicks, as in Homerow.
-
-In search mode, Enter clicks the highlighted match (the best one unless moved), Tab freezes the
-query so letters pick a label, and Backspace with no label typed returns to the query. Search
-matches names, tooltips and descriptions, text field contents and roles (`button`); spaces are
-ignored, and `*` or `;` alone matches everything. Scroll mode starts on the largest scrollable
-area, outlined, with every area numbered: `j` `k` `h` `l` (or the arrows) scroll, Shift with
-them scrolls `dash_step` wheel steps at a time, `d` and `u` scroll five times as far, `gg`
-goes to the top and `G` to the bottom, Tab and Shift-Tab (or a digit) switch areas, and
-Escape or Enter ends it.
-
-Every mode is also a command (`nomouse hints`, `continuous`, `scroll`, `search`), with
-`--action right-click|double-click|hover|drag|scroll` for one-off actions. On Wayland the
-compositor binds these commands and they reach the running daemon: see
-[docs/wayland.md](docs/wayland.md).
+Each feature and its status per OS: [docs/features.md](docs/features.md).
 
 ## Configuration
 
-`~/.config/nomouse/config.toml` on macOS and Linux (`$XDG_CONFIG_HOME` is honoured). Every key
-is optional; `nomouse config init` writes the defaults, `nomouse config check` validates. The
-running daemon picks up an edited file within two seconds, or at once with `nomouse reload`;
-an invalid file is reported in its log and the previous settings stay.
+nomouse needs no config. To change something, `nomouse config init` writes
+`~/.config/nomouse/config.toml` with every default; keep only what you change. A running daemon
+picks up a saved file within two seconds.
 
 ```toml
 [hints]
-alphabet = "asdfghjk"        # label letters, most preferred first
-scope = "focused-window"     # or "screen" for every window on every monitor
-action = "click"             # click, right-click, double-click, hover, drag, scroll
-semantic_click = false       # press via the accessibility API; the pointer stays put
-keys = "nomouse"             # or "homerow": a label highlights, Return clicks
+alphabet = "fjdksagh"      # label letters, most comfortable first
+keys = "homerow"           # a label highlights; Return clicks, as in Homerow
 
-[hotkeys]                    # modifiers: ctrl, alt (Option), shift, meta (Command / Super)
-hints = "ctrl+space"
-continuous = "ctrl+shift+space"
-scroll = "ctrl+alt+space"
-search = "ctrl+alt+/"
-
-[scroll]
-step = 3
-dash_step = 15
+[hotkeys]
+hints = "cmd+shift+space"
 
 [overlay]
-font_size = 13
-opacity = 95
-theme = "original"          # original (yellow), light, dark, or auto (the system appearance)
-# background = "#ffd75f"    # each colour overrides the theme's when set:
-# foreground = "#1c1c1c"    # background, foreground, typed_foreground, border
+theme = "auto"             # light or dark labels, following the system
 
 [ignore]
-apps = ["org.wezfurlong.wezterm", "kitty"]   # no labels in these apps: bundle id or
-                                             # executable name (macOS), Wayland app id,
-                                             # X11 WM_CLASS or process name
-
-[macos]
-enhanced_ui_apps = ["com.google.Chrome"]   # Chromium browsers build their tree only on request
+apps = ["com.mitchellh.ghostty", "kitty"]
 ```
 
-The full schema with ranges is in [docs/architecture.md](docs/architecture.md#configuration).
-Set `NOMOUSE_LOG=info` (or `debug`) for logs on stderr.
+Every key, its default and its range: [docs/configuration.md](docs/configuration.md).
 
-## Permissions
+## Uninstall
 
-nomouse reads the screen through the accessibility tree, so it works with every app that exposes
-one: native apps, GTK, Qt, Firefox, and Chromium or Electron apps with accessibility on.
-Terminals and games without a tree are not supported yet.
+```sh
+curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash -s -- --uninstall
+```
 
-| OS | Elements | What to enable |
-|----|----------|----------------|
-| macOS | AXUIElement | System Settings › Privacy & Security › Accessibility: allow `nomouse` (or the terminal you run it from). `nomouse setup`, or the first start of `nomouse.app`, opens that pane, waits for the switch and restarts nomouse |
-| Linux X11 | AT-SPI over D-Bus | nothing on GNOME and KDE; `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` for Qt apps, `--force-renderer-accessibility` for Chromium and Electron |
-| Linux Wayland | AT-SPI | as X11; on compositors without a virtual pointer (KDE), write access to `/dev/uinput`. GNOME Wayland is not supported yet: use GNOME on Xorg |
+Removes the app or binary and keeps your config (add `--purge` to delete it too). On macOS,
+also remove nomouse from Privacy & Security › Accessibility.
 
-`nomouse doctor` checks each of these and prints the fix for anything missing.
+## Troubleshooting
 
-## Roadmap
+`nomouse doctor` checks permissions, the accessibility API, input and the config, and prints
+the fix for anything missing.
 
-Done: the core, Linux X11 and Wayland (wlroots), the macOS backend, release archives and the
-`.deb`. Next, in order: a macOS end-to-end harness, a signed `nomouse.app` with a guided first
-run and a Homebrew cask, layout-aware keys on macOS, then Homerow parity (focus-then-act,
-richer search and scroll, ignored apps, themes, menu bar and tray, launch at login) and rpm,
-AUR and AppImage packages. Further out: a grid mode for apps without a tree, and GNOME Wayland.
-The slices and their acceptance tests are in [docs/plan.md](docs/plan.md).
+| Symptom | Fix |
+|---------|-----|
+| macOS: `ctrl+space` does nothing | allow nomouse in Privacy & Security › Accessibility; if you use several keyboard layouts, macOS owns `ctrl+space`: free it or pick another hotkey |
+| No labels in Chrome, Slack, VS Code | macOS: list them in `macos.enhanced_ui_apps`; Linux: start them with `--force-renderer-accessibility` |
+| No labels in Qt apps on Linux | `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` in your session |
+| Wayland: the hotkey does nothing | Wayland has no global hotkeys for apps: bind `nomouse hints` in your compositor |
+| GNOME on Wayland | not supported yet: choose "GNOME on Xorg" at login |
+| KDE Wayland: labels but no clicks | allow `/dev/uinput` with the [udev rule](docs/install.md#linux-wayland) |
+
+More in [docs/troubleshooting.md](docs/troubleshooting.md); each compositor in
+[docs/platform-support.md](docs/platform-support.md).
+
+## Documentation
+
+[Install](docs/install.md) · [Usage](docs/usage.md) · [Configuration](docs/configuration.md) ·
+[Troubleshooting](docs/troubleshooting.md) · [Platform support](docs/platform-support.md) ·
+[Architecture](docs/architecture.md) · [All docs](docs/README.md) ·
+[Changelog](CHANGELOG.md)
 
 ## Contributing
 
-    rustup show && cargo install just taplo-cli typos-cli cargo-deny --locked
-    just install-hooks
-    just check && just test
+```sh
+rustup show && cargo install just taplo-cli typos-cli cargo-deny --locked
+just install-hooks
+just check && just test
+```
 
 The rules (no unsafe outside the two FFI crates, clippy pedantic with `-D warnings`, tests with
-every change) are in [CONTRIBUTING.md](CONTRIBUTING.md); the design is in
-[docs/architecture.md](docs/architecture.md), the test layers in
+every change) are in [CONTRIBUTING.md](CONTRIBUTING.md), the test layers in
 [docs/testing.md](docs/testing.md), and the rules for coding agents in [AGENTS.md](AGENTS.md).
 
 ## License
 
-Licensed under either of
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
-  <https://www.apache.org/licenses/LICENSE-2.0>)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
-
-at your option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
-the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
-additional terms or conditions.
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT), at your option. Unless you explicitly state otherwise, any
+contribution intentionally submitted for inclusion in the work by you, as defined in the
+Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
