@@ -149,6 +149,40 @@ thread; the event loop reads its commands without blocking and pushes state chan
   (`launch::spawn_settings`: next to `nomouse`, else on `PATH`; errors in
   `nomouse-settings.log` beside the daemon's lock).
 
+## Menu bar app (macOS)
+
+nomouse.app is an agent app (`LSUIElement`, no Dock icon); the daemon owns its menu bar item
+and windows on the main thread, beside the overlay and the event tap
+([ADR 0005](adr/0005-macos-menu-bar-app-in-appkit.md)):
+
+- **Wrappers** (`nomouse_sys_macos::ui`, the only `unsafe`): `status` (an `NSStatusItem` with a
+  template image and a menu of plain `MenuLine`s), `form` (an `NSTabViewController` window
+  with toolbar tabs, each page an `NSGridView` of rows built from `Spec`s: choices, numbers
+  with steppers, toggles, colour wells, shortcut `recorder`s, app lists, buttons, notes and a
+  label preview drawn by the overlay's own layer code), `panels` (alerts, the doctor report,
+  About, the app picker), `login` (`SMAppService.mainApp`) and `snapshot` (the app drawing
+  its own windows and menu into PNG files, so the documentation's pictures need no Screen
+  Recording permission). Every control reports through one shared action target, which queues
+  a `UiEvent` with the control's tag; nothing calls back into Rust from AppKit.
+- **The app** (`nomouse_macos::menubar`, no `unsafe`): `MenuBar` draws
+  `nomouse_core::menu::status_menu` (the model the Linux tray uses) plus an Accessibility line,
+  with the hotkeys as key equivalents, and turns picks into `Command`s for the daemon (pause,
+  resume, a mode, quit) or carries them out itself (settings, doctor, start at login, the
+  update check on its own thread, About). `SettingsWindow` builds a General page and one page
+  per `settings::Section` from `settings::FIELDS` (`pages`), fills each control from
+  `Settings::value`, saves every change with `Settings::set` and re-reads the file every
+  second (`Settings::watch`), so a hand edit shows in the open window. A shortcut being
+  recorded pauses the daemon's hotkeys (`Command::Pause` while it listens), and the recorded
+  chord is checked against `com.apple.symbolichotkeys` (`nomouse_macos::shortcuts`, macOS's
+  own keyboard shortcuts with their defaults).
+- **The daemon** (`crates/nomouse/src/desktop.rs`): `Desktop::next` services AppKit events
+  and returns what the menu asked; the backend's `next_event` pumps the same run loop while it
+  waits for keys, so the menu stays live during and between activations, and without a
+  backend (Accessibility missing) the menu still works.
+- **First run**: while Accessibility is missing, the `setup::Presenter` is
+  `menubar::Onboarding`: the item (dimmed) and a Welcome window that explains the permission,
+  opens its pane, and follows the grant before the daemon restarts itself.
+
 ## Unsafe policy
 
 The user requirement is `#![forbid(unsafe_code)]` in every crate. macOS and Windows APIs are
@@ -329,8 +363,9 @@ permission list and a `Probe` (is it granted, ask the OS for it) that explains e
 permission, asks once, polls every 500 ms for up to 10 minutes, and reports whether a
 *required* permission was granted on the way. `nomouse setup` walks through every permission
 in the terminal. The daemon walks through the required ones before it starts, in a terminal
-when it has one and otherwise in the backend's dialogs (macOS `NSAlert`, as when
-`nomouse.app` is opened), then replaces itself with a fresh start (`exec`) once they are
+when it has one and otherwise in the backend's presenter (on macOS the menu bar item and a
+Welcome window, `nomouse_macos::menubar::Onboarding`, as when `nomouse.app` is opened), then
+replaces itself with a fresh start (`exec`) once they are
 granted. macOS: Accessibility (required; the request shows macOS's prompt, which lists nomouse
 in the pane, and opens the pane). Linux: the AT-SPI switch (optional, the daemon's start also
 turns it on). Windows: nothing to ask.

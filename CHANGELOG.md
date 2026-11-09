@@ -35,6 +35,24 @@ the release's section; add entries under Unreleased as changes land.
 - The tray icon is the logo's keycap as a symbolic icon that panels recolour
   (`io.github.yuyudhan.nomouse-symbolic`), and its outline while paused or unable to run
   (`io.github.yuyudhan.nomouse-paused-symbolic`), installed with the launcher icons.
+- macOS: nomouse.app is a menu bar app, like Homerow: no Dock icon, a keycap template icon in
+  the menu bar that follows light and dark menu bars (dimmed while paused). Its menu shows the
+  state, the Accessibility status with a button to fix it, Pause/Resume, each mode with its
+  hotkey, Settings… (`cmd+,`), Run doctor… (the report in a window, with Copy), Start at login
+  (`SMAppService`, listed under System Settings › General › Login Items), Check for updates…
+  (opens the newer release's page), About and Quit.
+- macOS settings window: a General page, then Hotkeys (shortcut recorders that flag a chord
+  macOS itself uses, read from its keyboard shortcuts), Labels, Appearance (with a live
+  preview of the labels), Scroll, Search, Ignored apps (an app picker) and Advanced (Open
+  Config File, Show in Finder, Reset to Defaults… with a confirmation). Every change is saved
+  into `config.toml` at once and the daemon reloads it; a hand edit shows in the open window.
+- A new logo: a hint-label keycap with a mouse pointer pressed into it, as the app icon
+  (`.icns` from 16 to 1024 px), the macOS menu bar template, the Linux launcher icons and
+  symbolic tray icon, and the README header. The SVG sources are in `assets/logo/`
+  (`scripts/render-logo.sh` renders the PNG files).
+- Screenshots of the macOS menu and every settings page, light and dark, in
+  `docs/media/macos/` (`scripts/screenshots-macos.sh`: the app draws its own windows, so no
+  Screen Recording permission is needed).
 
 ### Changed
 
@@ -48,6 +66,12 @@ the release's section; add entries under Unreleased as changes land.
   a daemon started from the desktop now stays up with only its tray menu and D-Bus interface,
   showing why, and tries again every 30 seconds and on every config change, instead of
   exiting.
+- The guided first run on macOS happens in the app: while Accessibility is missing, nomouse's
+  menu bar item (dimmed) and a Welcome window explain the permission, open its pane and follow
+  the grant, instead of a row of alerts.
+- `just check` from a Mac or Windows cross-checks Linux without `nomouse-settings`, whose GTK
+  build scripts need Linux's libraries (Linux hosts and CI still lint it); it failed on every
+  Mac since the Linux settings window landed.
 
 ## [0.1.3] - 2026-11-09
 

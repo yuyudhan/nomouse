@@ -31,8 +31,9 @@ source: [docs/install.md](docs/install.md).
 ## First use, in 30 seconds
 
 1. **Start it and allow it.**
-   - macOS: `open /Applications/nomouse.app`. It asks for **Accessibility** (System Settings ›
-     Privacy & Security › Accessibility › switch on nomouse) and restarts itself once allowed.
+   - macOS: `open /Applications/nomouse.app`. Its keycap icon appears in the menu bar and a
+     Welcome window asks for **Accessibility** (System Settings › Privacy & Security ›
+     Accessibility › switch on nomouse); it restarts itself once allowed.
    - Linux X11: `nomouse setup`, then pick **nomouse** in the app launcher (Super, type
      `nomouse`): it starts the daemon and opens its settings. `nomouse` in a terminal works too.
    - Linux Wayland: bind the modes in your compositor, e.g. Sway:
@@ -77,7 +78,7 @@ undoes a letter. Every key: [docs/usage.md](docs/usage.md).
 | Labels on every window of every monitor | yes (`hints.scope = "screen"`) | not documented |
 | Ignored apps, label themes (light, dark, auto) | yes | yes |
 | Plain-text config for your dotfiles | `~/.config/nomouse/config.toml` | settings window |
-| Menu bar icon, launch at login from the app | not yet: use Login Items | yes |
+| Menu bar icon, settings window, launch at login from the app | yes (macOS menu bar, Linux tray) | yes (macOS) |
 
 Each feature and its status per OS: [docs/features.md](docs/features.md).
 
@@ -104,8 +105,33 @@ apps = ["com.mitchellh.ghostty", "kitty"]
 
 Every key, its default and its range: [docs/configuration.md](docs/configuration.md).
 
-On Linux the settings window edits the same file (the app launcher's nomouse, the tray menu's
-**Settings…**, or `nomouse-settings`): hotkeys recorded by pressing them, label letters, the
+## Menu bar and settings
+
+Both settings windows edit that same file and save each change at once, writing only what
+differs from the defaults and keeping your comments; the daemon picks it up within a second.
+Edit by hand and in the window freely.
+
+**macOS.** nomouse.app lives in the menu bar (no Dock icon), like Homerow. Its keycap icon
+opens a menu with the state and the Accessibility status (with a button to fix it), Pause,
+each mode with its hotkey, **Settings…**, **Run doctor…**, **Start at login**, **Check for
+updates…** (opens the download page when a newer release exists), About and Quit. The
+settings window has a page for every setting: hotkeys recorded by pressing them (a clash with
+a macOS shortcut is flagged), label letters and the Homerow key bindings, appearance with a
+live preview, scrolling, browser mode, ignored apps picked from `/Applications`, and advanced
+options with **Open Config File** and **Reset to Defaults…**. The first start walks through
+the Accessibility grant in a Welcome window. All of it: [docs/usage.md](docs/usage.md#menu-bar-and-settings).
+
+<p align="center">
+  <img src="docs/media/macos/menu-light.png" width="240"
+       alt="The macOS menu bar menu: nomouse on, Accessibility allowed, Pause, each mode with its hotkey, Settings, Run doctor, Start at login, Check for updates, About, Quit">
+  <img src="docs/media/macos/settings-appearance-dark.png" width="420"
+       alt="The macOS settings window's Appearance page in dark mode: theme, label size, opacity and colours, with a preview of the labels">
+</p>
+
+Every macOS page in light and dark: `docs/media/macos/settings-<page>-<light|dark>.png`.
+
+**Linux.** The settings window opens from the app launcher's nomouse, the tray menu's
+**Settings…**, or `nomouse-settings`: hotkeys recorded by pressing them, label letters, the
 label theme with a live preview, scrolling, search, ignored apps and start at login. The tray
 icon's menu pauses nomouse, starts each mode and runs the doctor; on GNOME it shows with the
 AppIndicator extension, on by default on Ubuntu.
@@ -117,7 +143,7 @@ AppIndicator extension, on by default on Ubuntu.
        alt="The tray menu: nomouse on, Pause, each mode, Settings, Run doctor, Start at login, Check for updates, About, Quit">
 </p>
 
-Every page in light and dark: `docs/media/settings-<page>-<light|dark>.png`.
+Every Linux page in light and dark: `docs/media/settings-<page>-<light|dark>.png`.
 
 ## Uninstall
 

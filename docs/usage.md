@@ -3,6 +3,9 @@
 nomouse runs as a small background daemon. A hotkey starts a **mode**; the mode draws labels
 over the elements of the focused window, you type, and it acts. Escape always cancels.
 
+On macOS, nomouse.app runs in the menu bar: its keycap icon's menu starts each mode, pauses
+nomouse and opens the settings ([Menu bar and settings](#menu-bar-and-settings)).
+
 On Linux, nomouse is in the app launcher: press Super (the Windows key), type `nomouse` (or
 `mouse`, `click`, `hints`) and pick it. That starts the daemon unless it already runs and opens
 the settings window, which shows its state, the hotkeys and, on GNOME Wayland, to log in with
@@ -16,6 +19,7 @@ pauses and resumes nomouse, starts each mode and opens the settings.
 - [Scroll mode](#scroll-mode)
 - [Search mode](#search-mode)
 - [Homerow key bindings](#homerow-key-bindings)
+- [Menu bar and settings](#menu-bar-and-settings)
 - [Commands](#commands)
 
 ## Hints: click anything
@@ -127,6 +131,44 @@ complete label then only highlights its element, and
 | Shift-Return | right click |
 | Cmd-Return (Super-Return) | cmd-click |
 
+## Menu bar and settings
+
+On macOS, nomouse.app is a menu bar app: no Dock icon, a keycap icon in the menu bar (dimmed
+while paused or unable to run). Its menu:
+
+| Item | Does |
+|------|------|
+| `nomouse 0.1.4: on` | the state: on, paused, or why it cannot run |
+| `Accessibility: allowed` | the permission; while it is missing, `Accessibility: not allowed. Allow…` asks for it and opens its Settings pane |
+| Pause nomouse / Resume nomouse | release the hotkeys until resumed |
+| Show Hints, Continuous Hints, Scroll, Search | start the mode; the hotkey in effect is shown at the right |
+| Settings… (`cmd+,`) | the settings window |
+| Run doctor… | `nomouse doctor`'s report in a window, with a Copy button |
+| Start at login | registers nomouse.app as a login item (System Settings › General › Login Items) |
+| Check for updates… | asks GitHub for the latest release; when it is newer, the item opens its download page (installing stays with `install.sh` or Homebrew) |
+| About nomouse, Quit nomouse (`cmd+q`) | |
+
+The settings window has these pages:
+
+| Page | Settings |
+|------|----------|
+| General | Accessibility status, start at login, updates, the doctor, About |
+| Hotkeys | one recorder per mode: click it and press the chord; a chord macOS already uses (Spotlight, input sources, screenshots) is flagged, Escape keeps the old one |
+| Labels | the label letters, the label keys (Homerow bindings), what picking a label does, which windows get labels |
+| Appearance | theme (auto, light, dark, original), label size and opacity, the four colours, with a live preview |
+| Scroll | the step and the Shift step |
+| Search | web pages: `fast` (what is in view) or `exhaustive` (the whole page) |
+| Ignored apps | apps where the hotkeys show no labels; **Add App…** picks them from `/Applications` |
+| Advanced | press through accessibility, Chromium and Electron apps, **Open Config File**, **Show in Finder**, **Reset to Defaults…** (asks first) |
+
+Each change is saved to `~/.config/nomouse/config.toml` at once (only what differs from the
+defaults; your comments stay) and the daemon applies it within a second. A file edited by hand
+meanwhile shows up in the open window; an invalid edit is named on the page and the last good
+settings stay in effect.
+
+On Linux the tray icon's menu and `nomouse-settings` do the same (see the
+[README](../README.md#menu-bar-and-settings)).
+
 ## Commands
 
 Every mode is also a command. When a daemon runs, the command hands the mode to it over its
@@ -141,7 +183,7 @@ daemon, the mode runs in the command's own process.
 | `nomouse scroll` | scroll mode |
 | `nomouse search` | search mode |
 | `nomouse reload` | make the daemon re-read the config now |
-| `nomouse pause` / `resume` | release the hotkeys (and ignore the mode commands) until resumed, as the tray menu's Pause does |
+| `nomouse pause` / `resume` | release the hotkeys (and ignore the mode commands) until resumed, as the menu bar or tray menu's Pause does |
 | `nomouse quit` | stop the daemon |
 | `nomouse setup` | walk through the permissions nomouse needs, ask the system, wait for them |
 | `nomouse launch [--doctor]` | Linux, what the app launcher runs: start the daemon unless it runs and open the settings window (without it: notify the state and hotkeys); `--doctor` opens `nomouse doctor` in a terminal |

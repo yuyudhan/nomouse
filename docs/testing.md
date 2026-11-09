@@ -10,7 +10,7 @@ the machine either fails or says `SKIP:` with the reason.
 | Property | `crates/*/tests/*_prop.rs` (proptest) | Linux, macOS, Windows | `just test` |
 | Backend contract, fakes | `nomouse_core::contract` run over each fake | Linux, macOS, Windows | `just test` |
 | Backend contract, real | the same suite over the real backend | Linux (e2e), Windows, macOS | see below |
-| OS integration | `crates/nomouse-windows/tests/winforms.rs`, `crates/nomouse-macos/tests/macos_accessibility.rs` | their OS | `just test` |
+| OS integration | `crates/nomouse-windows/tests/winforms.rs`, `crates/nomouse-macos/tests/macos_accessibility.rs`, `crates/nomouse-macos/tests/settings_window.rs` | their OS | `just test` |
 | End to end, Linux X11 | `scripts/e2e-linux.sh` | Linux | `just e2e` |
 | End to end, Linux desktop app (tray, settings window, launcher) | `scripts/e2e-desktop.sh` | Linux | `just e2e-desktop` |
 | End to end, macOS | `scripts/e2e-macos.sh` | a Mac with the Accessibility grant | `just e2e-macos` |
@@ -194,10 +194,12 @@ Swift programs with `swiftc` (Xcode or the Command Line Tools):
   `field`).
 - `scripts/e2e/mac_probe.swift`: reads those counters through Accessibility (`value`), brings
   the fixture to the front (`front`), counts a process's windows as Accessibility lists them
-  (`windows`), and posts key events (`type`, `key ctrl+space`) on the key that types each
-  character in the current layout, with real modifier key presses around chords. It also
-  reads, selects and removes keyboard layouts (`layout`, `select-layout`, `layout-enabled`,
-  `disable-layout`).
+  (`windows`) and its overlay panels (`panels`), and posts key events (`type`, `key
+  ctrl+space`) on the key that types each character in the current layout, with real modifier
+  key presses around chords. It also reads, selects and removes keyboard layouts (`layout`,
+  `select-layout`, `layout-enabled`, `disable-layout`), and drives an app's menu bar item and
+  windows: `status-item`, `menu <pid> <item>`, `press`, `press-title`, `choose`, `window`,
+  `titles` and `close`.
 
 With a private `XDG_CONFIG_HOME` and `XDG_RUNTIME_DIR` (the user's config and daemon are never
 touched) it asserts: 10/10 left clicks on `One`..`Ten`; a right click opens the context menu
@@ -218,8 +220,29 @@ with a new alphabet, `nomouse reload` makes the next labels use it; a daemon wit
 hotkey `ctrl+alt+o` keeps working when the layout switches to Dvorak under it (`ctrl+alt+o`
 pressed on the key that types `o`, then the label typed on Dvorak, clicks `Three`). The user's
 layout is restored, and Dvorak removed again if the run added it, even when a check fails.
+The menu bar section starts a daemon on its own config and checks that the menu bar has the
+`nomouse` item (`mac_probe status-item`); that **Settings…** in its menu opens the window
+(`menu`, `window nomouse-settings`); that a hotkey recorded on the Hotkeys tab (`press-title`,
+`press hotkeys.hints`, then the chord `ctrl+alt+j`) and the theme picked on the Appearance tab
+(`choose overlay.theme Dark`) are in `config.toml` at once and each makes the daemon log
+`config reloaded`; that the recorded hotkey then labels the fixture; and that **Quit nomouse**
+ends the daemon. The daemon checks count only its overlay panels (`mac_probe panels`, windows
+at the screen-saver level), since the menu bar item and the settings window are windows too.
 `--bin <path>` tests another binary (a bundle's `nomouse.app/Contents/MacOS/nomouse` runs in
 place, so its own grant applies); `--keep` keeps the logs.
+
+The settings window also has an in-process test, `crates/nomouse-macos/tests/settings_window.rs`
+(`cargo test -p nomouse-macos --features testing --test settings_window`, part of `just test`):
+over a scratch config it opens the window on Hotkeys, clicks the Hints recorder and sends it
+Control-Option-J through AppKit's own key event path, picks Dark in the Theme pop-up, and
+checks that `config.toml` has both at once, that a second `Settings` (as the daemon holds)
+reloads each, that the earlier hotkey stays in the file, and that the window closes. It needs
+a logged-in session but no Accessibility grant; elsewhere it prints `SKIP:`.
+
+The documentation's pictures of the menu and every settings page, light and dark
+(`docs/media/macos/`), come from `scripts/screenshots-macos.sh`: the app draws its own
+windows into PNG files (`nomouse screenshots <dir>`), so it needs no Screen Recording
+permission and works on a locked screen.
 
 The label colours are checked through the log, not by pixels: `screencapture` of other apps'
 windows needs the Screen Recording permission, which the test does not assume.
