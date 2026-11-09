@@ -21,7 +21,9 @@ OS-specific modules and dependencies are `cfg`-gated, so clippy checks all targe
 Defined in `crates/nomouse-core/src/platform.rs`, split by responsibility:
 
 - `ElementSource::elements(scope)`: a snapshot of the accessibility tree for the focused window or
-  the whole screen, as `Element { id, role, name, bounds, enabled }`.
+  the whole screen, as `Element { id, role, name, description, value, bounds, enabled }`
+  (description and value feed search; Linux reads them over AT-SPI for labelled objects only,
+  and never a password field's value).
 - `Overlay::show(hints, typed)` / `show_frame(frame)` / `hide()`: draws labels above all windows
   and grabs the keyboard while shown, so typed keys reach nomouse, not the app. A `Frame` adds
   the search query box and the highlighted label.

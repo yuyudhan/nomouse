@@ -349,6 +349,8 @@ mod tests {
                 id: ElementId(i),
                 role: Role::Button,
                 name: String::new(),
+                description: String::new(),
+                value: String::new(),
                 bounds: Rect::new(i32::try_from(i).unwrap() * 100, 0, 10, 10),
                 enabled: true,
             })

@@ -85,8 +85,8 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-SRCH-01 | Search hotkey: type part of an element's name; labels only on matches, best first | core `search::rank` | same | P0 | done (all) |
 | NM-SRCH-02 | Fuzzy, case-insensitive ranking (word starts, substrings, then subsequences) | core | core | P0 | done (all) |
 | NM-SRCH-03 | Enter clicks the best match; Tab freezes the query to pick by label | core | core | P0 | done (all) |
-| NM-SRCH-04 | Spaces ignored in queries; `*` and `;` match every element | core | core | P1 | missing |
-| NM-SRCH-05 | Search over roles, descriptions and values, not only names | AX description/value/help | AT-SPI description, attributes | P1 | missing |
+| NM-SRCH-04 | Spaces ignored in queries; `*` and `;` match every element | core | core | P1 | done (all) |
+| NM-SRCH-05 | Search over roles, descriptions and values, not only names | AX description/value/help | AT-SPI description, Text and Value interfaces | P1 | partial (roles everywhere; the macOS walk reads no AXDescription, AXHelp or AXValue yet) / done / done / partial (roles only) |
 | NM-SRCH-06 | Search and hint mode in one activation (type letters to search, hold Shift to type a label) | core | core | P2 | missing |
 
 ### Scroll (SCRL)
@@ -165,9 +165,9 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | Priority | Features | Done | Partial | Missing |
 | --- | --- | --- | --- | --- |
 | P0 | 29 | 26 | 2 | 1 |
-| P1 | 25 | 4 | 7 | 14 |
+| P1 | 25 | 5 | 8 | 12 |
 | P2 | 17 | 0 | 3 | 14 |
-| **All** | **71** | **30** | **12** | **29** |
+| **All** | **71** | **31** | **13** | **27** |
 
 A feature counts as done when it is done on macOS and Linux X11 (Wayland limits are listed per
 row). The three open P0 items are all macOS distribution and onboarding: the signed and

@@ -77,6 +77,26 @@ wait_for() {
     done
 }
 
+# GTK animates a window's focus change (backdrop styles) for a moment after focus moves or the
+# overlay hands the keyboard back, so screenshots are compared once the screen is steady.
+# screen_matches <png> <out png>: takes a screenshot into <out png> and compares it with <png>.
+screen_matches() { grim "$2" && cmp -s "$1" "$2"; }
+# steady: a new screenshot equals <png>; otherwise it replaces <png> for the next try.
+steady() {
+    grim "$1.next"
+    if cmp -s "$1" "$1.next"; then return 0; fi
+    mv "$1.next" "$1"
+    sleep 0.1
+    return 1
+}
+# steady_screenshot <png>: a screenshot equal to one taken 100 ms later (tried for 3 s).
+steady_screenshot() {
+    grim "$1"
+    sleep 0.1
+    wait_for 3 steady "$1" || true
+    rm -f "$1.next"
+}
+
 # reap <pid> [seconds]: waits for a child with a deadline; kills it and fails on timeout.
 gone() { ! kill -0 "$1" 2>/dev/null; }
 reap() {
@@ -230,18 +250,15 @@ done
 
 echo "--- labels are drawn, and removed when the session ends"
 focus xdg_shell
-sleep 0.3
-grim "$tmp/before-cancel.png"
+steady_screenshot "$tmp/before-cancel.png"
 log="$tmp/cancel.log"
 if run_hints "$log" hints; then
     sleep 0.3
     grim "$tmp/during-cancel.png"
     wtype -k Escape
     reap "$hints_pid" || true
-    sleep 0.3
-    grim "$tmp/after-cancel.png"
     if ! cmp -s "$tmp/before-cancel.png" "$tmp/during-cancel.png"; then pass "labels visible on screen while up"; else fail "no labels in the screenshot"; fi
-    if cmp -s "$tmp/before-cancel.png" "$tmp/after-cancel.png"; then pass "Escape left no overlay on screen"; else fail "the screen differs after Escape"; fi
+    if wait_for 3 screen_matches "$tmp/before-cancel.png" "$tmp/after-cancel.png"; then pass "Escape left no overlay on screen"; else fail "the screen differs after Escape"; fi
 else
     kill "$hints_pid" 2>/dev/null || true
     fail "cancel: no labels"
@@ -281,8 +298,7 @@ grep -oE 'labels shown [0-9]+ ms' "$daemon_log" | sed 's/^/  daemon: /' || true
 
 echo "--- toggle: the Sway binding pressed again dismisses the labels"
 focus xdg_shell
-sleep 0.3
-grim "$tmp/before-toggle.png"
+steady_screenshot "$tmp/before-toggle.png"
 title_before="$(title xdg_shell)"
 before="$(scans "$daemon_log")"
 wtype -M ctrl -k space -m ctrl
@@ -290,9 +306,7 @@ if wait_for 5 scans_at_least "$daemon_log" $((before + 1)); then
     sleep 0.3
     wtype -M ctrl -k space -m ctrl
     if wait_for 5 grep -q 'cancelled' "$daemon_log"; then
-        sleep 0.3
-        grim "$tmp/after-toggle.png"
-        if cmp -s "$tmp/before-toggle.png" "$tmp/after-toggle.png" && [[ "$(title xdg_shell)" == "$title_before" ]]; then pass "binding twice: no overlay left, nothing clicked"; else fail "binding twice: the screen or title changed ('$(title xdg_shell)')"; fi
+        if wait_for 3 screen_matches "$tmp/before-toggle.png" "$tmp/after-toggle.png" && [[ "$(title xdg_shell)" == "$title_before" ]]; then pass "binding twice: no overlay left, nothing clicked"; else fail "binding twice: the screen or title changed ('$(title xdg_shell)')"; fi
     else
         fail "binding twice: the session did not end"
     fi

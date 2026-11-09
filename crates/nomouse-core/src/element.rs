@@ -123,6 +123,28 @@ impl Role {
     pub const fn is_interactive(self) -> bool {
         !matches!(self, Self::Text | Self::ScrollArea)
     }
+
+    /// The role in plain lowercase words (`"check box"`), as search matches it; `None` for
+    /// [`Role::Other`], which says nothing about the element.
+    pub const fn words(self) -> Option<&'static str> {
+        Some(match self {
+            Self::Button => "button",
+            Self::Link => "link",
+            Self::CheckBox => "check box",
+            Self::RadioButton => "radio button",
+            Self::MenuItem => "menu item",
+            Self::Tab => "tab",
+            Self::TextField => "text field",
+            Self::ComboBox => "combo box",
+            Self::ListItem => "list item",
+            Self::TreeItem => "tree item",
+            Self::Slider => "slider",
+            Self::Cell => "cell",
+            Self::ScrollArea => "scroll area",
+            Self::Text => "text",
+            Self::Other => return None,
+        })
+    }
 }
 
 /// One element of an accessibility tree, as reported by an [`crate::ElementSource`].
@@ -134,6 +156,11 @@ pub struct Element {
     pub role: Role,
     /// Accessible name or label text (may be empty).
     pub name: String,
+    /// Longer accessible description, help or tooltip text (may be empty); search matches it.
+    pub description: String,
+    /// Current value: a text field's contents or a slider's position (may be empty; never a
+    /// password field's); search matches it.
+    pub value: String,
     /// On-screen bounds in global coordinates.
     pub bounds: Rect,
     /// Whether the element is enabled (disabled elements get no hint).
@@ -166,6 +193,8 @@ mod tests {
             id: ElementId(id),
             role: Role::Button,
             name: String::new(),
+            description: String::new(),
+            value: String::new(),
             bounds: Rect::new(x, y, 10, 10),
             enabled: true,
         }

@@ -16,7 +16,8 @@
 //! and Cmd-Return (Super) cmd-clicks the highlighted hint.
 //!
 //! In search mode ([`HintSession::search`]) typed characters first build the query: labels are
-//! shown only on elements whose name fuzzily matches it, best match first (and highlighted).
+//! shown only on elements whose text (name, value, description or role) fuzzily matches it,
+//! best match first (and highlighted); spaces are ignored, and `*` or `;` alone matches all.
 //! Enter acts on the highlighted match; Tab freezes the query so label characters (and the
 //! modifier digits) pick another match; Backspace with no label typed returns to editing the
 //! query.
@@ -474,6 +475,8 @@ mod tests {
                 id: ElementId(i),
                 role: if i == 2 { Role::Text } else { Role::Button },
                 name: format!("e{i}"),
+                description: String::new(),
+                value: String::new(),
                 bounds: Rect::new(0, i32::try_from(i).unwrap() * 100, 10, 10),
                 enabled: true,
             })
@@ -512,6 +515,8 @@ mod tests {
                 id: ElementId(i),
                 role: Role::Button,
                 name: String::new(),
+                description: String::new(),
+                value: String::new(),
                 bounds: Rect::new(i32::try_from(i).unwrap() * 20, 0, 10, 10),
                 enabled: true,
             })
@@ -554,6 +559,8 @@ mod tests {
             id: ElementId(id),
             role,
             name: name.to_owned(),
+            description: String::new(),
+            value: String::new(),
             bounds: Rect::new(0, y, 10, 10),
             enabled: true,
         }

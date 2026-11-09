@@ -209,6 +209,9 @@ impl ElementSource for MacPlatform {
                 id: ElementId(u64::try_from(index).unwrap_or(u64::MAX)),
                 role: found.role,
                 name: found.name,
+                // The macOS walk reads no AXDescription, AXHelp or AXValue: search matches names.
+                description: String::new(),
+                value: String::new(),
                 bounds: found.bounds,
                 enabled: found.enabled,
             });

@@ -60,6 +60,8 @@ pub(crate) fn to_element(raw: &RawElement) -> Element {
             role
         },
         name: raw.name.clone(),
+        description: String::new(),
+        value: String::new(),
         bounds: Rect::new(
             raw.bounds.left,
             raw.bounds.top,

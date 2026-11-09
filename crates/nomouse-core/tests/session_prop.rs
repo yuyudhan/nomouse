@@ -13,6 +13,8 @@ fn elements(count: usize) -> Vec<Element> {
             id: ElementId(u64::try_from(i).unwrap_or(u64::MAX)),
             role: Role::Button,
             name: String::new(),
+            description: String::new(),
+            value: String::new(),
             bounds: Rect::new(
                 i32::try_from(i % 10).unwrap_or(0) * 50,
                 i32::try_from(i / 10).unwrap_or(0) * 30,

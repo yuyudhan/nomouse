@@ -9,6 +9,8 @@ use atspi::proxy::action::ActionProxy;
 use atspi::proxy::bus::{BusProxy, StatusProxy};
 use atspi::proxy::collection::CollectionProxy;
 use atspi::proxy::component::ComponentProxy;
+use atspi::proxy::text::TextProxy;
+use atspi::proxy::value::ValueProxy;
 use atspi::{
     CoordType, Interface, InterfaceSet, MatchType, ObjectMatchRule, ObjectRefOwned, Role as AtRole,
     SortOrder, State, StateSet,
@@ -17,7 +19,10 @@ use futures_util::future::join_all;
 use nomouse_core::{PlatformError, Rect};
 use zbus::proxy::CacheProperties;
 
-use super::walk::{self, NodeInfo, Tree, TreeError};
+use super::walk::{self, NodeInfo, Texts, Tree, TreeError, ValueKind};
+
+/// Longest value text read for search; a text field holding a whole document is cut here.
+const MAX_VALUE_CHARS: i32 = 200;
 
 fn node_info(
     role: AtRole,
@@ -158,6 +163,44 @@ impl Bus {
             .cache_properties(CacheProperties::No)
             .build()
             .await
+    }
+
+    async fn text(&self, obj: &Obj) -> zbus::Result<TextProxy<'static>> {
+        TextProxy::builder(&self.conn)
+            .destination(obj.bus.clone())?
+            .path(obj.path.clone())?
+            .cache_properties(CacheProperties::No)
+            .build()
+            .await
+    }
+
+    async fn value(&self, obj: &Obj) -> zbus::Result<ValueProxy<'static>> {
+        ValueProxy::builder(&self.conn)
+            .destination(obj.bus.clone())?
+            .path(obj.path.clone())?
+            .cache_properties(CacheProperties::No)
+            .build()
+            .await
+    }
+
+    /// An object's value for search: a text field's first characters or a number; empty when
+    /// there is none or it cannot be read.
+    async fn value_of(&self, obj: &Obj, kind: ValueKind) -> String {
+        match kind {
+            ValueKind::None => String::new(),
+            ValueKind::Text => match self.text(obj).await {
+                Ok(text) => text.get_text(0, MAX_VALUE_CHARS).await.unwrap_or_default(),
+                Err(_) => String::new(),
+            },
+            ValueKind::Number => match self.value(obj).await {
+                Ok(value) => value
+                    .current_value()
+                    .await
+                    .map(|number| number.to_string())
+                    .unwrap_or_default(),
+                Err(_) => String::new(),
+            },
+        }
     }
 
     async fn children_of(&self, obj: &Obj) -> zbus::Result<Vec<Obj>> {
@@ -338,10 +381,17 @@ impl Tree for Bus {
         })))
     }
 
-    fn names(&mut self, nodes: &[Obj]) -> Vec<Option<String>> {
-        block_on(join_all(nodes.iter().map(|node| async {
-            let proxy = self.accessible(node).await.ok()?;
-            proxy.name().await.ok()
+    fn texts(&mut self, nodes: &[(Obj, ValueKind)]) -> Vec<Option<Texts>> {
+        let bus = &*self;
+        block_on(join_all(nodes.iter().map(|(node, kind)| async move {
+            let proxy = bus.accessible(node).await.ok()?;
+            let (name, description, value) =
+                futures_util::join!(proxy.name(), proxy.description(), bus.value_of(node, *kind));
+            Some(Texts {
+                name: name.ok()?,
+                description: description.unwrap_or_default(),
+                value,
+            })
         })))
     }
 

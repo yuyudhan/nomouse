@@ -142,6 +142,8 @@ fn probe_hint(at: Point) -> Hint {
             id: ElementId(0),
             role: Role::Button,
             name: "nomouse contract probe".to_owned(),
+            description: String::new(),
+            value: String::new(),
             bounds: Rect::new(at.x, at.y, 40, 20),
             enabled: true,
         },

@@ -307,6 +307,27 @@ else
     fail "search Tab: no search box"
 fi
 
+echo "--- search mode: a button whose only text is its tooltip is found (query with spaces)"
+focus "$gtk_win"
+log="$tmp/tooltip-hints.log"
+if run_hints "$log" hints; then
+    # The icon button has no accessible name: only its description (tooltip) holds text.
+    grep -qE 'hint [a-z]+ = Button ""$' "$log" && nameless=1 || nameless=0
+    xdotool key Escape
+    reap "$hints_pid" || true
+else
+    nameless=0
+fi
+log="$tmp/search-tooltip.log"
+if run_hints "$log" search; then
+    xdotool type --delay 20 "keep a copy"
+    xdotool key Return
+    reap "$hints_pid" || true
+    if ((nameless)) && wait_for 3 title_is "$gtk_win" "left: tooltip button #*"; then pass "search found the tooltip-only button by its description"; else fail "search by tooltip: nameless=$nameless, title '$(title "$gtk_win")'"; fi
+else
+    fail "search by tooltip: no search box"
+fi
+
 echo "--- semantic click (AT-SPI do_action)"
 mkdir -p "$XDG_CONFIG_HOME/nomouse"
 printf '[hints]\nsemantic_click = true\n' >"$XDG_CONFIG_HOME/nomouse/config.toml"

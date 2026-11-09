@@ -45,9 +45,10 @@ pub(crate) trait Tree {
     /// The info of each node, in the same order as `nodes`.
     fn info(&mut self, nodes: &[Self::Node]) -> Vec<Result<NodeInfo, TreeError>>;
 
-    /// Names for labelled objects whose [`NodeInfo::name`] was left empty, in the same order;
-    /// `None` keeps the name from [`Tree::info`].
-    fn names(&mut self, nodes: &[Self::Node]) -> Vec<Option<String>>;
+    /// The texts of labelled objects (name, description and, for `ValueKind`s other than
+    /// `None`, the value), in the same order; `None` keeps the name from [`Tree::info`] and
+    /// leaves the description and value empty.
+    fn texts(&mut self, nodes: &[(Self::Node, ValueKind)]) -> Vec<Option<Texts>>;
 
     /// The objects below `root` that may get a label (showing, with an interactive role, an
     /// action or the focusable state), found by one server-side query (AT-SPI Collection),
@@ -75,6 +76,39 @@ pub(crate) struct Limits {
     pub bulk: bool,
 }
 
+/// What search reads of a labelled object besides its role.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Texts {
+    /// Accessible name.
+    pub name: String,
+    /// Accessible description (GTK and Qt put tooltips here).
+    pub description: String,
+    /// Current value (see [`ValueKind`]).
+    pub value: String,
+}
+
+/// Where an object's value comes from, by its AT-SPI role.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ValueKind {
+    /// No value is read (password fields among them: their contents never leave the app).
+    None,
+    /// The Text interface: an entry's contents.
+    Text,
+    /// The Value interface: a slider's or spin button's number.
+    Number,
+}
+
+impl ValueKind {
+    /// The value an object of AT-SPI `role` has.
+    pub(crate) const fn of(role: AtRole) -> Self {
+        match role {
+            AtRole::Entry | AtRole::Editbar => Self::Text,
+            AtRole::Slider | AtRole::SpinButton => Self::Number,
+            _ => Self::None,
+        }
+    }
+}
+
 /// A clickable object found by the walk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Found<N> {
@@ -84,6 +118,8 @@ pub(crate) struct Found<N> {
     pub element: Element,
     /// Whether the object has an Action interface.
     pub has_action: bool,
+    /// Where its value is read from.
+    pub value: ValueKind,
 }
 
 /// Why an object qualifies for a label.
@@ -247,10 +283,13 @@ impl<N> Collector<N> {
                     id,
                     role,
                     name: info.name.clone(),
+                    description: String::new(),
+                    value: String::new(),
                     bounds,
                     enabled: info.enabled,
                 },
                 has_action: info.has_action,
+                value: ValueKind::of(info.role),
             },
             reason,
         ));
@@ -327,10 +366,13 @@ pub(crate) fn collect<T: Tree>(
     }
     walk(tree, walk_roots, clip, limits, &mut visited, &mut collector);
     let mut found = collector.finish();
-    let nodes: Vec<T::Node> = found.iter().map(|f| f.node.clone()).collect();
-    for (found, name) in found.iter_mut().zip(tree.names(&nodes)) {
-        if let Some(name) = name {
-            found.element.name = name;
+    let nodes: Vec<(T::Node, ValueKind)> =
+        found.iter().map(|f| (f.node.clone(), f.value)).collect();
+    for (found, texts) in found.iter_mut().zip(tree.texts(&nodes)) {
+        if let Some(texts) = texts {
+            found.element.name = texts.name;
+            found.element.description = texts.description;
+            found.element.value = texts.value;
         }
     }
     found
@@ -419,6 +461,9 @@ mod tests {
     struct FakeTree {
         children: HashMap<u32, Vec<u32>>,
         info: HashMap<u32, NodeInfo>,
+        texts: HashMap<u32, Texts>,
+        /// What `texts` was asked for, in order.
+        asked: Vec<(u32, ValueKind)>,
         bulk: Option<Vec<u32>>,
         info_calls: usize,
     }
@@ -455,8 +500,12 @@ mod tests {
                 .collect()
         }
 
-        fn names(&mut self, nodes: &[u32]) -> Vec<Option<String>> {
-            nodes.iter().map(|_| None).collect()
+        fn texts(&mut self, nodes: &[(u32, ValueKind)]) -> Vec<Option<Texts>> {
+            self.asked.extend_from_slice(nodes);
+            nodes
+                .iter()
+                .map(|(n, _)| self.texts.get(n).cloned())
+                .collect()
         }
 
         fn candidates(
@@ -639,6 +688,51 @@ mod tests {
         };
         assert_eq!(ids(&collect(&mut tree, &[0], CLIP, bulk)), vec![2, 7, 10]);
         assert_eq!(tree.info_calls, 6);
+    }
+
+    #[test]
+    fn names_descriptions_and_values_reach_the_elements() {
+        let mut tree = sample();
+        tree.add(11, Some(1), node(AtRole::Entry, Rect::new(10, 600, 80, 20)));
+        tree.add(
+            12,
+            Some(1),
+            node(AtRole::PasswordText, Rect::new(10, 640, 80, 20)),
+        );
+        tree.add(
+            13,
+            Some(1),
+            node(AtRole::Slider, Rect::new(10, 680, 80, 20)),
+        );
+        tree.texts.insert(
+            2,
+            Texts {
+                name: String::new(),
+                description: "Save the file".to_owned(),
+                value: String::new(),
+            },
+        );
+        tree.texts.insert(
+            11,
+            Texts {
+                name: "Subject".to_owned(),
+                description: String::new(),
+                value: "draft".to_owned(),
+            },
+        );
+        let found = collect(&mut tree, &[0], CLIP, limits());
+        let element = |node: u32| &found.iter().find(|f| f.node == node).unwrap().element;
+        assert_eq!(element(2).name, "");
+        assert_eq!(element(2).description, "Save the file");
+        assert_eq!(element(11).value, "draft");
+        assert_eq!(element(11).name, "Subject");
+        // Without texts the name from the tree info stays.
+        assert_eq!(element(7).name, "Link");
+        let kind = |node: u32| tree.asked.iter().find(|(n, _)| *n == node).map(|(_, k)| *k);
+        assert_eq!(kind(11), Some(ValueKind::Text));
+        assert_eq!(kind(12), Some(ValueKind::None));
+        assert_eq!(kind(13), Some(ValueKind::Number));
+        assert_eq!(kind(2), Some(ValueKind::None));
     }
 
     #[test]

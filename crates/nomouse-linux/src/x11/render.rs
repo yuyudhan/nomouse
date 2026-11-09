@@ -318,6 +318,8 @@ mod tests {
                 id: nomouse_core::ElementId(0),
                 role: nomouse_core::Role::Button,
                 name: String::new(),
+                description: String::new(),
+                value: String::new(),
                 bounds: Rect::new(x, 10, 40, 20),
                 enabled: true,
             },

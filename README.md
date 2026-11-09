@@ -88,9 +88,10 @@ Return clicks, Return twice double clicks, Shift-Return right clicks and Cmd-Ret
 cmd-clicks, as in Homerow.
 
 In search mode, Enter clicks the highlighted match (the best one unless moved), Tab freezes the
-query so letters pick a label, and Backspace with no label typed returns to the query. In scroll
-mode, `j` `k` `h` `l` (or the arrows) scroll, `d` and `u` scroll five times as far, Escape or
-Enter ends it.
+query so letters pick a label, and Backspace with no label typed returns to the query. Search
+matches names, tooltips and descriptions, text field contents and roles (`button`); spaces are
+ignored, and `*` or `;` alone matches everything. In scroll mode, `j` `k` `h` `l` (or the
+arrows) scroll, `d` and `u` scroll five times as far, Escape or Enter ends it.
 
 Every mode is also a command (`nomouse hints`, `continuous`, `scroll`, `search`), with
 `--action right-click|double-click|hover|drag|scroll` for one-off actions. On Wayland the

@@ -356,6 +356,8 @@ mod tests {
                 id: ElementId(0),
                 role: Role::Button,
                 name: String::new(),
+                description: String::new(),
+                value: String::new(),
                 bounds,
                 enabled: true,
             },
