@@ -293,10 +293,11 @@ install_macos() {
     say "next steps:"
     path_hint "$bin_dir"
     step "1. open \"${app}\""
-    step "   nomouse asks for Accessibility: System Settings > Privacy & Security >"
-    step "   Accessibility, switch on nomouse. It notices the switch and restarts by itself."
+    step "   its keycap icon appears in the menu bar and a Welcome window asks for"
+    step "   Accessibility: System Settings > Privacy & Security > Accessibility, switch on"
+    step "   nomouse. It notices the switch and restarts by itself."
     step "2. press ctrl+space in any app and type a label to click it."
-    step "3. start at login: System Settings > General > Login Items > + > nomouse."
+    step "3. settings and start at login: the menu bar icon's menu."
     step "check everything at any time with: nomouse doctor"
 }
 

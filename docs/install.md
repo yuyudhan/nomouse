@@ -46,19 +46,19 @@ bash nomouse-release/install.sh --from nomouse-release
 ## macOS
 
 1. Run the one-line install above.
-2. Open the app: `open /Applications/nomouse.app`. It has no Dock icon; it runs in the
-   background and listens for the hotkey.
+2. Open the app: `open /Applications/nomouse.app`. It has no Dock icon; its keycap icon sits
+   in the menu bar, and it listens for the hotkey.
 3. Grant Accessibility. nomouse reads buttons and links through the macOS accessibility API and
    clicks through it, which needs one permission:
-   1. On its first start nomouse explains this and opens **System Settings › Privacy &
-      Security › Accessibility**.
+   1. On its first start a Welcome window explains this; **Open System Settings** opens
+      **Privacy & Security › Accessibility**.
    2. Switch on **nomouse** in the list (unlock with your password if asked).
    3. nomouse notices the switch within a second and restarts by itself. No logout needed.
 
    Input Monitoring and Screen Recording are not needed.
 4. Press `ctrl+space` in any app. Labels appear; type one to click.
-5. Start at login: **System Settings › General › Login Items › Open at Login › +**, choose
-   `nomouse` in Applications.
+5. Start at login: **Start at login** in the menu bar icon's menu (or on the settings
+   window's General page); it appears under **System Settings › General › Login Items**.
 
 The release builds are not notarized by Apple yet. The installer removes the quarantine flag so
 Gatekeeper does not block the first start. If you downloaded `nomouse.app` or the `.dmg` in a
