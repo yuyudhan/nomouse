@@ -1,6 +1,7 @@
-//! The daemon's desktop presence on Linux: the tray icon and its menu, the D-Bus control
+//! The daemon's desktop presence. On Linux: the tray icon and its menu, the D-Bus control
 //! interface (`nomouse_linux::service`), start at login, the update check, and opening the
-//! settings window. Other systems get a stand-in that does nothing.
+//! settings window. On macOS: the menu bar item with its menu and the settings window in this
+//! process (`nomouse_macos::menubar`). Other systems get a stand-in that does nothing.
 
 use crate::Request;
 use nomouse_core::Config;
@@ -8,7 +9,10 @@ use nomouse_core::Config;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::Desktop;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+pub(crate) use macos::Desktop;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub(crate) use other::Desktop;
 
 #[cfg(target_os = "linux")]
@@ -18,10 +22,10 @@ mod linux {
 
     use nomouse_core::ActionKind;
     use nomouse_core::menu::{MenuAction, MenuState, UpdateLine};
-    use nomouse_core::update::{UpdateStatus, release_url};
+    use nomouse_core::update::{self, UpdateStatus, release_url};
+    use nomouse_linux::autostart;
     use nomouse_linux::service::{self, Service, TrayHost};
     use nomouse_linux::shortcuts::Shortcuts;
-    use nomouse_linux::{autostart, update};
 
     use super::{Config, Request};
     use crate::run::Mode;
@@ -235,7 +239,121 @@ mod linux {
 #[cfg(target_os = "linux")]
 pub(crate) use linux::doctor_line;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+mod macos {
+    use std::time::Duration;
+
+    use nomouse_core::ActionKind;
+    use nomouse_core::menu::{MenuAction, MenuState, UpdateLine};
+    use nomouse_macos::menubar::{Command, MenuBar};
+
+    use super::{Config, Request};
+    use crate::run::Mode;
+
+    /// The menu bar item, when the daemon runs on the main thread.
+    pub(crate) struct Desktop {
+        menu_bar: Option<MenuBar>,
+        action: ActionKind,
+    }
+
+    impl Desktop {
+        /// Puts nomouse in the menu bar with `config`'s hotkeys; `problem` is why the backend
+        /// did not start.
+        pub(crate) fn start(config: &Config, problem: Option<&str>) -> Self {
+            let state = MenuState {
+                version: env!("CARGO_PKG_VERSION").to_owned(),
+                paused: false,
+                active: problem.is_none(),
+                warning: problem.map(ToOwned::to_owned),
+                hotkeys: Some(config.hotkeys.clone()),
+                start_at_login: None,
+                update: UpdateLine::NotChecked,
+            };
+            let menu_bar = match MenuBar::new(state) {
+                Ok(menu_bar) => Some(menu_bar),
+                Err(error) => {
+                    tracing::warn!("no menu bar item: {error}");
+                    None
+                }
+            };
+            Self {
+                menu_bar,
+                action: config.hints.action,
+            }
+        }
+
+        /// Whether the menu bar item is up (the daemon can then run without a backend).
+        pub(crate) const fn is_up(&self) -> bool {
+            self.menu_bar.is_some()
+        }
+
+        /// Whether the menu bar shows the item.
+        pub(crate) const fn tray_shown(&self) -> bool {
+            self.menu_bar.is_some()
+        }
+
+        /// The next request for the daemon's loop; the menu bar app carries out what concerns
+        /// only itself (settings, About, start at login, the update check). It also services
+        /// the menu and windows, which share the daemon's thread with the backend; without a
+        /// backend this is all that runs them.
+        pub(crate) fn next(&mut self) -> Option<Request> {
+            let menu_bar = self.menu_bar.as_mut()?;
+            menu_bar.pump(Duration::ZERO);
+            while let Some(command) = menu_bar.next_command() {
+                let mode = |mode| Some(Request::Run(mode));
+                let ask = match command {
+                    Command::Pause => Some(Request::Pause),
+                    Command::Resume => Some(Request::Resume),
+                    Command::Quit => Some(Request::Quit),
+                    Command::Run(MenuAction::Continuous) => mode(Mode::Continuous(self.action)),
+                    Command::Run(MenuAction::Scroll) => mode(Mode::Scroll),
+                    Command::Run(MenuAction::Search) => mode(Mode::Search),
+                    Command::Run(_) => mode(Mode::Once(self.action)),
+                    Command::Doctor => {
+                        match crate::doctor_report() {
+                            Ok((report, failed)) => menu_bar.show_report(
+                                if failed {
+                                    "nomouse doctor found problems"
+                                } else {
+                                    "nomouse doctor: all checks passed"
+                                },
+                                &report,
+                            ),
+                            Err(error) => menu_bar.show_report("nomouse doctor failed", &error),
+                        }
+                        None
+                    }
+                };
+                if ask.is_some() {
+                    return ask;
+                }
+            }
+            None
+        }
+
+        /// Follows a running state change: paused, the backend up or down, new hotkeys.
+        pub(crate) fn show(&mut self, config: &Config, paused: bool, problem: Option<&str>) {
+            self.action = config.hints.action;
+            if let Some(menu_bar) = &mut self.menu_bar {
+                menu_bar.update(|state| {
+                    state.paused = paused;
+                    state.active = problem.is_none();
+                    state.warning = problem.map(ToOwned::to_owned);
+                    state.hotkeys = Some(config.hotkeys.clone());
+                });
+            }
+        }
+
+        /// Picks up what changed outside nomouse: the Accessibility grant, the login item.
+        pub(crate) fn refresh(&mut self) {
+            if let Some(menu_bar) = &mut self.menu_bar {
+                menu_bar.refresh();
+            }
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 mod other {
     use std::convert::Infallible;
 

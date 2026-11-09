@@ -70,18 +70,16 @@ pub struct Dialog {
 }
 
 #[cfg(target_os = "macos")]
-pub use live::{Dialogs, TrustProbe};
+pub use live::TrustProbe;
 
 #[cfg(target_os = "macos")]
 mod live {
     use std::process::Command;
-    use std::time::Duration;
 
-    use nomouse_core::setup::{Permission, Presenter, Probe, Step};
-    use nomouse_sys_macos::app::App;
+    use nomouse_core::setup::{Permission, Probe};
     use nomouse_sys_macos::ax;
 
-    use super::{ACCESSIBILITY_SETTINGS, dialog};
+    use super::ACCESSIBILITY_SETTINGS;
 
     /// Accessibility trust of this process.
     #[derive(Debug, Default)]
@@ -105,38 +103,6 @@ mod live {
             } else {
                 Err(format!("cannot open System Settings ({status})"))
             }
-        }
-    }
-
-    /// Shows the flow in dialogs, for a nomouse started without a terminal (`nomouse.app`).
-    #[derive(Debug)]
-    pub struct Dialogs {
-        app: App,
-    }
-
-    impl Dialogs {
-        /// Uses the process's `NSApplication`.
-        ///
-        /// # Errors
-        /// When called off the main thread.
-        pub fn new() -> Result<Self, nomouse_sys_macos::app::NotMainThread> {
-            Ok(Self { app: App::new()? })
-        }
-    }
-
-    impl Presenter for Dialogs {
-        fn show(&mut self, step: &Step) -> bool {
-            let Some(dialog) = dialog(step) else {
-                return true;
-            };
-            let choice = self
-                .app
-                .alert(&dialog.title, &dialog.message, &dialog.buttons);
-            !matches!(step, Step::Explain(_)) || choice == 0
-        }
-
-        fn wait(&mut self, duration: Duration) {
-            self.app.pump(duration.as_secs_f64());
         }
     }
 }

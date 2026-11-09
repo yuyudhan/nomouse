@@ -2,7 +2,10 @@
 //!
 //! The check reads where `https://github.com/yuyudhan/nomouse/releases/latest` redirects
 //! (`.../releases/tag/vX.Y.Z`), so it needs no API token, no JSON and no rate-limited API.
-//! It only tells: installing stays with the installer or the package manager.
+//! It only tells: installing stays with the installer or the package manager. [`check`] asks
+//! over the network with `curl`, which the installer needs anyway, on Linux and macOS alike.
+
+use std::process::{Command, Stdio};
 
 /// The page that redirects to the newest release's tag.
 pub const LATEST_URL: &str = "https://github.com/yuyudhan/nomouse/releases/latest";
@@ -86,6 +89,37 @@ impl UpdateStatus {
             }
         }
     }
+}
+
+/// Seconds `curl` may take before the check gives up.
+const TIMEOUT_SECONDS: &str = "15";
+
+/// Checks GitHub for a release newer than `current` (`env!("CARGO_PKG_VERSION")`). Blocking:
+/// call it off the UI and event-loop threads.
+///
+/// # Errors
+/// When `curl` is missing or fails (offline, timeout), or the answer names no release.
+pub fn check(current: &str) -> Result<UpdateStatus, String> {
+    let output = Command::new("curl")
+        .args([
+            "--silent",
+            "--show-error",
+            "--head",
+            "--max-time",
+            TIMEOUT_SECONDS,
+            LATEST_URL,
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("could not run curl: {e}"))?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("could not reach GitHub: {}", error.trim()));
+    }
+    let headers = String::from_utf8_lossy(&output.stdout);
+    let latest =
+        latest_from_location(&headers).ok_or_else(|| "GitHub named no release".to_owned())?;
+    UpdateStatus::new(current, latest)
 }
 
 #[cfg(test)]

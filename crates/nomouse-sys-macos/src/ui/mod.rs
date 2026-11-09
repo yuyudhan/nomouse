@@ -9,14 +9,18 @@
 pub mod form;
 pub mod panels;
 mod recorder;
+pub mod snapshot;
 pub mod status;
+
+/// Proof of being on the main thread, which every interface call takes.
+pub use objc2::MainThreadMarker;
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject};
-use objc2::{AnyThread, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{AnyThread, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSEventModifierFlags, NSFont, NSImage, NSMenu, NSMenuItem, NSTextField,
 };

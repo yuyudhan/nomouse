@@ -119,6 +119,18 @@ impl StatusItem {
             button.setAppearsDisabled(dimmed);
         }
     }
+
+    /// Opens the menu, pictures it as PNG bytes, and closes it again; `None` when the menu
+    /// did not open.
+    pub fn picture_menu(&self) -> Option<Vec<u8>> {
+        let menu = self.item.menu(self.mtm)?;
+        let button = self.item.button(self.mtm)?;
+        super::snapshot::picture_menu(self.mtm, &menu, || {
+            // SAFETY: a nil sender is allowed; the click opens the item's menu, as the mouse
+            // would.
+            unsafe { button.performClick(None) };
+        })
+    }
 }
 
 impl Drop for StatusItem {

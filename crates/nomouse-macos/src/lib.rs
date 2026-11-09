@@ -9,18 +9,23 @@
 //! - [`keys`]: virtual key codes for hotkeys and typed keys.
 //! - [`walk`]: the bounded, cycle-safe tree walk over any [`walk::AxTree`].
 //! - [`style`]: the overlay look from the configuration.
-//! - [`setup`]: the guided first run's permission and its dialogs.
+//! - [`setup`]: the guided first run's permission and its texts.
+//! - [`shortcuts`]: recorded shortcuts, their `⌃⌥⇧⌘` spelling and macOS's own shortcuts.
+//! - `menubar` (macOS): the menu bar app, its settings window and the first run's window.
 #![forbid(unsafe_code)]
 
 pub mod geometry;
 pub mod keys;
 pub mod roles;
 pub mod setup;
+pub mod shortcuts;
 pub mod style;
 pub mod walk;
 
 #[cfg(target_os = "macos")]
 mod ax_tree;
+#[cfg(target_os = "macos")]
+pub mod menubar;
 #[cfg(target_os = "macos")]
 mod platform;
 
@@ -70,12 +75,13 @@ pub fn first_run_probe() -> Box<dyn nomouse_core::setup::Probe> {
     Box::new(setup::TrustProbe)
 }
 
-/// Dialogs for a first run without a terminal (`nomouse.app`); `None` off the main thread.
+/// The first run's menu bar item and Welcome window, for a nomouse started without a terminal
+/// (`nomouse.app`); `None` off the main thread.
 #[cfg(target_os = "macos")]
 pub fn first_run_dialogs() -> Option<Box<dyn nomouse_core::setup::Presenter>> {
-    setup::Dialogs::new()
+    menubar::Onboarding::new()
         .ok()
-        .map(|dialogs| Box::new(dialogs) as Box<dyn nomouse_core::setup::Presenter>)
+        .map(|onboarding| Box::new(onboarding) as Box<dyn nomouse_core::setup::Presenter>)
 }
 
 /// Environment checks for `nomouse doctor`: (check name, `Ok(detail)` or `Err(problem and fix)`).

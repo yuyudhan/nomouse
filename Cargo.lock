@@ -1260,6 +1260,7 @@ dependencies = [
  "nomouse-core",
  "nomouse-sys-macos",
  "num-traits",
+ "serde_json",
  "tracing",
 ]
 

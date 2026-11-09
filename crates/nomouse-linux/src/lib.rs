@@ -25,7 +25,6 @@ pub mod preview;
 pub mod service;
 pub mod session;
 pub mod shortcuts;
-pub mod update;
 #[cfg(all(target_os = "linux", feature = "wayland"))]
 mod wayland;
 #[cfg(target_os = "linux")]

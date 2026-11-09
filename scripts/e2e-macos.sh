@@ -11,7 +11,9 @@
 # focus-then-act, the Homerow key bindings, continuous mode ending at the text field, the
 # `auto` theme, the daemon (hotkey click, a mode handed over its socket, no overlay window
 # left after Escape, the hotkey and `nomouse hints` toggling the labels off), `ignore.apps`
-# with `nomouse reload`, and hotkeys and labels on the Dvorak layout.
+# with `nomouse reload`, the menu bar item and settings window (Settings…, a hotkey recorded
+# and a theme picked land in config.toml and the daemon reloads them, Quit), and hotkeys and
+# labels on the Dvorak layout.
 #
 # Usage: scripts/e2e-macos.sh [--bin <nomouse binary>] [--keep]
 #   --bin   test this binary (for example nomouse.app/Contents/MacOS/nomouse) instead of a
@@ -395,13 +397,14 @@ if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
     fi
     front
     before_scans="$(scans)"
-    windows_is() { [[ "$("$probe" windows "$daemon")" == "$1" ]]; }
-    windows_above() { (($("$probe" windows "$daemon") > $1)); }
+    # Overlay panels only: the daemon's menu bar item (and a settings window) are windows too.
+    windows_is() { [[ "$("$probe" panels "$daemon")" == "$1" ]]; }
+    windows_above() { (($("$probe" panels "$daemon") > $1)); }
     if "$bin" hints && wait_for 5 scans_above "$before_scans" && wait_for 3 windows_above 0; then
         "$probe" key escape
-        if wait_for 3 windows_is 0; then pass "no overlay panel left after Escape"; else fail "after Escape the daemon still has $("$probe" windows "$daemon") window(s)"; fi
+        if wait_for 3 windows_is 0; then pass "no overlay panel left after Escape"; else fail "after Escape the daemon still has $("$probe" panels "$daemon") panel(s)"; fi
     else
-        fail "\`nomouse hints\` to the daemon: no scan or no panel ($("$probe" windows "$daemon" || true) windows)"
+        fail "\`nomouse hints\` to the daemon: no scan or no panel ($("$probe" panels "$daemon" || true) panels)"
     fi
     echo "--- toggle: the hotkey, and \`nomouse hints\`, pressed again dismiss the labels"
     front
@@ -410,7 +413,7 @@ if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
     "$probe" key ctrl+space
     if wait_for 5 scans_above "$before_scans" && wait_for 3 windows_above 0; then
         "$probe" key ctrl+space
-        if wait_for 3 windows_is 0 && kill -0 "$daemon" && value_is count.Two "$before"; then pass "the hotkey pressed twice left no overlay and clicked nothing"; else fail "hotkey twice: $("$probe" windows "$daemon" || true) window(s), count.Two went from $before to '$(value count.Two)'"; fi
+        if wait_for 3 windows_is 0 && kill -0 "$daemon" && value_is count.Two "$before"; then pass "the hotkey pressed twice left no overlay and clicked nothing"; else fail "hotkey twice: $("$probe" panels "$daemon" || true) panel(s), count.Two went from $before to '$(value count.Two)'"; fi
     else
         fail "toggle: no labels after ctrl+space"
     fi
@@ -418,7 +421,7 @@ if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
     before_scans="$(scans)"
     if "$bin" hints && wait_for 5 scans_above "$before_scans" && wait_for 3 windows_above 0; then
         "$bin" hints
-        if wait_for 3 windows_is 0; then pass "\`nomouse hints\` twice left no overlay"; else fail "\`nomouse hints\` twice: the daemon still has $("$probe" windows "$daemon") window(s)"; fi
+        if wait_for 3 windows_is 0; then pass "\`nomouse hints\` twice left no overlay"; else fail "\`nomouse hints\` twice: the daemon still has $("$probe" panels "$daemon") panel(s)"; fi
     else
         fail "toggle over the socket: no scan or no panel"
     fi
@@ -462,6 +465,52 @@ if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
     fi
     kill "$daemon" 2>/dev/null || true
     reap "$daemon" 5 || true
+else
+    fail "daemon did not start: $(tail -n3 "$daemon_log")"
+fi
+
+echo "--- menu bar and settings window: Settings…, a recorded hotkey and a picked theme reach config.toml and the daemon"
+settings_config="$tmp/settings-config"
+mkdir -p "$settings_config/nomouse"
+settings_file="$settings_config/nomouse/config.toml"
+daemon_log="$tmp/daemon-settings.log"
+XDG_CONFIG_HOME="$settings_config" NOMOUSE_LOG=debug "$bin" daemon 2>"$daemon_log" &
+daemon=$!
+pids+=("$daemon")
+# has_line <line>: the settings window's config file has exactly that line.
+has_line() { grep -qxF "$1" "$settings_file"; }
+reloads() { grep -c 'config reloaded' "$daemon_log" || true; }
+reloads_above() { (($(reloads) > $1)); }
+if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
+    if [[ "$("$probe" status-item "$daemon" || true)" == nomouse ]]; then pass "the menu bar shows the nomouse item"; else fail "the daemon has no nomouse item in the menu bar"; fi
+    if "$probe" menu "$daemon" "Settings…" && wait_for 5 "$probe" window "$daemon" nomouse-settings; then
+        pass "Settings… in the menu opens the settings window"
+        before_reloads="$(reloads)"
+        "$probe" press-title "$daemon" Hotkeys
+        if "$probe" press "$daemon" hotkeys.hints && sleep 0.3 && "$probe" key ctrl+alt+j && wait_for 5 has_line 'hints = "ctrl+alt+j"'; then pass "a hotkey recorded in the window is in config.toml at once"; else fail "recorded hotkey: config.toml has '$(grep -E '^hints' "$settings_file" || true)'"; fi
+        if wait_for 5 reloads_above "$before_reloads"; then pass "the daemon reloaded the recorded hotkey"; else fail "the daemon did not reload after the hotkey changed ($(grep -E 'reload|config file' "$daemon_log" | tail -n1))"; fi
+        before_reloads="$(reloads)"
+        "$probe" press-title "$daemon" Appearance
+        if "$probe" choose "$daemon" overlay.theme Dark && wait_for 5 has_line 'theme = "dark"'; then pass "a theme picked in the window is in config.toml at once"; else fail "picked theme: config.toml has '$(grep -E '^theme' "$settings_file" || true)'"; fi
+        if wait_for 5 reloads_above "$before_reloads"; then pass "the daemon reloaded the picked theme"; else fail "the daemon did not reload after the theme changed"; fi
+        "$probe" close "$daemon" nomouse-settings || true
+        front
+        before_scans="$(scans)"
+        "$probe" key ctrl+alt+j
+        if wait_for 5 scans_above "$before_scans"; then pass "the recorded hotkey labels the fixture"; else fail "the recorded hotkey ctrl+alt+j started no scan"; fi
+        "$probe" key escape
+    else
+        fail "Settings… opened no settings window"
+    fi
+    "$probe" menu "$daemon" "Quit nomouse" || true
+    if wait_for 5 gone "$daemon"; then
+        wait "$daemon" 2>/dev/null || true
+        pass "Quit nomouse in the menu ends the daemon"
+    else
+        fail "Quit nomouse left the daemon running"
+        kill "$daemon" 2>/dev/null || true
+        reap "$daemon" 5 || true
+    fi
 else
     fail "daemon did not start: $(tail -n3 "$daemon_log")"
 fi

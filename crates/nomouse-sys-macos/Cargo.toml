@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# Drivers that click, pick and type into the settings window as a user would, for tests.
+testing = []
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
 objc2-core-foundation = "0.3.2"
@@ -28,6 +32,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSRange",
     "NSRunLoop",
     "NSString",
+    "NSTimer",
     "NSURL",
     "NSValue",
 ] }
@@ -55,6 +60,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSEvent",
     "NSFont",
     "NSGraphics",
+    "NSGraphicsContext",
     "NSGridView",
     "NSImage",
     "NSImageRep",

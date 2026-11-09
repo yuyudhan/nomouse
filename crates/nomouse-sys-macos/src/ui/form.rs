@@ -252,8 +252,11 @@ fn button(tag: isize, title: &str, mtm: MainThreadMarker) -> Retained<NSButton> 
     button
 }
 
+/// Shows `text` in `field` in the colour of `tone`; an empty text hides the field, so a stack
+/// it is in closes the gap.
 fn set_tone(field: &NSTextField, text: &str, tone: Tone) {
     field.setStringValue(&NSString::from_str(text));
+    field.setHidden(text.is_empty());
     let colour = match tone {
         Tone::Plain => NSColor::secondaryLabelColor(),
         Tone::Warning => NSColor::systemOrangeColor(),
@@ -375,13 +378,21 @@ impl Form {
         status.setMaximumNumberOfLines(1);
         status.setPreferredMaxLayoutWidth(PAGE_WIDTH - 40.0);
         identify(&status, "settings.status");
+        status.setHidden(true);
         self.status.push(status.clone());
 
         let mut rows: Vec<Retained<NSArray<NSView>>> = Vec::new();
         let mut help_rows = Vec::new();
+        let mut shortcut_rows = Vec::new();
+        let mut list_rows = Vec::new();
         for row in &page.rows {
             let control = self.control(&row.spec, &row.id);
             let title = label(&row.label, mtm);
+            match row.spec {
+                Spec::Shortcut { .. } => shortcut_rows.push(rows.len()),
+                Spec::Apps { .. } => list_rows.push(rows.len()),
+                _ => {}
+            }
             rows.push(NSArray::from_slice(&[as_view(&title), &*control]));
             if !row.help.is_empty() {
                 help_rows.push(rows.len());
@@ -401,6 +412,20 @@ impl Form {
         for index in help_rows {
             if let Ok(index) = isize::try_from(index) {
                 grid.rowAtIndex(index).setTopPadding(-6.0);
+            }
+        }
+        // A shortcut's title lines up with its recorder, also while a note shows below it.
+        for index in shortcut_rows {
+            if let Ok(index) = isize::try_from(index) {
+                grid.rowAtIndex(index)
+                    .setRowAlignment(objc2_app_kit::NSGridRowAlignment::FirstBaseline);
+            }
+        }
+        // A list's title sits at its top, as in System Settings.
+        for index in list_rows {
+            if let Ok(index) = isize::try_from(index) {
+                grid.rowAtIndex(index)
+                    .setYPlacement(NSGridCellPlacement::Top);
             }
         }
 
@@ -476,6 +501,7 @@ impl Form {
                 wire(&recorder, *tag, id, mtm);
                 fix_size(&recorder, Some(180.0), None);
                 let note = help("", TEXT_WIDTH, mtm);
+                note.setHidden(true);
                 let column = stack(&[as_view(&recorder), as_view(&note)], true, 4.0, mtm);
                 self.controls.insert(
                     *tag,
@@ -628,8 +654,42 @@ impl Form {
         if let Some(index) = page.and_then(|page| isize::try_from(page).ok()) {
             self.tabs.setSelectedTabViewItemIndex(index);
         }
+        self.fit();
         activate(self.mtm);
         self.window.makeKeyAndOrderFront(None);
+    }
+
+    /// Sizes the window to the selected page (the tab controller keeps one size for all of
+    /// them, which clips a long page), keeping its top edge in place. Call it after the page
+    /// changes, or a note on it does; it does nothing when the size already fits.
+    pub fn fit(&self) {
+        let Ok(index) = usize::try_from(self.tabs.selectedTabViewItemIndex()) else {
+            return;
+        };
+        let items = self.tabs.tabViewItems();
+        let Some(view) = (index < items.count())
+            .then(|| items.objectAtIndex(index))
+            .and_then(|item| item.viewController(self.mtm))
+            .map(|controller| controller.view())
+        else {
+            return;
+        };
+        view.layoutSubtreeIfNeeded();
+        let height = view.fittingSize().height;
+        let content = self.window.contentRectForFrameRect(self.window.frame());
+        if (content.size.height - height).abs() < 0.5 {
+            return;
+        }
+        let wanted = NSRect::new(
+            NSPoint::new(
+                content.origin.x,
+                content.origin.y + content.size.height - height,
+            ),
+            NSSize::new(content.size.width, height),
+        );
+        let frame = self.window.frameRectForContentRect(wanted);
+        self.window
+            .setFrame_display_animate(frame, true, self.window.isVisible());
     }
 
     /// Whether the window is on screen.
@@ -640,6 +700,76 @@ impl Form {
     /// Closes the window (it can be shown again).
     pub fn close(&self) {
         self.window.close();
+    }
+
+    /// Clicks the check box, shortcut recorder or button with `tag` on a shown page, as the
+    /// mouse would (its action goes through the shared target); false when there is none.
+    #[cfg(feature = "testing")]
+    pub fn click(&self, tag: isize) -> bool {
+        let control: Option<Retained<NSView>> = match self.controls.get(&tag) {
+            Some(Control::Toggle(check)) => Some(as_view(check).retain()),
+            Some(Control::Shortcut { button, .. }) => Some(as_view(button).retain()),
+            _ => self
+                .window
+                .contentView()
+                .and_then(|view| view.viewWithTag(tag)),
+        };
+        let Some(control) = control.and_then(|view| view.downcast::<NSControl>().ok()) else {
+            return false;
+        };
+        // SAFETY: a nil sender is allowed; the control sends its action as for a mouse click.
+        unsafe { control.performClick(None) };
+        true
+    }
+
+    /// Picks the item titled `title` in the pop-up button with `tag`, as the mouse would;
+    /// false when there is no such pop-up button or item.
+    #[cfg(feature = "testing")]
+    pub fn choose(&self, tag: isize, title: &str) -> bool {
+        let Some(Control::Choice(popup)) = self.controls.get(&tag) else {
+            return false;
+        };
+        popup.selectItemWithTitle(&NSString::from_str(title));
+        if popup
+            .titleOfSelectedItem()
+            .map(|text| text.to_string())
+            .as_deref()
+            != Some(title)
+        {
+            return false;
+        }
+        let target = popup.target();
+        // SAFETY: the pop-up's own action and target (the shared target, which implements
+        // `act:`), sent as a pick sends them.
+        unsafe { popup.sendAction_to(popup.action(), target.as_deref()) }
+    }
+
+    /// Sends a key press to the window's focused control, as the keyboard would: `characters`
+    /// typed on virtual key `keycode` with `modifiers` held.
+    #[cfg(feature = "testing")]
+    pub fn press_key(&self, keycode: u16, characters: &str, modifiers: ModifierFlags) -> bool {
+        let text = NSString::from_str(characters);
+        let Some(event) = objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+            objc2_app_kit::NSEventType::KeyDown,
+            NSPoint::new(0.0, 0.0),
+            super::event_flags(modifiers),
+            0.0,
+            self.window.windowNumber(),
+            None,
+            &text,
+            &text,
+            false,
+            keycode,
+        ) else {
+            return false;
+        };
+        self.window.sendEvent(&event);
+        true
+    }
+
+    /// The window with its title bar and toolbar as drawn now, as PNG bytes.
+    pub fn picture(&self) -> Option<Vec<u8>> {
+        super::snapshot::render_window(&self.window)
     }
 
     /// The selected page.
@@ -737,7 +867,11 @@ impl Form {
             }
             set_tone(
                 note,
-                if from_theme { "theme" } else { "custom" },
+                if from_theme {
+                    "Theme's colour"
+                } else {
+                    "Custom colour"
+                },
                 Tone::Plain,
             );
         }
@@ -840,11 +974,23 @@ impl Form {
         });
         list.layoutSubtreeIfNeeded();
         let size = list.fittingSize();
+        // The clip view is not flipped: a document shorter than it would sit at its bottom, so
+        // the list goes at the top of a container at least as tall as the visible area.
+        let width = APP_LIST.width - 4.0;
+        let height = size.height.max(APP_LIST.height - 4.0);
+        let document = NSView::initWithFrame(
+            NSView::alloc(mtm),
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(width, height)),
+        );
         list.setFrame(NSRect::new(
-            NSPoint::new(0.0, 0.0),
-            NSSize::new(APP_LIST.width - 4.0, size.height.max(APP_LIST.height - 4.0)),
+            NSPoint::new(0.0, height - size.height),
+            NSSize::new(width, size.height),
         ));
-        scroll.setDocumentView(Some(&list));
+        document.addSubview(&list);
+        scroll.setDocumentView(Some(&document));
+        if let Some(view) = scroll.documentView() {
+            view.scrollPoint(NSPoint::new(0.0, height));
+        }
     }
 
     /// Draws `labels` in a [`Spec::Preview`] with `style` at `opacity` (0.0 to 1.0) over a

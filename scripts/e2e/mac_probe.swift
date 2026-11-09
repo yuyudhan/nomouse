@@ -14,6 +14,19 @@
 //   mac_probe select-layout <id>      enable and select the keyboard layout input source <id>
 //   mac_probe layout-enabled <id>     exit 0 when <id> is in the user's input sources
 //   mac_probe disable-layout <id>     remove <id> from the user's input sources
+//   mac_probe status-item <pid>       print the description of <pid>'s menu bar (status) item;
+//                                     exit 1 when it has none
+//   mac_probe menu <pid> <title>      open <pid>'s status item menu and pick the item <title>
+//   mac_probe press <pid> <id>        press <pid>'s element with AXIdentifier <id>
+//   mac_probe press-title <pid> <title>  press <pid>'s element titled <title> (a toolbar tab)
+//   mac_probe choose <pid> <id> <title>  open the pop-up button <id> and pick <title>
+//   mac_probe window <pid> <name>     exit 0 when <pid> has a window with AXIdentifier or
+//                                     title <name>
+//   mac_probe titles <pid>            print each of <pid>'s windows: title, AXIdentifier
+//   mac_probe close <pid> <name>      press the close button of <pid>'s window <name>
+//   mac_probe panels <pid>            print how many of <pid>'s windows are on screen at the
+//                                     overlay's (screen saver) level: its label panels, not
+//                                     its menu bar item or settings window
 //
 // Every query is bounded: Accessibility calls time out after one second.
 import AppKit
@@ -57,6 +70,83 @@ func find(_ identifier: String, under root: AXUIElement) -> AXUIElement? {
         queue.append(contentsOf: children(element))
     }
     return nil
+}
+
+/// Breadth-first search for the element with `role` and `title`, bounded to 5000 nodes.
+func find(role: String, title: String, under root: AXUIElement) -> AXUIElement? {
+    var queue = [root]
+    var seen = 0
+    while !queue.isEmpty, seen < 5000 {
+        let element = queue.removeFirst()
+        seen += 1
+        if attribute(element, kAXRoleAttribute) as? String == role,
+            attribute(element, kAXTitleAttribute) as? String == title
+        {
+            return element
+        }
+        queue.append(contentsOf: children(element))
+    }
+    return nil
+}
+
+/// The first item of `pid`'s status (extras) menu bar.
+func statusItem(_ pid: String) -> AXUIElement? {
+    guard let bar = attribute(application(pid), "AXExtrasMenuBar") else { return nil }
+    // A CFTypeRef cast to a CF type cannot fail.
+    return children(bar as! AXUIElement).first
+}
+
+func press(_ element: AXUIElement, _ what: String) {
+    let status = AXUIElementPerformAction(element, kAXPressAction as CFString)
+    guard status == .success else { fail("cannot press \(what): AXError \(status.rawValue)") }
+}
+
+/// Presses an element that opens a menu (a status item, a pop-up button). The press returns
+/// only when the menu closes, so the call times out while it is open: that is success too.
+func open(_ element: AXUIElement, _ what: String) {
+    let status = AXUIElementPerformAction(element, kAXPressAction as CFString)
+    guard status == .success || status == .cannotComplete else {
+        fail("cannot open \(what): AXError \(status.rawValue)")
+    }
+}
+
+/// Breadth-first search for the element titled `title` (a toolbar tab, a button), bounded
+/// to 5000 nodes.
+func find(title: String, under root: AXUIElement) -> AXUIElement? {
+    var queue = [root]
+    var seen = 0
+    while !queue.isEmpty, seen < 5000 {
+        let element = queue.removeFirst()
+        seen += 1
+        if attribute(element, kAXTitleAttribute) as? String == title,
+            attribute(element, kAXRoleAttribute) as? String != kAXWindowRole
+        {
+            return element
+        }
+        queue.append(contentsOf: children(element))
+    }
+    return nil
+}
+
+/// Waits up to two seconds for the menu item `title` under `root` (a menu opens
+/// asynchronously), then presses it.
+func pick(_ title: String, under root: AXUIElement) {
+    for _ in 0..<40 {
+        if let item = find(role: kAXMenuItemRole, title: title, under: root) {
+            press(item, "menu item \(title)")
+            return
+        }
+        usleep(50_000)
+    }
+    fail("no menu item \(title)")
+}
+
+/// `pid`'s window with AXIdentifier or title `name`.
+func window(_ pid: String, _ name: String) -> AXUIElement? {
+    (attribute(application(pid), kAXWindowsAttribute) as? [AXUIElement] ?? []).first {
+        attribute($0, kAXIdentifierAttribute) as? String == name
+            || attribute($0, kAXTitleAttribute) as? String == name
+    }
 }
 
 func currentLayout() -> TISInputSource {
@@ -202,6 +292,13 @@ case ("windows", 2):
         fail("cannot list the windows of \(arguments[1]): AXError \(status.rawValue)")
     }
     print(windows.count)
+case ("panels", 2):
+    guard let pid = Int(arguments[1]) else { fail("not a pid: \(arguments[1])") }
+    let level = Int(CGWindowLevelForKey(.screenSaverWindow))
+    let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+    print(windows.filter {
+        $0[kCGWindowOwnerPID as String] as? Int == pid && $0[kCGWindowLayer as String] as? Int ?? 0 >= level
+    }.count)
 case ("covering", 2):
     guard let pid = Int(arguments[1]) else { fail("not a pid: \(arguments[1])") }
     // Front to back, so everything listed before the app's window is in front of it.
@@ -253,6 +350,44 @@ case ("disable-layout", 2):
     guard TISDisableInputSource(inputSource(arguments[1], includeDisabled: true)) == noErr else {
         fail("cannot disable \(arguments[1])")
     }
+case ("status-item", 2):
+    guard let item = statusItem(arguments[1]) else { fail("\(arguments[1]) has no status item") }
+    print(attribute(item, kAXDescriptionAttribute) as? String ?? attribute(item, kAXTitleAttribute) as? String ?? "")
+case ("menu", 3):
+    guard let item = statusItem(arguments[1]) else { fail("\(arguments[1]) has no status item") }
+    open(item, "the status item's menu")
+    pick(arguments[2], under: item)
+case ("press", 3):
+    guard let element = find(arguments[2], under: application(arguments[1])) else {
+        fail("no element \(arguments[2])")
+    }
+    press(element, arguments[2])
+case ("press-title", 3):
+    guard let element = find(title: arguments[2], under: application(arguments[1])) else {
+        fail("no element titled \(arguments[2])")
+    }
+    press(element, arguments[2])
+case ("choose", 4):
+    guard let popup = find(arguments[2], under: application(arguments[1])) else {
+        fail("no element \(arguments[2])")
+    }
+    open(popup, arguments[2])
+    pick(arguments[3], under: popup)
+case ("window", 3):
+    exit(window(arguments[1], arguments[2]) == nil ? 1 : 0)
+case ("titles", 2):
+    for found in attribute(application(arguments[1]), kAXWindowsAttribute) as? [AXUIElement] ?? [] {
+        let title = attribute(found, kAXTitleAttribute) as? String ?? ""
+        let id = attribute(found, kAXIdentifierAttribute) as? String ?? ""
+        let size = attribute(found, kAXSizeAttribute).map { "\($0)" } ?? ""
+        print("\(title)\t\(id)\t\(size)\t\(children(found).count) children")
+    }
+case ("close", 3):
+    guard let found = window(arguments[1], arguments[2]),
+        let button = attribute(found, kAXCloseButtonAttribute)
+    else { fail("no window \(arguments[2]) with a close button") }
+    // A CFTypeRef cast to a CF type cannot fail; `as?` would only warn about that.
+    press(button as! AXUIElement, "the close button")
 default:
     fail("unknown command: \(arguments.joined(separator: " "))")
 }

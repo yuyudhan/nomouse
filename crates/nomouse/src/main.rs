@@ -123,6 +123,14 @@ enum Command {
         #[arg(long)]
         doctor: bool,
     },
+    /// Draw the menu and every settings page, light and dark, as PNG files into DIR (the
+    /// documentation's screenshots; needs no Screen Recording permission).
+    #[cfg(target_os = "macos")]
+    #[command(hide = true)]
+    Screenshots {
+        /// Directory to write into.
+        dir: PathBuf,
+    },
     /// Configuration commands.
     Config {
         #[command(subcommand)]
@@ -755,6 +763,13 @@ fn run_command(command: Command, standalone: bool) -> Result<String, String> {
         Command::Launch { doctor: false } => launch::launch(load_or_default()),
         #[cfg(target_os = "linux")]
         Command::Launch { doctor: true } => launch::doctor(),
+        #[cfg(target_os = "macos")]
+        Command::Screenshots { dir } => nomouse_macos::menubar::screenshots(&dir).map(|written| {
+            written.iter().fold(String::new(), |mut out, path| {
+                let _ = writeln!(out, "{}", path.display());
+                out
+            })
+        }),
         Command::Config { command } => config_command(command),
         Command::Labels { count, alphabet } => {
             let alphabet = match alphabet {
