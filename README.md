@@ -26,7 +26,7 @@ binary in `~/.local/bin` on Linux, and prints the next step for your system.
 > public, install with the GitHub CLI:
 >
 > ```sh
-> gh release download --repo yuyudhan/nomouse --dir nomouse-release
+> gh release download --repo yuyudhan/nomouse --pattern '*' --dir nomouse-release
 > bash nomouse-release/install.sh --from nomouse-release
 > ```
 

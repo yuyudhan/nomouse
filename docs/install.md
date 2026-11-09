@@ -43,7 +43,7 @@ curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
 or, simpler, fetch the release with `gh` and install from the folder:
 
 ```sh
-gh release download --repo yuyudhan/nomouse --dir nomouse-release
+gh release download --repo yuyudhan/nomouse --pattern '*' --dir nomouse-release
 bash nomouse-release/install.sh --from nomouse-release
 ```
 
