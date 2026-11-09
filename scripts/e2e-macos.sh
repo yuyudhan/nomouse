@@ -137,11 +137,27 @@ echo "--- nomouse doctor"
 value() { "$probe" value "$app" "$1"; }
 value_is() { [[ "$(value "$1")" == "$2" ]]; }
 value_above() { (($(value "$1") > $2)); }
-front() { "$probe" front "$app" || echo "  the fixture is not frontmost (frontmost pid $("$probe" frontmost))"; }
-# label_for <log> <accessible name>: the label of the last scan's hint for that name.
-label_for() { grep -E "hint [a-z]+ = [A-Za-z]+ \"$2\"$" "$1" | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
+# front: the fixture to the front. Ends the run when the fixture is gone or another app's
+# window stays in front of it (a floating panel would take the clicks): the desktop is shared,
+# so that is reported instead of failing every check after it.
+front() {
+    local covering
+    kill -0 "$app" 2>/dev/null || {
+        echo "FAIL: the fixture app exited (another program quit or closed it); $passed passed so far"
+        exit 1
+    }
+    "$probe" front "$app" || echo "  the fixture is not frontmost (frontmost pid $("$probe" frontmost))"
+    covering="$("$probe" covering "$app" | tr '\n' ' ')"
+    if [[ -n "$covering" ]]; then
+        echo "FAIL: windows of ${covering}are in front of the fixture; close them and run again ($passed passed so far)"
+        exit 1
+    fi
+}
+# label_for <log> <accessible name>: the label of the last scan's hint for that name, or
+# nothing.
+label_for() { { grep -E "hint [a-z]+ = [A-Za-z]+ \"$2\"$" "$1" || true; } | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
 # label_for_role <log> <role>: the label of the last scan's first hint with that role.
-label_for_role() { grep -E "hint [a-z]+ = $2 " "$1" | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
+label_for_role() { { grep -E "hint [a-z]+ = $2 " "$1" || true; } | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
 
 # run_hints <log> <args...>: brings the fixture to the front, starts `nomouse --standalone`
 # (so it runs and logs here even while the daemon runs) and waits for its first scan.
@@ -151,6 +167,7 @@ run_hints() {
     front
     NOMOUSE_LOG=debug "$bin" --standalone "$@" 2>"$log" &
     hints_pid=$!
+    pids+=("$hints_pid")
     wait_for 10 grep -q 'scan 1:' "$log"
 }
 

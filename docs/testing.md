@@ -165,7 +165,10 @@ The grant belongs to the process that runs the script: the terminal, or `sshd` f
 run. Without it the script fails within seconds and says where to grant it; under `CI=true`
 (GitHub's runners have no grant) it prints `SKIP:` and passes. The determinism rules above
 apply: bounded polling only for the fixture window and the first scan, one attempt per
-assertion, every `nomouse` reaped with a deadline.
+assertion, every `nomouse` reaped with a deadline. The desktop is shared, so before each
+`nomouse` run the script checks that the fixture is still running and that no other app's
+window is in front of it (`mac_probe covering`, for example a floating launcher panel); either
+ends the run with a `FAIL:` naming the cause instead of failing every later check.
 
 ## Coverage
 

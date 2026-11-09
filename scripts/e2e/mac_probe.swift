@@ -5,6 +5,8 @@
 //   mac_probe frontmost               print the frontmost app's pid
 //   mac_probe value <pid> <id>        print the value of <pid>'s element with AXIdentifier <id>
 //   mac_probe windows <pid>           print how many windows <pid> has, as Accessibility lists them
+//   mac_probe covering <pid>          print the owners of other apps' windows in front of <pid>'s
+//                                     first window and overlapping it (they would take the clicks)
 //   mac_probe type <text>             type <text>, each character on the key that types it
 //                                     in the current keyboard layout
 //   mac_probe key <chord>...          press chords such as escape, return, tab, ctrl+space
@@ -189,6 +191,26 @@ case ("windows", 2):
         fail("cannot list the windows of \(arguments[1]): AXError \(status.rawValue)")
     }
     print(windows.count)
+case ("covering", 2):
+    guard let pid = Int(arguments[1]) else { fail("not a pid: \(arguments[1])") }
+    // Front to back, so everything listed before the app's window is in front of it.
+    let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+        as? [[String: Any]] ?? []
+    func bounds(_ window: [String: Any]) -> CGRect {
+        guard let dictionary = window[kCGWindowBounds as String] as? NSDictionary,
+            let rect = CGRect(dictionaryRepresentation: dictionary)
+        else { return .null }
+        return rect
+    }
+    guard let index = windows.firstIndex(where: { $0[kCGWindowOwnerPID as String] as? Int == pid }) else {
+        fail("\(pid) has no window on screen")
+    }
+    let target = bounds(windows[index])
+    for window in windows[..<index] where bounds(window).intersects(target) {
+        let owner = window[kCGWindowOwnerName as String] as? String ?? "?"
+        let ownerPid = window[kCGWindowOwnerPID as String] as? Int ?? 0
+        print("\(owner) (pid \(ownerPid))")
+    }
 case ("type", 2):
     for character in arguments[1] {
         let (code, shift) = keyFor(character)
