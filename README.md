@@ -14,7 +14,7 @@ nomouse clicks it.
 ## Install
 
 ```sh
-curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash
+curl -fsSL --retry 5 --retry-all-errors https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash
 ```
 
 One command for macOS (Apple silicon and Intel) and Linux (x86_64 and aarch64, X11 and Wayland).
@@ -119,7 +119,7 @@ the fix for anything missing.
 | No labels in Chrome, Slack, VS Code | macOS: list them in `macos.enhanced_ui_apps`; Linux: start them with `--force-renderer-accessibility` |
 | No labels in Qt apps on Linux | `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` in your session |
 | Wayland: the hotkey does nothing | Wayland has no global hotkeys for apps: bind `nomouse hints` in your compositor |
-| GNOME on Wayland | not supported yet: choose "GNOME on Xorg" at login |
+| GNOME on Wayland | not supported yet: choose "GNOME on Xorg" ("Ubuntu on Xorg" on Ubuntu) under the gear at login |
 | KDE Wayland: labels but no clicks | allow `/dev/uinput` with the [udev rule](docs/install.md#linux-wayland) |
 
 More in [docs/troubleshooting.md](docs/troubleshooting.md); each compositor in

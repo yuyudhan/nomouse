@@ -14,13 +14,15 @@
 ## The one-line install
 
 ```sh
-curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash
+curl -fsSL --retry 5 --retry-all-errors https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash
 ```
 
 The installer needs no sudo. It picks the build for your OS and CPU, downloads it from the latest
 [GitHub release](https://github.com/yuyudhan/nomouse/releases), checks it against the
 release's `.sha256` and refuses to install on a mismatch, then prints the next steps for your
-system.
+system. `--retry-all-errors` makes curl retry a connection the network cuts; the installer's
+own downloads retry the same way. curl older than 7.71 (Ubuntu 20.04, RHEL 8) does not know it:
+drop `--retry-all-errors` there.
 
 | System | What you get |
 |--------|--------------|
@@ -130,7 +132,8 @@ echo 'KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node
 `uaccess` gives the logged-in seat user access without adding anyone to a group.
 
 **GNOME on Wayland** is not supported yet: Mutter offers no overlay layer, no virtual pointer and
-no client hotkeys. Choose **GNOME on Xorg** on the login screen. See
+no client hotkeys. Choose **GNOME on Xorg** (**Ubuntu on Xorg** on Ubuntu) under the gear on the
+login screen; the installer and `nomouse doctor` both say so when they run on GNOME Wayland. See
 [platform-support.md](platform-support.md) for each compositor.
 
 ## Debian and Ubuntu package

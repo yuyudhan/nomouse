@@ -14,7 +14,7 @@ apps, shows real labels and asserts the clicks landed; [testing.md](testing.md) 
 | Linux Wayland: Sway | supported | the Linux builds | e2e in CI on headless Sway with native Wayland and XWayland GTK windows, hotkey from a Sway `bindsym` |
 | Linux Wayland: Hyprland | supported, not e2e-tested | the Linux builds | the same wlroots protocols as Sway; window positions from Hyprland's IPC (`j/clients`) |
 | Linux Wayland: KDE Plasma | partial | the Linux builds | labels on the layer shell; clicks through `/dev/uinput`; only XWayland apps are placed correctly; no automated test |
-| Linux Wayland: GNOME | not supported | | nomouse explains why and suggests GNOME on Xorg |
+| Linux Wayland: GNOME | not supported | | the installer and `nomouse doctor` detect it and say to log in with "GNOME on Xorg" ("Ubuntu on Xorg" on Ubuntu) |
 | Windows 10/11 x86_64 | early | `nomouse-x86_64-pc-windows-msvc.zip` | unit tests and a UI Automation integration test on the CI runner's desktop |
 
 ## macOS
