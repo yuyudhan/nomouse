@@ -113,7 +113,16 @@ jobs:
                   sudo apt-get install -y --no-install-recommends sway xwayland wtype grim \
                       dbus-daemon at-spi2-core python3-gi gir1.2-gtk-3.0 fonts-dejavu-core
             - name: e2e (native Wayland and XWayland GTK)
-              run: scripts/e2e-wayland.sh
+              run: |
+                  set +e
+                  scripts/e2e-wayland.sh 2>&1 | tee /tmp/e2ew.log
+                  rc=${PIPESTATUS[0]}
+                  if [ "$rc" != 0 ]; then
+                      msg="$(grep -E -B2 -A6 'FAIL|no XWayland|never' /tmp/e2ew.log | head -c 30000; echo ---TAIL---; tail -n 40 /tmp/e2ew.log)"
+                      msg="${msg//'%'/'%25'}"; msg="${msg//$'\r'/'%0D'}"; msg="${msg//$'\n'/'%0A'}"
+                      echo "::error title=e2e-wayland diag::$msg"
+                  fi
+                  exit "$rc"
 
     e2e-desktop:
         name: e2e (Linux desktop app, tray + settings window, X11 and headless Sway)
