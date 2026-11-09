@@ -9,10 +9,13 @@
 //! - [`session`]: one hint-mode activation, tying the above together.
 //! - [`search`]: fuzzy matching of a typed query against element names (search-by-text).
 //! - [`setup`]: the guided first run that walks the user through missing permissions.
+//! - [`scroll`]: scroll mode's areas and keys.
+//! - [`apps`]: the focused window's application, for `ignore.apps`.
 //! - `contract` (feature `testing`): the backend contract suite and an in-memory fake.
 #![forbid(unsafe_code)]
 
 pub mod action;
+pub mod apps;
 pub mod config;
 #[cfg(any(test, feature = "testing"))]
 pub mod contract;
@@ -23,18 +26,21 @@ pub mod glyph;
 pub mod hints;
 pub mod hotkey;
 pub mod platform;
+pub mod scroll;
 pub mod search;
 pub mod session;
 pub mod setup;
 
 pub use action::{Action, ActionKind, MouseButton};
+pub use apps::AppIdentity;
 pub use config::{Config, ConfigError};
 pub use element::{Element, ElementId, Point, Rect, Role};
 pub use filter::{FilterState, LabelFilter};
 pub use hints::{Alphabet, AlphabetError, Hint, assign_hints, generate_labels};
-pub use hotkey::{Hotkey, HotkeyError, Key, KeyPress, Modifiers};
+pub use hotkey::{Hotkey, HotkeyError, Key, KeyEvent, KeyPress, Modifiers};
 pub use platform::{
-    ElementSource, HotkeyId, HotkeySource, InputEvent, InputInjector, Overlay, Platform,
+    ElementSource, Frame, HotkeyId, HotkeySource, InputEvent, InputInjector, Overlay, Platform,
     PlatformError, Scope,
 };
-pub use session::{HintSession, SessionEvent};
+pub use scroll::{ScrollEvent, ScrollSession};
+pub use session::{HintSession, KeyBindings, SessionEvent};

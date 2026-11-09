@@ -3,11 +3,14 @@
 use std::time::Duration;
 
 use nomouse_core::{
-    Action, Config, Element, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource, InputEvent,
-    InputInjector, MouseButton, Overlay, Platform, PlatformError, Scope,
+    Action, AppIdentity, Config, Element, ElementSource, Frame, Hint, Hotkey, HotkeyId,
+    HotkeySource, InputEvent, InputInjector, MouseButton, Overlay, Platform, PlatformError, Scope,
 };
 
+use nomouse_core::config::Appearance;
+
 use crate::a11y::{AtspiSource, ScanLimits, bus};
+use crate::appearance::Themed;
 use crate::session::DisplayServer;
 use crate::x11::render::{Renderer, Style, find_font};
 use crate::x11::{self, X11};
@@ -15,11 +18,19 @@ use crate::x11::{self, X11};
 /// Timeout of one AT-SPI call: a hung application must not freeze hint mode.
 pub(crate) const CALL_TIMEOUT: Duration = Duration::from_millis(400);
 
+/// The name of process `pid` (`/proc/<pid>/comm`: the executable name, at most 15 bytes).
+pub(crate) fn process_name(pid: u32) -> Option<String> {
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    let name = comm.trim_end_matches('\n');
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
 /// The Linux X11 backend: AT-SPI elements, X11 overlay, XTEST input, XGrabKey hotkeys.
 pub struct LinuxPlatform {
     x: X11,
     source: Option<AtspiSource>,
     semantic_click: bool,
+    themed: Themed,
 }
 
 impl LinuxPlatform {
@@ -35,6 +46,10 @@ impl LinuxPlatform {
 
 impl ElementSource for LinuxPlatform {
     fn elements(&mut self, scope: Scope) -> Result<Vec<Element>, PlatformError> {
+        // Each activation starts with a scan: the moment to follow the system appearance.
+        if let Some(style) = self.themed.changed() {
+            self.x.set_style(style);
+        }
         let pid = self.x.active_pid();
         let screen = self.x.screen();
         let result = self
@@ -46,20 +61,27 @@ impl ElementSource for LinuxPlatform {
         }
         result
     }
+
+    fn focused_app(&mut self) -> Result<Option<AppIdentity>, PlatformError> {
+        Ok(self.x.active_app().map(|(wm_class, pid)| AppIdentity {
+            app_id: None,
+            wm_class,
+            process: pid.and_then(process_name),
+        }))
+    }
 }
 
 impl Overlay for LinuxPlatform {
     fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError> {
-        self.x.show(hints, typed, None)
+        self.x.show(&Frame {
+            hints,
+            typed,
+            ..Frame::default()
+        })
     }
 
-    fn show_search(
-        &mut self,
-        hints: &[Hint],
-        typed: &str,
-        query: &str,
-    ) -> Result<(), PlatformError> {
-        self.x.show(hints, typed, Some(query))
+    fn show_frame(&mut self, frame: &Frame<'_>) -> Result<(), PlatformError> {
+        self.x.show(frame)
     }
 
     fn hide(&mut self) -> Result<(), PlatformError> {
@@ -121,24 +143,26 @@ pub fn platform(config: &Config) -> Result<Box<dyn Platform>, PlatformError> {
     let session = DisplayServer::current();
     #[cfg(feature = "wayland")]
     if let DisplayServer::Wayland(_) = session {
-        let renderer = Renderer::new(Style::from_config(&config.overlay)?)?;
-        let wayland = crate::wayland::Wayland::connect(renderer)?;
+        let (themed, style) = Themed::new(&config.overlay)?;
+        let wayland = crate::wayland::Wayland::connect(Renderer::new(style)?)?;
         let source = accessibility();
         return Ok(Box::new(crate::wayland::platform::WaylandPlatform::new(
             wayland,
             crate::wayland::compositor::Compositor::current(),
             source,
             config.hints.semantic_click,
+            themed,
         )));
     }
     session.require_x11()?;
-    let renderer = Renderer::new(Style::from_config(&config.overlay)?)?;
-    let x = X11::connect(renderer)?;
+    let (themed, style) = Themed::new(&config.overlay)?;
+    let x = X11::connect(Renderer::new(style)?)?;
     let source = accessibility();
     Ok(Box::new(LinuxPlatform {
         x,
         source,
         semantic_click: config.hints.semantic_click,
+        themed,
     }))
 }
 
@@ -232,7 +256,7 @@ fn check_toolkits() -> Result<String, String> {
 }
 
 fn check_font(config: &Config) -> Result<String, String> {
-    Style::from_config(&config.overlay).map_err(|e| e.to_string())?;
+    Style::from_config(&config.overlay, Appearance::Light).map_err(|e| e.to_string())?;
     find_font()
         .map(|path| path.display().to_string())
         .ok_or_else(|| "no TrueType font under /usr/share/fonts".to_owned())

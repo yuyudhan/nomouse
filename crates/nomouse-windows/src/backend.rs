@@ -6,8 +6,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nomouse_core::{
-    Action, Config, Element, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource, InputEvent,
-    InputInjector, MouseButton, Overlay, Platform, PlatformError, Scope,
+    Action, Config, Element, ElementSource, Frame, Hint, Hotkey, HotkeyId, HotkeySource,
+    InputEvent, InputInjector, Modifiers, MouseButton, Overlay, Platform, PlatformError, Scope,
 };
 use nomouse_sys_windows::{
     Activation, Bitmap, Edges, HotkeyModifiers, InputStep, Snapshot, SysError, SysErrorKind,
@@ -422,13 +422,8 @@ impl<S: System> Overlay for Backend<S> {
         self.present(hints, typed, None)
     }
 
-    fn show_search(
-        &mut self,
-        hints: &[Hint],
-        typed: &str,
-        query: &str,
-    ) -> Result<(), PlatformError> {
-        self.present(hints, typed, Some(query))
+    fn show_frame(&mut self, frame: &Frame<'_>) -> Result<(), PlatformError> {
+        self.present(frame.hints, frame.typed, frame.query)
     }
 
     fn hide(&mut self) -> Result<(), PlatformError> {
@@ -495,7 +490,12 @@ impl<S: System> HotkeySource for Backend<S> {
                     .filter(|id| self.hotkeys.iter().any(|(known, _)| known == id))
                     .map(InputEvent::Hotkey),
                 SysEvent::Key { vk, shift } if self.shown => {
-                    keys::key_press(vk, shift).map(InputEvent::Key)
+                    // The hook reports Shift only; Ctrl, Alt and Win chords are not decoded.
+                    let held = Modifiers {
+                        shift,
+                        ..Modifiers::NONE
+                    };
+                    keys::key_press(vk, shift).map(|key| InputEvent::Key(key.with(held)))
                 }
                 SysEvent::Key { .. } => None,
             };

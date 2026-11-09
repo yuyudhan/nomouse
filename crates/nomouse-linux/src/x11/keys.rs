@@ -8,6 +8,8 @@ use nomouse_core::{Key, KeyPress, Modifiers};
 pub(crate) mod sym {
     pub(crate) const SPACE: u32 = 0x20;
     pub(crate) const TAB: u32 = 0xff09;
+    /// What Shift+Tab produces on most layouts.
+    pub(crate) const ISO_LEFT_TAB: u32 = 0xfe20;
     pub(crate) const RETURN: u32 = 0xff0d;
     pub(crate) const KP_ENTER: u32 = 0xff8d;
     pub(crate) const ESCAPE: u32 = 0xff1b;
@@ -50,6 +52,32 @@ pub(crate) const fn hotkey_keysym(key: Key) -> u32 {
         Key::Period => '.' as u32,
         Key::Slash => '/' as u32,
     }
+}
+
+/// The modifier keycodes down in `keys` (a `QueryKeymap` bitmap: bit `code % 8` of byte
+/// `code / 8`), from the modifier mapping `mapping` (`per` keycodes for each of the eight
+/// modifiers, zero for an empty slot). Lock and the Num Lock modifier (`numlock`, a mask) are
+/// left out: they are toggles, not keys held for a moment.
+pub(crate) fn pressed_modifiers(mapping: &[u8], per: usize, keys: &[u8], numlock: u16) -> Vec<u8> {
+    let mut pressed = Vec::new();
+    for (index, codes) in mapping.chunks(per.max(1)).enumerate() {
+        let bit = u32::try_from(index)
+            .ok()
+            .and_then(|i| 1_u16.checked_shl(i))
+            .unwrap_or(0);
+        if bit == mask::LOCK || bit == numlock {
+            continue;
+        }
+        for &code in codes {
+            let down = keys
+                .get(usize::from(code / 8))
+                .is_some_and(|byte| byte & (1 << (code % 8)) != 0);
+            if code != 0 && down && !pressed.contains(&code) {
+                pressed.push(code);
+            }
+        }
+    }
+    pressed
 }
 
 /// The core modifier mask of a chord (Alt is Mod1, Super is Mod4 on every common layout).
@@ -100,7 +128,7 @@ pub(crate) fn key_press(keysym: u32) -> Option<KeyPress> {
         sym::ESCAPE => KeyPress::Escape,
         sym::BACKSPACE => KeyPress::Backspace,
         sym::RETURN | sym::KP_ENTER => KeyPress::Enter,
-        sym::TAB => KeyPress::Tab,
+        sym::TAB | sym::ISO_LEFT_TAB => KeyPress::Tab,
         sym::UP => KeyPress::Up,
         sym::DOWN => KeyPress::Down,
         sym::LEFT => KeyPress::Left,
@@ -108,6 +136,16 @@ pub(crate) fn key_press(keysym: u32) -> Option<KeyPress> {
         other => KeyPress::Char(keysym_char(other)?.to_lowercase().next()?),
     };
     Some(press)
+}
+
+/// The modifiers held in an event `state` (Caps Lock and Num Lock are not modifiers here).
+pub(crate) const fn modifiers(state: u16) -> Modifiers {
+    Modifiers {
+        ctrl: state & mask::CONTROL != 0,
+        alt: state & mask::MOD1 != 0,
+        shift: state & mask::SHIFT != 0,
+        meta: state & mask::MOD4 != 0,
+    }
 }
 
 /// The server's keycode → keysym table (`GetKeyboardMapping`).
@@ -243,6 +281,39 @@ mod tests {
         assert_eq!(key_press(sym::KP_ENTER), Some(KeyPress::Enter));
         assert_eq!(key_press(0x0100_0444), Some(KeyPress::Char('ф')));
         assert_eq!(key_press(sym::SHIFT_L), None);
+        assert_eq!(key_press(sym::ISO_LEFT_TAB), Some(KeyPress::Tab));
+    }
+
+    #[test]
+    fn event_state_gives_held_modifiers_but_not_locks() {
+        let state = mask::SHIFT | mask::CONTROL | mask::LOCK | 0x10;
+        assert_eq!(
+            modifiers(state),
+            Modifiers {
+                ctrl: true,
+                shift: true,
+                ..Modifiers::NONE
+            }
+        );
+        let alt_super = modifiers(mask::MOD1 | mask::MOD4);
+        assert!(alt_super.alt && alt_super.meta && !alt_super.ctrl);
+        assert_eq!(modifiers(mask::LOCK), Modifiers::NONE);
+    }
+
+    #[test]
+    fn pressed_modifiers_skip_locks_empty_slots_and_released_keys() {
+        // Two keycodes per modifier: Shift 50/62, Lock 66, Control 37, Mod1 64, Mod2 (Num
+        // Lock) 77, Mod4 133; Mod3 and Mod5 empty.
+        let mapping = [50, 62, 66, 0, 37, 0, 64, 0, 77, 0, 0, 0, 133, 0, 0, 0];
+        let mut keys = [0_u8; 32];
+        for code in [62_u8, 66, 77, 133, 10] {
+            keys[usize::from(code / 8)] |= 1 << (code % 8);
+        }
+        assert_eq!(pressed_modifiers(&mapping, 2, &keys, 0x10), [62, 133]);
+        assert_eq!(
+            pressed_modifiers(&mapping, 2, &[0; 32], 0x10),
+            Vec::<u8>::new()
+        );
     }
 
     #[test]

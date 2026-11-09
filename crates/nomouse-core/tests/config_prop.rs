@@ -1,9 +1,9 @@
 //! Property tests: every valid configuration survives a TOML round trip, out-of-range values are
 //! rejected, and fuzzy search accepts exactly the queries that are subsequences of the name.
 
-use nomouse_core::config::{Config, HintsConfig, OverlayConfig, ScrollConfig};
+use nomouse_core::config::{Config, HintsConfig, OverlayConfig, ScrollConfig, Theme};
 use nomouse_core::search::fuzzy_score;
-use nomouse_core::{ActionKind, ConfigError, Scope};
+use nomouse_core::{ActionKind, ConfigError, KeyBindings, Scope};
 use proptest::prelude::*;
 
 fn alphabet() -> impl Strategy<Value = String> {
@@ -25,18 +25,27 @@ prop_compose! {
         scope in prop::sample::select(vec![Scope::FocusedWindow, Scope::Screen]),
         action in prop::sample::select(ActionKind::ALL.to_vec()),
         semantic_click in any::<bool>(),
+        keys in prop::sample::select(vec![KeyBindings::Nomouse, KeyBindings::Homerow]),
         step in 1u32..=50,
+        dash_step in 1u32..=100,
         font_size in 6u32..=72,
         opacity in 10u32..=100,
-        colours in [colour(), colour(), colour(), colour()],
+        theme in prop::sample::select(vec![Theme::Original, Theme::Light, Theme::Dark, Theme::Auto]),
+        colours in [
+            prop::option::of(colour()),
+            prop::option::of(colour()),
+            prop::option::of(colour()),
+            prop::option::of(colour()),
+        ],
     ) -> Config {
         let [background, foreground, typed_foreground, border] = colours;
         Config {
-            hints: HintsConfig { alphabet, scope, action, semantic_click },
-            scroll: ScrollConfig { step },
+            hints: HintsConfig { alphabet, scope, action, semantic_click, keys },
+            scroll: ScrollConfig { step, dash_step },
             overlay: OverlayConfig {
                 font_size,
                 opacity,
+                theme,
                 background,
                 foreground,
                 typed_foreground,
@@ -63,6 +72,16 @@ proptest! {
             Err(ConfigError::OutOfRange { field: "scroll.step", .. })
         );
         prop_assert!(rejected, "step {} accepted", step);
+    }
+
+    #[test]
+    fn dash_step_outside_range_is_rejected(dash_step in prop_oneof![Just(0u32), 101u32..10_000]) {
+        let text = format!("[scroll]\ndash_step = {dash_step}\n");
+        let rejected = matches!(
+            Config::from_toml(&text),
+            Err(ConfigError::OutOfRange { field: "scroll.dash_step", .. })
+        );
+        prop_assert!(rejected, "dash_step {} accepted", dash_step);
     }
 
     #[test]

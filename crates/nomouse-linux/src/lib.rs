@@ -12,6 +12,8 @@
 #[cfg(target_os = "linux")]
 mod a11y;
 #[cfg(target_os = "linux")]
+mod appearance;
+#[cfg(target_os = "linux")]
 mod first_run;
 #[cfg(target_os = "linux")]
 mod linux;

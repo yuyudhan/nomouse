@@ -21,12 +21,17 @@ OS-specific modules and dependencies are `cfg`-gated, so clippy checks all targe
 Defined in `crates/nomouse-core/src/platform.rs`, split by responsibility:
 
 - `ElementSource::elements(scope)`: a snapshot of the accessibility tree for the focused window or
-  the whole screen, as `Element { id, role, name, bounds, enabled }`.
-- `Overlay::show(hints, typed)` / `hide()`: draws labels above all windows and grabs the keyboard
-  while shown, so typed keys reach nomouse, not the app.
+  the whole screen, as `Element { id, role, name, description, value, bounds, enabled }`
+  (description and value feed search; Linux reads them over AT-SPI for labelled objects only,
+  and never a password field's value).
+- `Overlay::show(hints, typed)` / `show_frame(frame)` / `hide()`: draws labels above all windows
+  and grabs the keyboard while shown, so typed keys reach nomouse, not the app. A `Frame` adds
+  the search query box, the highlighted label and the outlined scroll area.
 - `InputInjector::perform(action)`: click (any button, any count), hover, drag, scroll.
 - `HotkeySource::register(hotkey)` / `unregister(id)` / `next_event(timeout)`: global hotkeys and
-  the key presses captured while the overlay is up, as `InputEvent`.
+  the key presses captured while the overlay is up (`KeyEvent`: the key plus the modifiers
+  held), as `InputEvent`. A registered hotkey pressed while the overlay is up still arrives as
+  `InputEvent::Hotkey`.
 - `Platform: all four + name()`.
 
 Every method is blocking and runs on the event-loop thread; errors are `PlatformError`, whose
@@ -40,10 +45,16 @@ Every method is blocking and runs on the event-loop thread; errors are `Platform
 3. `HintSession::new` drops non-clickable elements, sorts the rest into reading order (top to
    bottom, left to right, then id) and assigns labels: the leaves of a breadth-first expansion of
    the alphabet, so labels are as short as possible, shortest first, and prefix-free.
-4. `Overlay::show` draws `session.visible()`. Each `InputEvent::Key` goes to `session.key`,
-   which narrows the labels (`LabelFilter`), rejects keys that match nothing, or yields
-   `SessionEvent::Perform(action)`. Drag takes two picks; scroll picks a target then enters scroll
-   mode. Escape cancels.
+4. `Overlay::show_frame` draws `session.visible()` with the highlighted hint
+   (`session.focused()`). Each `InputEvent::Key` goes to `session.key`, which narrows the
+   labels (`LabelFilter`), moves the highlight (Tab/↓/Ctrl-N, Shift-Tab/↑/Ctrl-P), rejects keys
+   that match nothing, or yields `SessionEvent::Perform(action)` (a complete label, or Return on
+   the highlight; with `hints.keys = "homerow"` a label only highlights, and Return yields
+   `Armed` until the double-press time passes or a second Return makes it a double click). Drag
+   takes two picks; scroll mode (core `ScrollSession`) starts on the largest scroll area,
+   outlined through `Frame::area` (without one it picks an element first). Escape cancels, and
+   so does an activation hotkey or a command-socket request arriving while the labels are up
+   (toggle).
 5. `Overlay::hide`, then `InputInjector::perform(action)`.
 
 Hint alphabet: `asdfghjk` by default, configurable; `i`, `l`, `o` are rejected as ambiguous.
@@ -131,6 +142,8 @@ alphabet = "asdfghjk"        # label characters, most preferred first; i, l, o r
 scope = "focused-window"     # or "screen": every visible window on every monitor
 action = "click"             # click | right-click | double-click | hover | drag | scroll
 semantic_click = false       # AXPress / AT-SPI action / UIA Invoke instead of a pointer click
+keys = "nomouse"             # nomouse: a label acts at once | homerow: a label highlights,
+                             # Return clicks, twice double clicks, Shift-Return right clicks
 
 [hotkeys]                    # modifiers: ctrl, alt (Option), shift, meta (Command / Super)
 hints = "ctrl+space"
@@ -140,14 +153,21 @@ search = "ctrl+alt+/"
 
 [scroll]
 step = 3                     # wheel steps per key press, 1..=50; d/u scroll five times this
+dash_step = 15               # wheel steps per Shift-h/j/k/l press, 1..=100
 
 [overlay]
 font_size = 13               # points, 6..=72
 opacity = 95                 # percent, 10..=100
-background = "#ffd75f"
-foreground = "#1c1c1c"
-typed_foreground = "#8a8a8a" # already-typed characters
-border = "#1c1c1c"
+theme = "original"           # original (yellow), light, dark, or auto (system appearance)
+# background = "#ffd75f"     # unset colours come from the theme; a set one overrides it
+# foreground = "#1c1c1c"
+# typed_foreground = "#8a8a8a" # already-typed characters
+# border = "#1c1c1c"
+
+[ignore]
+apps = []                    # apps where activation shows nothing: macOS bundle id, Wayland
+                             # app id, X11 WM_CLASS instance or class, or process name
+                             # (ignoring case; a truncated 15-byte comm matches); no blanks
 
 [macos]
 enhanced_ui_apps = []        # bundle ids that get AXEnhancedUserInterface (Chromium browsers)
@@ -155,6 +175,19 @@ enhanced_ui_apps = []        # bundle ids that get AXEnhancedUserInterface (Chro
 
 New keys land in `nomouse-core/src/config.rs` with a default, a validation rule when the type
 alone does not constrain them, a unit test, and an entry here and in the README.
+
+The daemon re-reads the file when its modification time changes (checked every second) and on
+`nomouse reload` (a `reload` line on the command socket). An unreadable or invalid file is
+logged and the running configuration stays; an unchanged one does nothing. Otherwise the old
+platform is dropped first, releasing its hotkeys and overlay, and a new one starts with the
+new configuration (or the previous one again if the new one cannot start).
+`ElementSource::focused_app` names the focused window's app (`AppIdentity`) for
+`ignore.apps`; an ignored activation scans nothing and shows nothing.
+`overlay.theme = "auto"` resolves to `light` or `dark` through `OverlayConfig::colours(appearance)`.
+On Linux the appearance is the XDG desktop portal's `org.freedesktop.appearance color-scheme`
+(1 is dark; anything else, or no portal within 250 ms, is light), read with `ReadOne` (or the
+older `Read`) before each activation's scan, so a switch applies to the next labels; macOS and
+Windows use the light colours for now.
 
 ## Logging
 

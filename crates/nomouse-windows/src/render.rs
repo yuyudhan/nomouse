@@ -39,13 +39,14 @@ pub(crate) struct Style {
 }
 
 impl Style {
-    /// The style of an `[overlay]` section; the font size is in points.
+    /// The style of an `[overlay]` section; the font size is in points. `theme = "auto"` takes
+    /// the light colours: the Windows app theme is not read yet.
     ///
     /// # Errors
     /// [`PlatformError::Backend`] for an invalid colour.
     pub(crate) fn from_config(config: &OverlayConfig) -> Result<Self, PlatformError> {
         let [background, foreground, typed, border] = config
-            .colours()
+            .colours(nomouse_core::config::Appearance::Light)
             .map_err(|e| PlatformError::Backend(e.to_string()))?;
         let points = f32::from(u16::try_from(config.font_size.clamp(6, 72)).unwrap_or(13));
         let percent = f32::from(u16::try_from(config.opacity.clamp(10, 100)).unwrap_or(100));
@@ -356,6 +357,8 @@ mod tests {
                 id: ElementId(0),
                 role: Role::Button,
                 name: String::new(),
+                description: String::new(),
+                value: String::new(),
                 bounds,
                 enabled: true,
             },

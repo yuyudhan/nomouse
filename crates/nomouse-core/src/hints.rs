@@ -149,6 +149,8 @@ mod tests {
             id: ElementId(id),
             role: Role::Button,
             name: String::new(),
+            description: String::new(),
+            value: String::new(),
             bounds: Rect::new(x, y, 5, 5),
             enabled: true,
         };

@@ -4,13 +4,14 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use nomouse_core::{
-    Action, Element, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource, InputEvent,
+    Action, Element, ElementSource, Frame, Hint, Hotkey, HotkeyId, HotkeySource, InputEvent,
     InputInjector, MouseButton, Overlay, Platform, PlatformError, Scope,
 };
 
 use super::Wayland;
 use super::compositor::{Compositor, Windows};
 use crate::a11y::AtspiSource;
+use crate::appearance::Themed;
 
 /// The Wayland backend: AT-SPI elements placed with the compositor's window positions, a
 /// layer-shell overlay, virtual pointer or uinput input, and hotkeys bound by the compositor.
@@ -19,6 +20,7 @@ pub struct WaylandPlatform {
     compositor: Compositor,
     source: Option<AtspiSource>,
     semantic_click: bool,
+    themed: Themed,
 }
 
 impl WaylandPlatform {
@@ -27,6 +29,7 @@ impl WaylandPlatform {
         compositor: Compositor,
         source: Option<AtspiSource>,
         semantic_click: bool,
+        themed: Themed,
     ) -> Self {
         tracing::info!(
             "Wayland backend on {} with {}",
@@ -38,6 +41,7 @@ impl WaylandPlatform {
             compositor,
             source,
             semantic_click,
+            themed,
         }
     }
 
@@ -100,6 +104,10 @@ fn keysym_name(key: nomouse_core::Key) -> String {
 
 impl ElementSource for WaylandPlatform {
     fn elements(&mut self, scope: Scope) -> Result<Vec<Element>, PlatformError> {
+        // Each activation starts with a scan: the moment to follow the system appearance.
+        if let Some(style) = self.themed.changed() {
+            self.wayland.set_style(style);
+        }
         let windows = self.windows();
         let pid = windows.focused_pid();
         let offsets: HashMap<u32, nomouse_core::Point> = windows.native_offsets();
@@ -124,20 +132,27 @@ impl ElementSource for WaylandPlatform {
         }
         result
     }
+
+    fn focused_app(&mut self) -> Result<Option<nomouse_core::AppIdentity>, PlatformError> {
+        Ok(self.windows().focused().map(|window| {
+            let mut app = window.app.clone();
+            app.process = crate::linux::process_name(window.pid);
+            app
+        }))
+    }
 }
 
 impl Overlay for WaylandPlatform {
     fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError> {
-        self.wayland.show(hints, typed, None)
+        self.wayland.show(&Frame {
+            hints,
+            typed,
+            ..Frame::default()
+        })
     }
 
-    fn show_search(
-        &mut self,
-        hints: &[Hint],
-        typed: &str,
-        query: &str,
-    ) -> Result<(), PlatformError> {
-        self.wayland.show(hints, typed, Some(query))
+    fn show_frame(&mut self, frame: &Frame<'_>) -> Result<(), PlatformError> {
+        self.wayland.show(frame)
     }
 
     fn hide(&mut self) -> Result<(), PlatformError> {

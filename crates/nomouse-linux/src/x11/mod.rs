@@ -9,9 +9,8 @@ use std::collections::BTreeMap;
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
-use nomouse_core::search::search_box_anchor;
 use nomouse_core::{
-    Action, Hint, Hotkey, HotkeyId, InputEvent, Modifiers, PlatformError, Point, Rect,
+    Action, Frame, Hotkey, HotkeyId, InputEvent, Modifiers, PlatformError, Point, Rect,
 };
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::errors::{ConnectionError, ReplyError};
@@ -119,6 +118,18 @@ fn numlock_mask(conn: &RustConnection, map: &KeyMap) -> Result<u16, PlatformErro
         .position(|codes| codes.iter().any(|code| numlock.contains(code)))
         .and_then(|index| u32::try_from(index).ok())
         .map_or(0, |index| 1 << index))
+}
+
+/// The longest a scroll waits for held modifiers to be released (see [`X11::perform`]).
+const MODIFIER_RELEASE_WAIT: Duration = Duration::from_secs(1);
+
+/// The names in a `WM_CLASS` value: NUL-terminated Latin-1 strings, instance then class.
+fn wm_class_names(value: &[u8]) -> Vec<String> {
+    value
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+        .map(|name| name.iter().map(|byte| char::from(*byte)).collect())
+        .collect()
 }
 
 fn rect_of(x: i16, y: i16, width: u16, height: u16) -> Rect {
@@ -272,6 +283,11 @@ impl X11 {
         self.screen
     }
 
+    /// Draws labels with `style` from now on.
+    pub(crate) const fn set_style(&mut self, style: render::Style) {
+        self.renderer.set_style(style);
+    }
+
     /// The monitors (`RandR`), or the whole screen without `RandR`.
     pub(crate) fn monitors(&self) -> Vec<Rect> {
         monitors_of(&self.conn, self.root, self.screen)
@@ -292,12 +308,28 @@ impl X11 {
         reply.value32()?.next()
     }
 
+    fn active_window(&self) -> Option<xproto::Window> {
+        self.property32(self.root, self.net_active_window, AtomEnum::WINDOW)
+            .filter(|w| *w != 0)
+    }
+
     /// The process owning the active window (`_NET_ACTIVE_WINDOW`, `_NET_WM_PID`).
     pub(crate) fn active_pid(&self) -> Option<u32> {
-        let window = self
-            .property32(self.root, self.net_active_window, AtomEnum::WINDOW)
-            .filter(|w| *w != 0)?;
-        self.property32(window, self.net_wm_pid, AtomEnum::CARDINAL)
+        self.property32(self.active_window()?, self.net_wm_pid, AtomEnum::CARDINAL)
+    }
+
+    /// The active window's `WM_CLASS` names (instance, then class), and its process.
+    pub(crate) fn active_app(&self) -> Option<(Vec<String>, Option<u32>)> {
+        let window = self.active_window()?;
+        let class = self
+            .conn
+            .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .map(|reply| wm_class_names(&reply.value))
+            .unwrap_or_default();
+        let pid = self.property32(window, self.net_wm_pid, AtomEnum::CARDINAL);
+        Some((class, pid))
     }
 
     fn sync(&self) -> Result<(), PlatformError> {
@@ -415,22 +447,25 @@ impl X11 {
         Ok(())
     }
 
+    /// A hotkey (also while the keyboard is grabbed, so pressing it again toggles the labels
+    /// off), else, while grabbed, the key press with its modifiers.
     fn translate(&self, event: &Event) -> Option<InputEvent> {
         let Event::KeyPress(press) = event else {
             return None;
         };
         let state = u16::from(press.state);
-        if self.grabbed {
-            let keysym = self.keymap.keysym(press.detail, state);
-            return keys::key_press(keysym).map(InputEvent::Key);
+        let hotkey = self.hotkeys.iter().find(|(_, grab)| {
+            grab.keycodes.contains(&press.detail)
+                && keys::chord_matches(state, grab.mask, self.numlock)
+        });
+        if let Some((id, _)) = hotkey {
+            return Some(InputEvent::Hotkey(*id));
         }
-        self.hotkeys
-            .iter()
-            .find(|(_, grab)| {
-                grab.keycodes.contains(&press.detail)
-                    && keys::chord_matches(state, grab.mask, self.numlock)
-            })
-            .map(|(id, _)| InputEvent::Hotkey(*id))
+        if !self.grabbed {
+            return None;
+        }
+        let keysym = self.keymap.keysym(press.detail, state);
+        keys::key_press(keysym).map(|key| InputEvent::Key(key.with(keys::modifiers(state))))
     }
 
     fn handle(&mut self, event: &Event) -> Result<Option<InputEvent>, PlatformError> {
@@ -602,49 +637,14 @@ impl X11 {
         ))
     }
 
-    /// Shows `hints` on the monitors they lie on and grabs the keyboard. With a `query`
-    /// (search-by-text) a search box `/query` is drawn near the top centre of the monitor of
-    /// the best match (the first hint), or of the first monitor when nothing matches.
+    /// Shows `frame` (its hints on the monitors they lie on, the highlight and the search box;
+    /// see [`Renderer::frame`]) and grabs the keyboard.
     ///
     /// # Errors
     /// When windows cannot be created or the keyboard cannot be grabbed.
-    pub(crate) fn show(
-        &mut self,
-        hints: &[Hint],
-        typed: &str,
-        query: Option<&str>,
-    ) -> Result<(), PlatformError> {
+    pub(crate) fn show(&mut self, frame: &Frame<'_>) -> Result<(), PlatformError> {
         let monitors = self.monitors();
-        let typed = typed.chars().count();
-        let mut per_monitor: Vec<Vec<Label>> = vec![Vec::new(); monitors.len()];
-        let mut first_monitor = None;
-        for hint in hints {
-            let bounds = hint.element.bounds;
-            let index = monitors
-                .iter()
-                .position(|m| m.contains(bounds.center()))
-                .or_else(|| monitors.iter().position(|m| m.intersects(&bounds)))
-                .unwrap_or(0);
-            first_monitor.get_or_insert(index);
-            if let Some(label) = self
-                .renderer
-                .label(&hint.label, typed, bounds, monitors[index])
-            {
-                per_monitor[index].push(label);
-            }
-        }
-        if let Some(query) = query {
-            let index = first_monitor.unwrap_or(0);
-            let area = monitors[index];
-            let text = format!("/{query}");
-            let anchor = search_box_anchor(area);
-            if let Some(label) = self
-                .renderer
-                .label(&text, text.chars().count(), anchor, area)
-            {
-                per_monitor[index].push(label);
-            }
-        }
+        let per_monitor = self.renderer.frame(frame, &monitors);
         let mut used = Vec::new();
         for (area, labels) in monitors.iter().zip(per_monitor) {
             if labels.is_empty() {
@@ -724,13 +724,51 @@ impl X11 {
             .collect()
     }
 
+    /// The modifier keys the user holds right now.
+    fn pressed_modifiers(&self) -> Result<Vec<u8>, PlatformError> {
+        let mapping = self
+            .conn
+            .get_modifier_mapping()
+            .map_err(lost)?
+            .reply()
+            .map_err(lost)?;
+        let keys = self
+            .conn
+            .query_keymap()
+            .map_err(lost)?
+            .reply()
+            .map_err(lost)?;
+        Ok(keys::pressed_modifiers(
+            &mapping.keycodes,
+            usize::from(mapping.keycodes_per_modifier()),
+            &keys.keys,
+            self.numlock,
+        ))
+    }
+
     /// Performs `action` with XTEST, holding its [`Action::modifiers`] (ctrl+click, ...).
+    ///
+    /// Wheel events carry the server's modifier state, and Shift (held for scroll mode's `G`
+    /// and dash keys) makes toolkits scroll sideways, so a scroll first waits, up to
+    /// [`MODIFIER_RELEASE_WAIT`], for the user to let go of every modifier. Faking the
+    /// releases instead would not work: XTEST cannot release a key held on the physical
+    /// keyboard, and pressing it again afterwards would leave it stuck.
     ///
     /// # Errors
     /// When the connection is lost.
     pub(crate) fn perform(&mut self, action: &Action) -> Result<(), PlatformError> {
-        let held = self.modifier_keycodes(action.modifiers());
-        for fake in plan(action, &held) {
+        if matches!(action, Action::Scroll { .. }) {
+            let started = Instant::now();
+            while !self.pressed_modifiers()?.is_empty() {
+                if started.elapsed() >= MODIFIER_RELEASE_WAIT {
+                    tracing::debug!("scrolling with modifiers still held");
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let fakes = plan(action, &self.modifier_keycodes(action.modifiers()));
+        for fake in fakes {
             let (kind, detail, at) = match fake {
                 Fake::Motion(at) => (xproto::MOTION_NOTIFY_EVENT, 0, at),
                 Fake::Press(button) => (xproto::BUTTON_PRESS_EVENT, button, Point::default()),
@@ -788,6 +826,17 @@ fn modifier_keysyms(modifiers: Modifiers) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wm_class_value_gives_instance_then_class() {
+        assert_eq!(
+            wm_class_names(b"gnome-terminal-server\0Gnome-terminal\0"),
+            ["gnome-terminal-server", "Gnome-terminal"]
+        );
+        assert_eq!(wm_class_names(b"xterm\0XTerm"), ["xterm", "XTerm"]);
+        assert_eq!(wm_class_names(b"r\xe9sum\xe9\0"), ["résumé"]);
+        assert_eq!(wm_class_names(b""), Vec::<String>::new());
+    }
 
     #[test]
     fn modifiers_map_to_left_keysyms_in_press_order() {

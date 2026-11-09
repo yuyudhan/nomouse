@@ -69,7 +69,7 @@ Then run:
 | Hotkey (default) | Mode |
 |------------------|------|
 | `ctrl+space` | hints: label the focused window, type a label to click |
-| `ctrl+shift+space` | continuous: keep labelling after every click until Escape |
+| `ctrl+shift+space` | continuous: keep labelling after every click until Escape or a click into a text field |
 | `ctrl+alt+space` | scroll: label scrollable areas, then scroll with keys |
 | `ctrl+alt+/` | search: type part of an element's text |
 
@@ -78,13 +78,24 @@ While labels are shown:
 | Key | Effect |
 |-----|--------|
 | label letters | narrow the labels; a complete label acts on its element |
+| Tab, ↓, Ctrl-N / Shift-Tab, ↑, Ctrl-P | move the highlight to the next / previous label |
+| Return | act on the highlighted label (it starts on the first); modifiers held with Return are held for the click |
 | `1` `2` `3` `4` | hold Shift / Ctrl / Alt / Command (Super) for the next click; `4` then a label is cmd+click |
 | Backspace | remove the last typed letter |
-| Escape | cancel |
+| Escape, or the mode's hotkey again | cancel |
 
-In search mode, Enter clicks the best match, Tab freezes the query so letters pick a label, and
-Backspace with no label typed returns to the query. In scroll mode, `j` `k` `h` `l` (or the
-arrows) scroll, `d` and `u` scroll five times as far, Escape or Enter ends it.
+With `hints.keys = "homerow"` a complete label highlights its element instead of acting: then
+Return clicks, Return twice double clicks, Shift-Return right clicks and Cmd-Return (Super)
+cmd-clicks, as in Homerow.
+
+In search mode, Enter clicks the highlighted match (the best one unless moved), Tab freezes the
+query so letters pick a label, and Backspace with no label typed returns to the query. Search
+matches names, tooltips and descriptions, text field contents and roles (`button`); spaces are
+ignored, and `*` or `;` alone matches everything. Scroll mode starts on the largest scrollable
+area, outlined, with every area numbered: `j` `k` `h` `l` (or the arrows) scroll, Shift with
+them scrolls `dash_step` wheel steps at a time, `d` and `u` scroll five times as far, `gg`
+goes to the top and `G` to the bottom, Tab and Shift-Tab (or a digit) switch areas, and
+Escape or Enter ends it.
 
 Every mode is also a command (`nomouse hints`, `continuous`, `scroll`, `search`), with
 `--action right-click|double-click|hover|drag|scroll` for one-off actions. On Wayland the
@@ -94,7 +105,9 @@ compositor binds these commands and they reach the running daemon: see
 ## Configuration
 
 `~/.config/nomouse/config.toml` on macOS and Linux (`$XDG_CONFIG_HOME` is honoured). Every key
-is optional; `nomouse config init` writes the defaults, `nomouse config check` validates.
+is optional; `nomouse config init` writes the defaults, `nomouse config check` validates. The
+running daemon picks up an edited file within two seconds, or at once with `nomouse reload`;
+an invalid file is reported in its log and the previous settings stay.
 
 ```toml
 [hints]
@@ -102,6 +115,7 @@ alphabet = "asdfghjk"        # label letters, most preferred first
 scope = "focused-window"     # or "screen" for every window on every monitor
 action = "click"             # click, right-click, double-click, hover, drag, scroll
 semantic_click = false       # press via the accessibility API; the pointer stays put
+keys = "nomouse"             # or "homerow": a label highlights, Return clicks
 
 [hotkeys]                    # modifiers: ctrl, alt (Option), shift, meta (Command / Super)
 hints = "ctrl+space"
@@ -111,14 +125,18 @@ search = "ctrl+alt+/"
 
 [scroll]
 step = 3
+dash_step = 15
 
 [overlay]
 font_size = 13
 opacity = 95
-background = "#ffd75f"
-foreground = "#1c1c1c"
-typed_foreground = "#8a8a8a"
-border = "#1c1c1c"
+theme = "original"          # original (yellow), light, dark, or auto (the system appearance)
+# background = "#ffd75f"    # each colour overrides the theme's when set:
+# foreground = "#1c1c1c"    # background, foreground, typed_foreground, border
+
+[ignore]
+apps = ["org.wezfurlong.wezterm", "kitty"]   # no labels in these apps: bundle id, Wayland
+                                             # app id, X11 WM_CLASS or process name
 
 [macos]
 enhanced_ui_apps = ["com.google.Chrome"]   # Chromium browsers build their tree only on request

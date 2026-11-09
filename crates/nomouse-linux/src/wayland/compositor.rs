@@ -13,7 +13,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use nomouse_core::{Point, Rect};
+use nomouse_core::{AppIdentity, Point, Rect};
 use serde_json::Value;
 
 /// How long one IPC exchange may take before the scan goes on without window positions.
@@ -38,6 +38,8 @@ pub(crate) struct WindowInfo {
     pub focused: bool,
     /// The window is on a visible workspace.
     pub visible: bool,
+    /// The app id (native windows) or `WM_CLASS` names (`XWayland` windows); no process name.
+    pub app: AppIdentity,
 }
 
 /// The windows on screen and the focused one.
@@ -48,9 +50,14 @@ pub(crate) struct Windows {
 }
 
 impl Windows {
+    /// The focused window.
+    pub(crate) fn focused(&self) -> Option<&WindowInfo> {
+        self.all.iter().find(|w| w.focused)
+    }
+
     /// The process owning the focused window.
     pub(crate) fn focused_pid(&self) -> Option<u32> {
-        self.all.iter().find(|w| w.focused).map(|w| w.pid)
+        self.focused().map(|w| w.pid)
     }
 
     /// The offset to add to each native Wayland process's window-relative AT-SPI extents: the
@@ -254,6 +261,41 @@ fn pid_of(value: &Value) -> Option<u32> {
         .filter(|pid| *pid > 0)
 }
 
+fn text(value: &Value) -> Option<String> {
+    value.as_str().filter(|s| !s.is_empty()).map(str::to_owned)
+}
+
+/// A Sway view's identity: `app_id` for native windows, `window_properties` `instance` and
+/// `class` for `XWayland` ones.
+fn sway_app(node: &Value) -> AppIdentity {
+    let properties = &node["window_properties"];
+    AppIdentity {
+        app_id: text(&node["app_id"]),
+        wm_class: [&properties["instance"], &properties["class"]]
+            .into_iter()
+            .filter_map(text)
+            .collect(),
+        process: None,
+    }
+}
+
+/// A Hyprland client's identity: its `class` is the app id of a native window and the
+/// `WM_CLASS` class of an `XWayland` one.
+fn hyprland_app(client: &Value, xwayland: bool) -> AppIdentity {
+    let class = text(&client["class"]);
+    if xwayland {
+        AppIdentity {
+            wm_class: class.into_iter().collect(),
+            ..AppIdentity::default()
+        }
+    } else {
+        AppIdentity {
+            app_id: class,
+            ..AppIdentity::default()
+        }
+    }
+}
+
 /// The application windows of a Sway `get_tree` reply. The content origin is the container's
 /// `rect` plus the view's `window_rect` offset (borders and title bar).
 pub(crate) fn sway_windows(tree: &Value) -> Windows {
@@ -274,6 +316,7 @@ pub(crate) fn sway_windows(tree: &Value) -> Windows {
                 native: node["shell"].as_str() != Some("xwayland"),
                 focused: node["focused"].as_bool().unwrap_or(false),
                 visible: node["visible"].as_bool().unwrap_or(false),
+                app: sway_app(node),
             });
         }
         // Pushed in reverse so tiled windows come before floating ones, in tree order.
@@ -295,6 +338,7 @@ pub(crate) fn hyprland_windows(clients: &Value, active: &Value) -> Windows {
             list.iter()
                 .filter_map(|client| {
                     let pid = pid_of(&client["pid"])?;
+                    let xwayland = client["xwayland"].as_bool().unwrap_or(false);
                     Some(WindowInfo {
                         pid,
                         content: Rect::new(
@@ -303,11 +347,12 @@ pub(crate) fn hyprland_windows(clients: &Value, active: &Value) -> Windows {
                             size(&client["size"][0]),
                             size(&client["size"][1]),
                         ),
-                        native: !client["xwayland"].as_bool().unwrap_or(false),
+                        native: !xwayland,
                         focused: active_address.is_some()
                             && client["address"].as_str() == active_address,
                         visible: client["mapped"].as_bool().unwrap_or(true)
                             && !client["hidden"].as_bool().unwrap_or(false),
+                        app: hyprland_app(client, xwayland),
                     })
                 })
                 .collect()
@@ -376,9 +421,12 @@ mod tests {
                     "type": "workspace",
                     "nodes": [
                         {"pid": 10, "shell": "xdg_shell", "focused": false, "visible": true,
+                         "app_id": "org.gnome.Terminal",
                          "rect": {"x": 0, "y": 0, "width": 800, "height": 1000},
                          "window_rect": {"x": 2, "y": 24, "width": 796, "height": 974}},
                         {"pid": 11, "shell": "xwayland", "focused": true, "visible": true,
+                         "app_id": null,
+                         "window_properties": {"class": "XTerm", "instance": "xterm"},
                          "rect": {"x": 800, "y": 0, "width": 800, "height": 1000},
                          "window_rect": {"x": 0, "y": 0, "width": 800, "height": 1000}}
                     ],
@@ -397,6 +445,18 @@ mod tests {
         assert!(windows.all[0].native);
         assert!(!windows.all[1].native);
         assert_eq!(windows.focused_pid(), Some(11));
+        assert_eq!(
+            windows.all[0].app.app_id.as_deref(),
+            Some("org.gnome.Terminal")
+        );
+        assert_eq!(
+            windows.focused().map(|w| &w.app),
+            Some(&AppIdentity {
+                app_id: None,
+                wm_class: vec!["xterm".to_owned(), "XTerm".to_owned()],
+                process: None,
+            })
+        );
         let offsets = windows.native_offsets();
         assert_eq!(offsets.get(&10), Some(&Point::new(2, 24)));
         assert_eq!(
@@ -415,6 +475,7 @@ mod tests {
             native: true,
             focused,
             visible: true,
+            app: AppIdentity::default(),
         };
         let windows = Windows {
             all: vec![window(false, 100), window(true, 300)],
@@ -426,15 +487,18 @@ mod tests {
     fn hyprland_clients() {
         let clients = serde_json::json!([
             {"address": "0x1", "pid": 20, "at": [10, 40], "size": [640, 480],
-             "xwayland": false, "mapped": true, "hidden": false},
+             "xwayland": false, "mapped": true, "hidden": false, "class": "firefox"},
             {"address": "0x2", "pid": 21, "at": [700, 40], "size": [300, 300],
-             "xwayland": true, "mapped": true, "hidden": false},
+             "xwayland": true, "mapped": true, "hidden": false, "class": "XTerm"},
             {"address": "0x3", "pid": -1, "at": [0, 0], "size": [0, 0]}
         ]);
         let active = serde_json::json!({"address": "0x2"});
         let windows = hyprland_windows(&clients, &active);
         assert_eq!(windows.all.len(), 2);
         assert_eq!(windows.focused_pid(), Some(21));
+        assert_eq!(windows.all[0].app.app_id.as_deref(), Some("firefox"));
+        assert_eq!(windows.all[1].app.wm_class, ["XTerm"]);
+        assert_eq!(windows.all[1].app.app_id, None);
         assert_eq!(windows.all[0].content, Rect::new(10, 40, 640, 480));
         assert_eq!(windows.native_offsets().get(&20), Some(&Point::new(10, 40)));
     }

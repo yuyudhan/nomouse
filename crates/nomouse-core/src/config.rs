@@ -8,6 +8,7 @@ use crate::action::ActionKind;
 use crate::hints::{Alphabet, AlphabetError, DEFAULT_ALPHABET};
 use crate::hotkey::{Hotkey, Key, Modifiers};
 use crate::platform::Scope;
+use crate::session::KeyBindings;
 
 /// The whole configuration file.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -23,6 +24,17 @@ pub struct Config {
     pub overlay: OverlayConfig,
     /// macOS-only settings; ignored on other systems.
     pub macos: MacosConfig,
+    /// Apps where the hotkeys show no labels.
+    pub ignore: IgnoreConfig,
+}
+
+/// `[ignore]`
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct IgnoreConfig {
+    /// Apps where activation shows no labels, each named by its macOS bundle id, Wayland app
+    /// id, X11 `WM_CLASS` (instance or class) or process name, matched ignoring case.
+    pub apps: Vec<String>,
 }
 
 /// `[macos]`
@@ -48,6 +60,10 @@ pub struct HintsConfig {
     /// Click through the accessibility action (AT-SPI `do_action`, UIA `Invoke`, `AXPress`)
     /// when the element offers one, instead of a synthetic pointer click.
     pub semantic_click: bool,
+    /// Which keys act on a hint: `nomouse` (a typed label acts at once) or `homerow` (a typed
+    /// label highlights; Return clicks, Return twice double clicks, Shift-Return right clicks,
+    /// Cmd-Return cmd-clicks).
+    pub keys: KeyBindings,
 }
 
 impl Default for HintsConfig {
@@ -57,6 +73,7 @@ impl Default for HintsConfig {
             scope: Scope::FocusedWindow,
             action: ActionKind::Click,
             semantic_click: false,
+            keys: KeyBindings::Nomouse,
         }
     }
 }
@@ -104,11 +121,72 @@ impl Default for HotkeysConfig {
 pub struct ScrollConfig {
     /// Wheel steps per key press, 1 to 50.
     pub step: u32,
+    /// Wheel steps per Shift-scroll key press (`H` `J` `K` `L`), 1 to 100.
+    pub dash_step: u32,
 }
 
 impl Default for ScrollConfig {
     fn default() -> Self {
-        Self { step: 3 }
+        Self {
+            step: 3,
+            dash_step: 15,
+        }
+    }
+}
+
+/// `overlay.theme`: the label colours before any explicit colour overrides them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Theme {
+    /// Yellow labels with dark text (nomouse's look before themes).
+    #[default]
+    Original,
+    /// White labels with dark text.
+    Light,
+    /// Dark labels with light text.
+    Dark,
+    /// `light` or `dark`, following the system appearance.
+    Auto,
+}
+
+/// The system's appearance, which `overlay.theme = "auto"` follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Appearance {
+    /// Light (also when the system states no preference).
+    #[default]
+    Light,
+    /// Dark.
+    Dark,
+}
+
+impl Theme {
+    /// The theme's colours under `appearance` (which only `Auto` looks at): background,
+    /// foreground, typed foreground, border.
+    pub const fn palette(self, appearance: Appearance) -> [[u8; 3]; 4] {
+        match self {
+            Self::Original => [
+                [0xff, 0xd7, 0x5f],
+                [0x1c, 0x1c, 0x1c],
+                [0x8a, 0x8a, 0x8a],
+                [0x1c, 0x1c, 0x1c],
+            ],
+            Self::Light => [
+                [0xff, 0xff, 0xff],
+                [0x1c, 0x1c, 0x1c],
+                [0x9e, 0x9e, 0x9e],
+                [0x8a, 0x8a, 0x8a],
+            ],
+            Self::Dark => [
+                [0x2b, 0x2b, 0x2b],
+                [0xf2, 0xf2, 0xf2],
+                [0x80, 0x80, 0x80],
+                [0x0a, 0x0a, 0x0a],
+            ],
+            Self::Auto => match appearance {
+                Appearance::Light => Self::Light.palette(appearance),
+                Appearance::Dark => Self::Dark.palette(appearance),
+            },
+        }
     }
 }
 
@@ -120,14 +198,20 @@ pub struct OverlayConfig {
     pub font_size: u32,
     /// Label opacity in percent, 10 to 100.
     pub opacity: u32,
-    /// Label background, `#rrggbb`.
-    pub background: String,
-    /// Label text, `#rrggbb`.
-    pub foreground: String,
-    /// Already-typed label characters, `#rrggbb`.
-    pub typed_foreground: String,
-    /// Label border, `#rrggbb`.
-    pub border: String,
+    /// Label colours: `original`, `light`, `dark` or `auto` (the system appearance).
+    pub theme: Theme,
+    /// Label background, `#rrggbb`; overrides the theme's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background: Option<String>,
+    /// Label text, `#rrggbb`; overrides the theme's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub foreground: Option<String>,
+    /// Already-typed label characters, `#rrggbb`; overrides the theme's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub typed_foreground: Option<String>,
+    /// Label border, `#rrggbb`; overrides the theme's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border: Option<String>,
 }
 
 impl Default for OverlayConfig {
@@ -135,31 +219,40 @@ impl Default for OverlayConfig {
         Self {
             font_size: 13,
             opacity: 95,
-            background: "#ffd75f".to_owned(),
-            foreground: "#1c1c1c".to_owned(),
-            typed_foreground: "#8a8a8a".to_owned(),
-            border: "#1c1c1c".to_owned(),
+            theme: Theme::Original,
+            background: None,
+            foreground: None,
+            typed_foreground: None,
+            border: None,
         }
     }
 }
 
 impl OverlayConfig {
-    /// The colours as RGB triples: background, foreground, typed foreground, border.
+    /// The colours as RGB triples (background, foreground, typed foreground, border): the
+    /// theme's under `appearance`, each replaced by its explicit colour when one is set.
     ///
     /// # Errors
-    /// [`ConfigError::Colour`] for the first field that is not `#rrggbb`.
-    pub fn colours(&self) -> Result<[[u8; 3]; 4], ConfigError> {
-        let parse = |field: &'static str, value: &str| {
-            parse_colour(value).ok_or_else(|| ConfigError::Colour {
-                field,
-                value: value.to_owned(),
+    /// [`ConfigError::Colour`] for the first explicit colour that is not `#rrggbb`.
+    pub fn colours(&self, appearance: Appearance) -> Result<[[u8; 3]; 4], ConfigError> {
+        let theme = self.theme.palette(appearance);
+        let pick = |field: &'static str, value: Option<&String>, fallback: [u8; 3]| {
+            value.map_or(Ok(fallback), |value| {
+                parse_colour(value).ok_or_else(|| ConfigError::Colour {
+                    field,
+                    value: value.clone(),
+                })
             })
         };
         Ok([
-            parse("overlay.background", &self.background)?,
-            parse("overlay.foreground", &self.foreground)?,
-            parse("overlay.typed_foreground", &self.typed_foreground)?,
-            parse("overlay.border", &self.border)?,
+            pick("overlay.background", self.background.as_ref(), theme[0])?,
+            pick("overlay.foreground", self.foreground.as_ref(), theme[1])?,
+            pick(
+                "overlay.typed_foreground",
+                self.typed_foreground.as_ref(),
+                theme[2],
+            )?,
+            pick("overlay.border", self.border.as_ref(), theme[3])?,
         ])
     }
 }
@@ -220,6 +313,12 @@ pub enum ConfigError {
         field: &'static str,
         /// The given value.
         value: String,
+    },
+    /// A list holds an empty (or blank) entry.
+    #[error("{field} has an empty entry")]
+    EmptyEntry {
+        /// The field.
+        field: &'static str,
     },
 }
 
@@ -287,9 +386,16 @@ impl Config {
             }
         }
         check_range("scroll.step", self.scroll.step, 1, 50)?;
+        check_range("scroll.dash_step", self.scroll.dash_step, 1, 100)?;
         check_range("overlay.font_size", self.overlay.font_size, 6, 72)?;
         check_range("overlay.opacity", self.overlay.opacity, 10, 100)?;
-        self.overlay.colours().map(|_| ())
+        self.overlay.colours(Appearance::Light).map(|_| ())?;
+        if self.ignore.apps.iter().any(|app| app.trim().is_empty()) {
+            return Err(ConfigError::EmptyEntry {
+                field: "ignore.apps",
+            });
+        }
+        Ok(())
     }
 
     /// The validated label alphabet.
@@ -342,19 +448,50 @@ mod tests {
         assert!(text.contains("hints = \"ctrl+space\""));
         assert!(text.contains("continuous = \"ctrl+shift+space\""));
         assert!(text.contains("semantic_click = false"));
+        assert!(text.contains("keys = \"nomouse\""));
         assert_eq!(Config::from_toml(&text).unwrap(), Config::default());
     }
 
     #[test]
     fn partial_override() {
         let config = Config::from_toml(
-            "[hints]\nalphabet = \"jkfd\"\naction = \"right-click\"\nscope = \"screen\"\n[scroll]\nstep = 5\n",
+            "[hints]\nalphabet = \"jkfd\"\naction = \"right-click\"\nscope = \"screen\"\n[scroll]\nstep = 5\ndash_step = 40\n",
         )
         .unwrap();
         assert_eq!(config.hints.action, ActionKind::RightClick);
         assert_eq!(config.hints.scope, Scope::Screen);
         assert_eq!(config.scroll.step, 5);
+        assert_eq!(config.scroll.dash_step, 40);
+        assert_eq!(Config::default().scroll.dash_step, 15);
         assert_eq!(config.overlay, OverlayConfig::default());
+    }
+
+    #[test]
+    fn homerow_key_bindings() {
+        let config = Config::from_toml("[hints]\nkeys = \"homerow\"\n").unwrap();
+        assert_eq!(config.hints.keys, KeyBindings::Homerow);
+        assert!(matches!(
+            Config::from_toml("[hints]\nkeys = \"vim\"\n"),
+            Err(ConfigError::Parse(_))
+        ));
+    }
+
+    #[test]
+    fn ignore_apps_parse_and_reject_blank_entries() {
+        assert_eq!(Config::default().ignore.apps, Vec::<String>::new());
+        let config =
+            Config::from_toml("[ignore]\napps = [\"org.gnome.Terminal\", \"kitty\"]\n").unwrap();
+        assert_eq!(config.ignore.apps, ["org.gnome.Terminal", "kitty"]);
+        assert!(matches!(
+            Config::from_toml("[ignore]\napps = [\"kitty\", \" \"]\n"),
+            Err(ConfigError::EmptyEntry {
+                field: "ignore.apps"
+            })
+        ));
+        assert!(matches!(
+            Config::from_toml("[ignore]\nprograms = []\n"),
+            Err(ConfigError::Parse(_))
+        ));
     }
 
     #[test]
@@ -390,6 +527,17 @@ mod tests {
             Config::from_toml("[scroll]\nstep = 0\n"),
             Err(ConfigError::OutOfRange { .. })
         ));
+        for dash_step in [0, 101] {
+            assert!(matches!(
+                Config::from_toml(&format!("[scroll]\ndash_step = {dash_step}\n")),
+                Err(ConfigError::OutOfRange {
+                    field: "scroll.dash_step",
+                    ..
+                })
+            ));
+        }
+        assert!(Config::from_toml("[scroll]\ndash_step = 100\n").is_ok());
+        assert!(Config::from_toml("[scroll]\ndash_step = 1\n").is_ok());
         assert!(matches!(
             Config::from_toml("[overlay]\nborder = \"red\"\n"),
             Err(ConfigError::Colour {
@@ -406,9 +554,72 @@ mod tests {
         assert_eq!(parse_colour("#ffd75"), None);
         assert_eq!(parse_colour("#gggggg"), None);
         assert_eq!(
-            OverlayConfig::default().colours().unwrap()[0],
+            OverlayConfig::default().colours(Appearance::Dark).unwrap()[0],
             [255, 215, 95]
         );
+    }
+
+    #[test]
+    fn each_theme_parses_and_sets_its_colours() {
+        let colours = |text: &str, appearance| {
+            Config::from_toml(text)
+                .unwrap()
+                .overlay
+                .colours(appearance)
+                .unwrap()
+        };
+        let light = Appearance::Light;
+        assert_eq!(Config::default().overlay.theme, Theme::Original);
+        assert_eq!(colours("", light)[0], [0xff, 0xd7, 0x5f]);
+        assert_eq!(
+            colours("[overlay]\ntheme = \"light\"\n", Appearance::Dark),
+            Theme::Light.palette(light)
+        );
+        let dark = colours("[overlay]\ntheme = \"dark\"\n", light);
+        assert_eq!(dark, Theme::Dark.palette(light));
+        // Dark labels: a dark background under light text.
+        assert!(dark[0].iter().all(|c| *c < 0x40) && dark[1].iter().all(|c| *c > 0xc0));
+        assert!(matches!(
+            Config::from_toml("[overlay]\ntheme = \"solarized\"\n"),
+            Err(ConfigError::Parse(_))
+        ));
+    }
+
+    #[test]
+    fn auto_follows_the_appearance() {
+        let auto = Config::from_toml("[overlay]\ntheme = \"auto\"\n")
+            .unwrap()
+            .overlay;
+        assert_eq!(
+            auto.colours(Appearance::Light).unwrap(),
+            Theme::Light.palette(Appearance::Light)
+        );
+        assert_eq!(
+            auto.colours(Appearance::Dark).unwrap(),
+            Theme::Dark.palette(Appearance::Dark)
+        );
+    }
+
+    #[test]
+    fn explicit_colours_override_the_theme() {
+        let overlay = Config::from_toml(
+            "[overlay]\ntheme = \"dark\"\nbackground = \"#102030\"\nborder = \"#ff0000\"\n",
+        )
+        .unwrap()
+        .overlay;
+        let dark = Theme::Dark.palette(Appearance::Light);
+        assert_eq!(
+            overlay.colours(Appearance::Light).unwrap(),
+            [[0x10, 0x20, 0x30], dark[1], dark[2], [0xff, 0, 0]]
+        );
+        // An override stays whatever the appearance under `auto`.
+        let auto = Config::from_toml("[overlay]\ntheme = \"auto\"\nforeground = \"#00ff00\"\n")
+            .unwrap()
+            .overlay;
+        assert_eq!(auto.colours(Appearance::Dark).unwrap()[1], [0, 0xff, 0]);
+        assert_eq!(auto.colours(Appearance::Light).unwrap()[1], [0, 0xff, 0]);
+        // The defaults serialise without colours, so `config init` keeps following the theme.
+        assert!(!Config::default().to_toml().contains("background"));
     }
 
     #[test]

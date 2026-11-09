@@ -77,6 +77,26 @@ wait_for() {
     done
 }
 
+# GTK animates a window's focus change (backdrop styles) for a moment after focus moves or the
+# overlay hands the keyboard back, so screenshots are compared once the screen is steady.
+# screen_matches <png> <out png>: takes a screenshot into <out png> and compares it with <png>.
+screen_matches() { grim "$2" && cmp -s "$1" "$2"; }
+# steady: a new screenshot equals <png>; otherwise it replaces <png> for the next try.
+steady() {
+    grim "$1.next"
+    if cmp -s "$1" "$1.next"; then return 0; fi
+    mv "$1.next" "$1"
+    sleep 0.1
+    return 1
+}
+# steady_screenshot <png>: a screenshot equal to one taken 100 ms later (tried for 3 s).
+steady_screenshot() {
+    grim "$1"
+    sleep 0.1
+    wait_for 3 steady "$1" || true
+    rm -f "$1.next"
+}
+
 # reap <pid> [seconds]: waits for a child with a deadline; kills it and fails on timeout.
 gone() { ! kill -0 "$1" 2>/dev/null; }
 reap() {
@@ -127,6 +147,8 @@ title_is() {
     current="$(title "$1")"
     [[ "$current" == "${2%\*}"* ]]
 }
+# title_matches <shell> <regex>: the title matches the extended regular expression.
+title_matches() { title "$1" | grep -qE "$2"; }
 has_window() { [[ -n "$(shell_window "$1" pid)" ]]; }
 focus() { swaymsg "[pid=$(shell_window "$1" pid)] focus" >/dev/null; sleep 0.2; }
 scans() { grep -c 'scan [0-9]*:' "$1" || true; }
@@ -211,17 +233,22 @@ for shell in xdg_shell xwayland; do
         fail "$shell: right click: no label"
     fi
 
-    echo "--- $shell: scroll mode"
+    echo "--- $shell: scroll mode (largest list active; j, G, gg, Tab)"
     focus "$shell"
     log="$tmp/scroll-$shell.log"
-    if run_hints "$log" scroll && label="$(grep -E 'hint [a-z]+ = ScrollArea' "$log" | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/')" && [[ -n "$label" ]]; then
-        wtype "$label"
+    if run_hints "$log" scroll && grep -qE 'hint [0-9] = ScrollArea' "$log"; then
         sleep 0.3
         wtype jjjj
-        sleep 0.3
+        wait_for 3 title_matches "$shell" '^scrolled: [1-9][0-9]* #' && down=1 || down=0
+        wtype -M shift g -m shift
+        wait_for 3 title_matches "$shell" '^scrolled: [0-9]+ \(bottom\) #' && bottom=1 || bottom=0
+        wtype gg
+        wait_for 3 title_matches "$shell" '^scrolled: 0 \(top\) #' && top=1 || top=0
+        wtype -k Tab jj
+        wait_for 3 title_matches "$shell" '^scrolled 2: [1-9]' && second=1 || second=0
         wtype -k Escape
         reap "$hints_pid" || true
-        if wait_for 3 title_is "$shell" "scrolled: *"; then pass "$shell: scroll landed ($(title "$shell"))"; else fail "$shell: scroll: '$(title "$shell")'"; fi
+        if ((down && bottom && top && second)); then pass "$shell: scroll landed; G, gg and Tab worked ($(title "$shell"))"; else fail "$shell: scroll: j=$down G=$bottom gg=$top Tab=$second, '$(title "$shell")'"; fi
     else
         kill "$hints_pid" 2>/dev/null || true
         fail "$shell: scroll: no scroll-area label"
@@ -230,18 +257,15 @@ done
 
 echo "--- labels are drawn, and removed when the session ends"
 focus xdg_shell
-sleep 0.3
-grim "$tmp/before-cancel.png"
+steady_screenshot "$tmp/before-cancel.png"
 log="$tmp/cancel.log"
 if run_hints "$log" hints; then
     sleep 0.3
     grim "$tmp/during-cancel.png"
     wtype -k Escape
     reap "$hints_pid" || true
-    sleep 0.3
-    grim "$tmp/after-cancel.png"
     if ! cmp -s "$tmp/before-cancel.png" "$tmp/during-cancel.png"; then pass "labels visible on screen while up"; else fail "no labels in the screenshot"; fi
-    if cmp -s "$tmp/before-cancel.png" "$tmp/after-cancel.png"; then pass "Escape left no overlay on screen"; else fail "the screen differs after Escape"; fi
+    if wait_for 3 screen_matches "$tmp/before-cancel.png" "$tmp/after-cancel.png"; then pass "Escape left no overlay on screen"; else fail "the screen differs after Escape"; fi
 else
     kill "$hints_pid" 2>/dev/null || true
     fail "cancel: no labels"
@@ -278,6 +302,125 @@ else
     fail "Sway bindsym did not reach the daemon"
 fi
 grep -oE 'labels shown [0-9]+ ms' "$daemon_log" | sed 's/^/  daemon: /' || true
+
+echo "--- toggle: the Sway binding pressed again dismisses the labels"
+focus xdg_shell
+steady_screenshot "$tmp/before-toggle.png"
+title_before="$(title xdg_shell)"
+before="$(scans "$daemon_log")"
+wtype -M ctrl -k space -m ctrl
+if wait_for 5 scans_at_least "$daemon_log" $((before + 1)); then
+    sleep 0.3
+    wtype -M ctrl -k space -m ctrl
+    if wait_for 5 grep -q 'cancelled' "$daemon_log"; then
+        if wait_for 3 screen_matches "$tmp/before-toggle.png" "$tmp/after-toggle.png" && [[ "$(title xdg_shell)" == "$title_before" ]]; then pass "binding twice: no overlay left, nothing clicked"; else fail "binding twice: the screen or title changed ('$(title xdg_shell)')"; fi
+    else
+        fail "binding twice: the session did not end"
+    fi
+else
+    fail "toggle: the binding did not reach the daemon"
+fi
+
+echo "--- focus-then-act: Tab twice, then Return, clicks the third label's button"
+focus xdg_shell
+before="$(scans "$daemon_log")"
+if "$bin" hints && wait_for 5 scans_at_least "$daemon_log" $((before + 1)); then
+    sleep 0.2
+    # The last scan's hints in label order: the third line names the third label's element.
+    third="$(awk '/scan [0-9]+:/ { n = 0 } /hint [a-z]+ = / { n++; if (n == 3) line = $0 } END { print line }' "$daemon_log" | sed -E 's/.*"(.*)"$/\1/')"
+    wtype -k Tab -k Tab -k Return
+    if [[ -n "$third" ]] && wait_for 3 title_is xdg_shell "left: $third #*"; then pass "Tab Tab Return clicked the third label ($third)"; else fail "focus-then-act: third '$third', title '$(title xdg_shell)'"; fi
+else
+    fail "focus-then-act: the daemon did not scan"
+fi
+
+echo "--- ignore.apps (Wayland app id and XWayland WM_CLASS) and \`nomouse reload\`"
+config="$XDG_CONFIG_HOME/nomouse/config.toml"
+mkdir -p "$XDG_CONFIG_HOME/nomouse"
+reloads() { grep -c 'config reloaded' "$daemon_log" || true; }
+reloads_at_least() { (($(reloads) >= $1)); }
+ignores() { grep -c 'the focused app is ignored' "$daemon_log" || true; }
+ignores_at_least() { (($(ignores) >= $1)); }
+before="$(reloads)"
+# GTK names the app after its program: app id "gtk_app.py" (native), WM_CLASS (XWayland).
+printf '[ignore]\napps = ["gtk_app.py"]\n' >"$config"
+# A reload restarts the platform (Wayland connection, virtual devices): give it time.
+if "$bin" reload && wait_for 15 reloads_at_least $((before + 1)); then
+    for shell in xdg_shell xwayland; do
+        focus "$shell"
+        before_scans="$(scans "$daemon_log")"
+        before_ignores="$(ignores)"
+        "$bin" hints
+        if wait_for 5 ignores_at_least $((before_ignores + 1)) && (($(scans "$daemon_log") == before_scans)); then
+            pass "$shell: \`nomouse hints\` over the ignored GTK app showed nothing"
+        else
+            fail "$shell: ignore.apps: $(($(ignores) - before_ignores)) ignore(s), $(($(scans "$daemon_log") - before_scans)) scan(s)"
+            wtype -k Escape
+        fi
+    done
+else
+    fail "reload: the daemon did not reload after \`nomouse reload\`"
+fi
+before="$(reloads)"
+rm "$config"
+if "$bin" reload && wait_for 15 reloads_at_least $((before + 1)); then
+    focus xdg_shell
+    before="$(scans "$daemon_log")"
+    if "$bin" hints && wait_for 5 scans_at_least "$daemon_log" $((before + 1)); then
+        sleep 0.2
+        wtype -k Escape
+        pass "without the ignore entry the app is labelled again"
+    else
+        fail "after removing the ignore entry: no scan"
+    fi
+else
+    fail "reload: removing the config did not reload"
+fi
+
+echo "--- overlay.theme = \"auto\" follows the appearance portal (a fake one) without a restart"
+portal_state="$tmp/color-scheme"
+echo 1 >"$portal_state"
+python3 "$root/scripts/e2e/fake_portal.py" "$portal_state" &
+pids+=($!)
+portal_up() {
+    dbus-send --session --dest=org.freedesktop.portal.Desktop --print-reply /org/freedesktop/portal/desktop \
+        org.freedesktop.portal.Settings.Read string:org.freedesktop.appearance string:color-scheme >/dev/null 2>&1
+}
+# label_kind <name>: shows the labels over the GTK app and prints label_colour.py's verdict on
+# the screenshot with labels against the one after Escape (the same window, focused).
+label_kind() {
+    local before_scans
+    focus xdg_shell
+    before_scans="$(scans "$daemon_log")"
+    "$bin" hints
+    if wait_for 5 scans_at_least "$daemon_log" $((before_scans + 1)); then
+        sleep 0.4
+        grim "$tmp/theme-$1.png"
+        wtype -k Escape
+        sleep 0.3
+        steady_screenshot "$tmp/theme-$1-after.png"
+        python3 "$root/scripts/e2e/label_colour.py" "$tmp/theme-$1-after.png" "$tmp/theme-$1.png"
+    else
+        echo "no scan"
+    fi
+}
+before="$(reloads)"
+printf '[overlay]\ntheme = "auto"\n' >"$config"
+if wait_for 10 portal_up && "$bin" reload && wait_for 15 reloads_at_least $((before + 1)); then
+    kind="$(label_kind dark)"
+    if [[ "$kind" == dark* ]]; then pass "portal prefers dark: dark labels ($kind)"; else fail "portal prefers dark: $kind"; fi
+    echo 2 >"$portal_state"
+    kind="$(label_kind light)"
+    if [[ "$kind" == light* ]]; then pass "portal switched to light, no reload: light labels ($kind)"; else fail "portal switched to light: $kind"; fi
+    echo "1 old" >"$portal_state"
+    kind="$(label_kind old)"
+    if [[ "$kind" == dark* ]]; then pass "a portal without ReadOne (Read only) still gives dark labels ($kind)"; else fail "old portal, dark: $kind"; fi
+else
+    fail "theme: the fake portal or the reload did not come up"
+fi
+before="$(reloads)"
+rm "$config"
+if ! { "$bin" reload && wait_for 15 reloads_at_least $((before + 1)); }; then fail "theme: removing the config did not reload"; fi
 
 # SIGTERM skips destructors, so the socket file stays; a client must treat it as no daemon.
 kill "$daemon_pid" 2>/dev/null || true

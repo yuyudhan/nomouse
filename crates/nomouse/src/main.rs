@@ -90,11 +90,15 @@ enum Command {
         #[arg(long)]
         action: Option<ActionKind>,
     },
-    /// Pick a scroll target, then scroll with j/k/h/l/d/u until Escape.
+    /// Scroll the largest scroll area with j/k/h/l/d/u (Shift: faster), gg/G for top and
+    /// bottom, Tab or a digit for another area, until Escape.
     Scroll,
     /// Search elements by name: type to filter, Enter clicks the best match, Tab then a label
     /// clicks another, Escape cancels.
     Search,
+    /// Make the running daemon re-read its configuration file now (it also re-reads it on its
+    /// own within a second or two of the file changing).
+    Reload,
     /// Check the session, accessibility, input and configuration.
     Doctor,
     /// Walk through the permissions nomouse needs: explain each, ask the OS, wait for it.
@@ -182,15 +186,30 @@ fn settings(config: &Config) -> Result<Settings, String> {
         alphabet: config.alphabet().map_err(|e| e.to_string())?,
         scope: config.hints.scope,
         scroll_step: i32::try_from(config.scroll.step).unwrap_or(3),
+        dash_step: i32::try_from(config.scroll.dash_step).unwrap_or(15),
+        keys: config.hints.keys,
+        ignore: config.ignore.apps.clone(),
     })
 }
 
-fn describe(outcome: Outcome) -> String {
+fn describe(outcome: &Outcome) -> String {
     match outcome {
         Outcome::Performed(count) => format!("performed {count} action(s)\n"),
         Outcome::Cancelled => "cancelled\n".to_owned(),
         Outcome::NoElements => "nothing to label in the focused window\n".to_owned(),
+        Outcome::Ignored(entry) => {
+            format!("the focused app is ignored (ignore.apps entry {entry:?})\n")
+        }
     }
+}
+
+/// What the daemon is asked for besides its own hotkeys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Request {
+    /// Run an activation.
+    Run(Mode),
+    /// Re-read the configuration file.
+    Reload,
 }
 
 /// Runs `mode`: hands it to the running daemon when there is one (unless `standalone`), so
@@ -199,7 +218,7 @@ fn activate(mode: Mode, standalone: bool) -> Result<String, String> {
     #[cfg(unix)]
     if !standalone {
         let path = ipc::current_path().map_err(|error| format!("command socket: {error}"))?;
-        match ipc::send(&path, mode) {
+        match ipc::send(&path, Request::Run(mode)) {
             Ok(()) => return Ok(String::new()),
             Err(ipc::SendError::NoDaemon(_)) => {}
             Err(error) => return Err(error.to_string()),
@@ -211,19 +230,46 @@ fn activate(mode: Mode, standalone: bool) -> Result<String, String> {
     let config = load_or_default()?;
     let settings = settings(&config)?;
     let mut platform = backend::platform(&config).map_err(|e| e.to_string())?;
-    let outcome =
-        run::activate(platform.as_mut(), &settings, mode, started).map_err(|e| e.to_string())?;
-    Ok(describe(outcome))
+    // A one-shot run registers no hotkey and has no command socket: Escape or an action ends it.
+    let outcome = run::activate(platform.as_mut(), &settings, mode, started, &|| false)
+        .map_err(|e| e.to_string())?;
+    Ok(describe(&outcome))
 }
 
-fn daemon() -> Result<String, String> {
-    let path = lock::lock_path(
-        std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
-        std::env::var("USER").ok(),
-    );
-    let _lock = lock::acquire(&path).map_err(|e| e.to_string())?;
-    first_run::before_daemon()?;
-    let config = load_or_default()?;
+/// `nomouse reload`: asks the running daemon to re-read its configuration.
+fn reload_daemon() -> Result<String, String> {
+    #[cfg(unix)]
+    {
+        let path = ipc::current_path().map_err(|error| format!("command socket: {error}"))?;
+        match ipc::send(&path, Request::Reload) {
+            Ok(()) => Ok("the daemon is reloading its configuration\n".to_owned()),
+            Err(ipc::SendError::NoDaemon(_)) => Err(
+                "no daemon is running (a daemon reads the configuration when it starts)".to_owned(),
+            ),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        Err(
+            "this system has no command socket; the daemon re-reads the configuration file \
+             within two seconds of it changing"
+                .to_owned(),
+        )
+    }
+}
+
+/// The daemon's live state: what a configuration reload replaces.
+struct Running {
+    config: Config,
+    settings: Settings,
+    modes: Vec<(nomouse_core::HotkeyId, Mode)>,
+    platform: Box<dyn Platform>,
+}
+
+/// Creates the platform for `config` and registers its hotkeys (a chord that cannot be
+/// registered is logged and skipped).
+fn start(config: Config) -> Result<Running, String> {
     let settings = settings(&config)?;
     let mut platform = backend::platform(&config).map_err(|e| e.to_string())?;
     let action = config.hints.action;
@@ -240,6 +286,100 @@ fn daemon() -> Result<String, String> {
             Err(error) => tracing::warn!("{hotkey}: {error}"),
         }
     }
+    Ok(Running {
+        config,
+        settings,
+        modes,
+        platform,
+    })
+}
+
+/// Re-reads the configuration. An unreadable or invalid file, or an unchanged one, keeps the
+/// running state. Otherwise the old platform goes first (releasing its hotkeys and overlay)
+/// and a new one starts with the new configuration, or with the old one again when the new
+/// one fails to start.
+///
+/// # Errors
+/// When neither configuration can start a platform.
+fn reload(running: Running) -> Result<Running, String> {
+    let config = match load_or_default() {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::warn!("config reload: {error}; keeping the running configuration");
+            return Ok(running);
+        }
+    };
+    if config == running.config {
+        tracing::info!("config reload: unchanged");
+        return Ok(running);
+    }
+    let previous = running.config.clone();
+    drop(running);
+    match start(config) {
+        Ok(running) => {
+            tracing::info!(
+                "config reloaded: {} hotkey(s) registered",
+                running.modes.len()
+            );
+            Ok(running)
+        }
+        Err(error) => {
+            tracing::warn!("config reload: {error}; restoring the previous configuration");
+            start(previous)
+        }
+    }
+}
+
+/// How often the daemon looks at the configuration file's modification time.
+const WATCH_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Notices changes to the configuration file (written, created or removed) by its
+/// modification time, looked at no more than once per [`WATCH_INTERVAL`].
+struct Watch {
+    path: Option<PathBuf>,
+    stamp: Option<std::time::SystemTime>,
+    checked: Instant,
+}
+
+fn modified(path: Option<&std::path::Path>) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path?)
+        .and_then(|meta| meta.modified())
+        .ok()
+}
+
+impl Watch {
+    fn new(path: Option<PathBuf>) -> Self {
+        Self {
+            stamp: modified(path.as_deref()),
+            path,
+            checked: Instant::now(),
+        }
+    }
+
+    /// Whether the file changed since the last look.
+    fn changed(&mut self) -> bool {
+        if self.checked.elapsed() < WATCH_INTERVAL {
+            return false;
+        }
+        self.checked = Instant::now();
+        let stamp = modified(self.path.as_deref());
+        if stamp == self.stamp {
+            return false;
+        }
+        self.stamp = stamp;
+        true
+    }
+}
+
+fn daemon() -> Result<String, String> {
+    let path = lock::lock_path(
+        std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
+        std::env::var("USER").ok(),
+    );
+    let _lock = lock::acquire(&path).map_err(|e| e.to_string())?;
+    first_run::before_daemon()?;
+    let mut watch = Watch::new(config::default_path());
+    let running = start(load_or_default()?)?;
     #[cfg(unix)]
     {
         let bound = ipc::current_path().and_then(|socket| match ipc::Server::bind(&socket) {
@@ -251,9 +391,9 @@ fn daemon() -> Result<String, String> {
         });
         let (socket, server) = match bound {
             Ok(bound) => bound,
-            Err(error) if !modes.is_empty() => {
+            Err(error) if !running.modes.is_empty() => {
                 tracing::warn!("command socket: {error}");
-                return serve(platform.as_mut(), &settings, &modes, &NoRequests);
+                return serve(running, &NoRequests, &mut watch);
             }
             Err(error) => {
                 return Err(format!(
@@ -263,90 +403,121 @@ fn daemon() -> Result<String, String> {
         };
         tracing::info!(
             "{} daemon ready with {} hotkey(s) and commands on {}",
-            platform.name(),
-            modes.len(),
+            running.platform.name(),
+            running.modes.len(),
             socket.display()
         );
-        serve(platform.as_mut(), &settings, &modes, &server)
+        serve(running, &server, &mut watch)
     }
     #[cfg(not(unix))]
     {
-        if modes.is_empty() {
+        if running.modes.is_empty() {
             return Err("no hotkey could be registered".to_owned());
         }
         tracing::info!(
             "{} daemon ready with {} hotkey(s)",
-            platform.name(),
-            modes.len()
+            running.platform.name(),
+            running.modes.len()
         );
-        serve(platform.as_mut(), &settings, &modes, &NoRequests)
+        serve(running, &NoRequests, &mut watch)
     }
 }
 
 /// How often the daemon checks the command socket between hotkey events.
 const COMMAND_POLL: Duration = Duration::from_millis(30);
 
-/// Where the daemon's mode requests (besides its own hotkeys) come from.
+/// Where the daemon's requests (besides its own hotkeys) come from.
 trait Requests {
     /// The oldest request waiting.
-    fn next(&self) -> Option<Mode>;
-    /// Drops the requests made while a session ran; returns how many.
-    fn discard(&self) -> usize;
+    fn next(&self) -> Option<Request>;
+    /// Drops the activations requested while a session ran; returns how many, and whether a
+    /// reload was requested meanwhile.
+    fn discard(&self) -> (usize, bool);
 }
 
 /// No command socket.
 struct NoRequests;
 
 impl Requests for NoRequests {
-    fn next(&self) -> Option<Mode> {
+    fn next(&self) -> Option<Request> {
         None
     }
 
-    fn discard(&self) -> usize {
-        0
+    fn discard(&self) -> (usize, bool) {
+        (0, false)
     }
 }
 
 #[cfg(unix)]
 impl Requests for ipc::Server {
-    fn next(&self) -> Option<Mode> {
+    fn next(&self) -> Option<Request> {
         self.poll()
     }
 
-    fn discard(&self) -> usize {
+    fn discard(&self) -> (usize, bool) {
         self.discard_pending()
     }
 }
 
 fn serve(
-    platform: &mut dyn Platform,
-    settings: &Settings,
-    modes: &[(nomouse_core::HotkeyId, Mode)],
+    mut running: Running,
     requests: &dyn Requests,
+    watch: &mut Watch,
 ) -> Result<String, String> {
     loop {
-        let event = platform
+        let event = running
+            .platform
             .next_event(COMMAND_POLL)
             .map_err(|e| e.to_string())?;
         let started = Instant::now();
-        let mode = match event {
-            Some(InputEvent::Hotkey(id)) => modes
+        // The daemon's own hotkeys first, then the command socket, then the file watch.
+        let request = match event {
+            Some(InputEvent::Hotkey(id)) => running
+                .modes
                 .iter()
                 .find(|(known, _)| *known == id)
-                .map(|(_, mode)| *mode),
+                .map(|(_, mode)| Request::Run(*mode)),
             _ => requests.next(),
+        }
+        .or_else(|| {
+            watch.changed().then(|| {
+                tracing::info!("the config file changed");
+                Request::Reload
+            })
+        });
+        let mode = match request {
+            Some(Request::Run(mode)) => mode,
+            Some(Request::Reload) => {
+                running = reload(running)?;
+                continue;
+            }
+            None => continue,
         };
-        let Some(mode) = mode else {
-            continue;
+        // An activation requested on the command socket while the labels are up (the
+        // compositor binding pressed again) toggles them off; a reload waits for the end.
+        let reload_requested = std::cell::Cell::new(false);
+        let dismissed = || match requests.next() {
+            Some(Request::Run(_)) => true,
+            Some(Request::Reload) => {
+                reload_requested.set(true);
+                false
+            }
+            None => false,
         };
-        match run::activate(platform, settings, mode, started) {
-            Ok(outcome) => tracing::info!("{}", describe(outcome).trim_end()),
+        let Running {
+            platform, settings, ..
+        } = &mut running;
+        match run::activate(platform.as_mut(), settings, mode, started, &dismissed) {
+            Ok(outcome) => tracing::info!("{}", describe(&outcome).trim_end()),
             // A lost display surfaces again from `next_event` and ends the daemon there.
             Err(error) => tracing::warn!("{error}"),
         }
-        let ignored = requests.discard();
+        let (ignored, reload_pending) = requests.discard();
         if ignored > 0 {
             tracing::info!("ignored {ignored} request(s) made while the session ran");
+        }
+        if reload_pending || reload_requested.get() {
+            running = reload(running)?;
         }
     }
 }
@@ -366,6 +537,12 @@ fn doctor() -> Result<String, String> {
     };
     let mut checks = backend::doctor(&config);
     checks.push(("config".to_owned(), status));
+    let ignored = if config.ignore.apps.is_empty() {
+        "none".to_owned()
+    } else {
+        config.ignore.apps.join(", ")
+    };
+    checks.push(("ignored apps".to_owned(), Ok(ignored)));
     let mut out = format!("platform: {}\n", backend::TARGET_OS);
     let mut failed = false;
     for (name, result) in &checks {
@@ -417,6 +594,7 @@ fn run_command(command: Command, standalone: bool) -> Result<String, String> {
         }
         Command::Scroll => activate(Mode::Scroll, standalone),
         Command::Search => activate(Mode::Search, standalone),
+        Command::Reload => reload_daemon(),
         Command::Doctor => doctor(),
         Command::Setup => first_run::setup_command(),
         Command::Config { command } => config_command(command),

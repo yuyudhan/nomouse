@@ -9,6 +9,30 @@ the release's section; add entries under Unreleased as changes land.
 
 ### Added
 
+- Focus-then-act: a highlight starts on the first label; Tab, ↓ and Ctrl-N move it forward,
+  Shift-Tab, ↑ and Ctrl-P back, and Return acts on it (holding any modifier pressed with
+  Return). The highlighted label is drawn in inverted colours on Linux.
+- `hints.keys = "homerow"`: Homerow's bindings; a typed label highlights, Return clicks,
+  Return twice double clicks, Shift-Return right clicks, Cmd-Return cmd-clicks.
+- Pressing the activation hotkey again (or running `nomouse hints` again on Wayland) while the
+  labels are shown dismisses them.
+- Search ignores spaces (in the query and the text), a query of only `*` or `;` labels every
+  element, and matching covers an element's description (tooltips), value (text field
+  contents, slider positions; never password fields) and role (`button`, `check box`), names
+  first. Linux reads descriptions and values over AT-SPI.
+- Scroll mode starts on the largest scrollable area and outlines it; areas are numbered, and
+  Tab, Shift-Tab or a digit switch between them. `gg` and `G` go to the top and bottom, and
+  Shift with `h` `j` `k` `l` scrolls faster (`scroll.dash_step`, default 15 wheel steps).
+- `ignore.apps`: apps (by macOS bundle id, Wayland app id, X11 `WM_CLASS` or process name)
+  where the hotkeys and commands show no labels; `nomouse doctor` lists them.
+- The daemon re-reads `config.toml` when it changes, or at once on `nomouse reload`; an
+  invalid file is logged and the running settings stay.
+- `overlay.theme`: `original` (the yellow labels, default), `light`, `dark`, or `auto`, which
+  follows the desktop's light/dark preference (the XDG portal `color-scheme` on Linux, read
+  before each activation). `background`, `foreground`, `typed_foreground` and `border` now
+  override the theme's colour only when set.
+- Continuous mode ends after a left click on a text field, so the keyboard stays there for
+  typing. On Linux, editable text objects (GTK 3 entries) now count as text fields.
 - Hint mode: a hotkey labels every clickable element of the focused window from the
   accessibility tree; typing a label clicks it (left, right, double, middle, move, semantic
   click), with a continuous mode that keeps hinting after each click.

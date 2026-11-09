@@ -157,8 +157,8 @@ scans() { grep -c 'scan [0-9]*:' "$1" || true; }
 scans_at_least() { (($(scans "$1") >= $2)); }
 # label_for <log> <accessible name>: the label of the last scan's hint for that name.
 label_for() { grep -E "hint [a-z]+ = [A-Za-z]+ \"$2\"$" "$1" | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
-# label_for_role <log> <role>: the label of the last scan's first hint with that role.
-label_for_role() { grep -E "hint [a-z]+ = $2 " "$1" | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
+# area_labels <log>: how many scroll areas the last scroll-mode scan labelled (with digits).
+area_labels() { grep -cE 'hint [0-9] = ScrollArea ' "$1" || true; }
 # title_is <window> <prefix>*: the title starts with the literal prefix; callers write it as
 # a glob such as "left: Button 1 #*" (a trailing `*` is the only wildcard used).
 title_is() {
@@ -166,6 +166,8 @@ title_is() {
     current="$(title "$1")"
     [[ "$current" == "${2%\*}"* ]]
 }
+# title_matches <window> <regex>: the title matches the extended regular expression.
+title_matches() { title "$1" | grep -qE "$2"; }
 
 # run_hints <log> <args...>: starts `nomouse hints`, waits for its first scan.
 run_hints() {
@@ -219,6 +221,31 @@ else
     fail "continuous mode (ok=$continuous_ok, clicks $before -> $after)"
 fi
 
+echo "--- continuous mode ends after clicking a text field; the typed text lands in it"
+focus "$gtk_win"
+log="$tmp/continuous-field.log"
+if run_hints "$log" hints --continuous; then
+    xdotool type --delay 20 "$(label_for "$log" "Button 1")"
+    if wait_for 3 title_is "$gtk_win" "left: Button 1 #*" && wait_for 5 scans_at_least "$log" 2 && wait_for 5 overlay_viewable; then
+        xdotool type --delay 20 "$(label_for "$log" "Note")"
+        if reap "$hints_pid" 5; then
+            xdotool type --delay 20 "hello"
+            if wait_for 3 title_is "$gtk_win" "typed: hello #*"; then
+                pass "continuous mode ended at the text field and the typed text went into it"
+            else
+                fail "after the text field click the title is '$(title "$gtk_win")'"
+            fi
+        else
+            fail "continuous mode kept running after clicking the text field ($(grep -E '"Note"$' "$log" | tail -n1))"
+        fi
+    else
+        fail "continuous mode: the first click or the re-scan did not happen"
+        kill "$hints_pid" 2>/dev/null || true
+    fi
+else
+    fail "continuous mode before the text field: no labels"
+fi
+
 echo "--- right click"
 focus "$gtk_win"
 log="$tmp/right.log"
@@ -240,6 +267,46 @@ if run_hints "$log" hints; then
 else
     fail "ctrl+click: no labels"
 fi
+
+echo "--- focus-then-act: Tab twice, then Return, clicks the third label's button"
+focus "$gtk_win"
+log="$tmp/focus.log"
+if run_hints "$log" hints; then
+    # Hints are logged in label order; the highlight starts on the first.
+    third="$(grep -E 'hint [a-z]+ = ' "$log" | sed -n 3p | sed -E 's/.*"(.*)"$/\1/')"
+    xdotool key --delay 30 Tab Tab Return
+    reap "$hints_pid" || true
+    if [[ -n "$third" ]] && wait_for 3 title_is "$gtk_win" "left: $third #*"; then pass "Tab Tab Return clicked the third label ($third)"; else fail "focus-then-act: third '$third', title '$(title "$gtk_win")'"; fi
+else
+    fail "focus-then-act: no labels"
+fi
+
+echo "--- Homerow bindings: a label highlights, Return clicks, Shift-Return right clicks"
+mkdir -p "$XDG_CONFIG_HOME/nomouse"
+printf '[hints]\nkeys = "homerow"\n' >"$XDG_CONFIG_HOME/nomouse/config.toml"
+focus "$gtk_win"
+log="$tmp/homerow.log"
+if run_hints "$log" hints; then
+    xdotool type --delay 20 "$(label_for "$log" "Button 8")"
+    sleep 0.2
+    still_open=$(kill -0 "$hints_pid" 2>/dev/null && echo 1 || echo 0)
+    xdotool key Return
+    reap "$hints_pid" || true
+    if ((still_open)) && wait_for 3 title_is "$gtk_win" "left: Button 8 #*"; then pass "homerow: the label waited for Return, which clicked"; else fail "homerow Return: open after label=$still_open, title '$(title "$gtk_win")'"; fi
+else
+    fail "homerow Return: no labels"
+fi
+focus "$gtk_win"
+log="$tmp/homerow-right.log"
+if run_hints "$log" hints; then
+    xdotool type --delay 20 "$(label_for "$log" "Button 3")"
+    xdotool key shift+Return
+    reap "$hints_pid" || true
+    if wait_for 3 title_is "$gtk_win" "right: Button 3 #*"; then pass "homerow: Shift-Return right clicked"; else fail "homerow Shift-Return: title '$(title "$gtk_win")'"; fi
+else
+    fail "homerow Shift-Return: no labels"
+fi
+rm "$XDG_CONFIG_HOME/nomouse/config.toml"
 
 echo "--- search mode: type a name, Enter clicks the best match"
 focus "$gtk_win"
@@ -267,6 +334,27 @@ else
     fail "search Tab: no search box"
 fi
 
+echo "--- search mode: a button whose only text is its tooltip is found (query with spaces)"
+focus "$gtk_win"
+log="$tmp/tooltip-hints.log"
+if run_hints "$log" hints; then
+    # The icon button has no accessible name: only its description (tooltip) holds text.
+    grep -qE 'hint [a-z]+ = Button ""$' "$log" && nameless=1 || nameless=0
+    xdotool key Escape
+    reap "$hints_pid" || true
+else
+    nameless=0
+fi
+log="$tmp/search-tooltip.log"
+if run_hints "$log" search; then
+    xdotool type --delay 20 "keep a copy"
+    xdotool key Return
+    reap "$hints_pid" || true
+    if ((nameless)) && wait_for 3 title_is "$gtk_win" "left: tooltip button #*"; then pass "search found the tooltip-only button by its description"; else fail "search by tooltip: nameless=$nameless, title '$(title "$gtk_win")'"; fi
+else
+    fail "search by tooltip: no search box"
+fi
+
 echo "--- semantic click (AT-SPI do_action)"
 mkdir -p "$XDG_CONFIG_HOME/nomouse"
 printf '[hints]\nsemantic_click = true\n' >"$XDG_CONFIG_HOME/nomouse/config.toml"
@@ -288,22 +376,27 @@ else
 fi
 rm "$XDG_CONFIG_HOME/nomouse/config.toml"
 
-echo "--- scroll mode: the scroll area is the target"
+echo "--- scroll mode: the largest list is active; j, G, gg, then Tab to the second list"
 focus "$gtk_win"
 log="$tmp/scroll.log"
 if run_hints "$log" scroll; then
-    label="$(label_for_role "$log" ScrollArea)"
-    rows="$(grep -cE 'hint [a-z]+ = [A-Za-z]+ "Row [0-9]+"$' "$log" || true)"
-    xdotool type --delay 20 "$label"
+    areas="$(area_labels "$log")"
+    rows="$(grep -cE 'hint [a-z0-9]+ = [A-Za-z]+ "Row [0-9]+"$' "$log" || true)"
     sleep 0.2
     xdotool key --delay 30 j j j
-    wait_for 3 title_is "$gtk_win" "scrolled: *" && scrolled=1 || scrolled=0
+    wait_for 3 title_matches "$gtk_win" '^scrolled: [1-9][0-9]* #' && down=1 || down=0
+    xdotool key shift+g
+    wait_for 3 title_matches "$gtk_win" '^scrolled: [0-9]+ \(bottom\) #' && bottom=1 || bottom=0
+    xdotool key --delay 30 g g
+    wait_for 3 title_matches "$gtk_win" '^scrolled: 0 \(top\) #' && top=1 || top=0
+    xdotool key --delay 30 Tab j j
+    wait_for 3 title_matches "$gtk_win" '^scrolled 2: [1-9]' && second=1 || second=0
     xdotool key Escape
     reap "$hints_pid" || true
-    if ((scrolled)) && [[ -n "$label" ]] && ((rows == 0)); then
-        pass "scroll mode labelled the scroll area and scrolled it ($(title "$gtk_win"))"
+    if ((areas == 2 && rows == 0 && down && bottom && top && second)); then
+        pass "scroll mode: j scrolled the large list, G reached its bottom, gg its top, Tab j scrolled the second list ($(title "$gtk_win"))"
     else
-        fail "scroll mode: label '$label', $rows row hints, title '$(title "$gtk_win")'"
+        fail "scroll mode: $areas area labels, $rows row hints, j=$down G=$bottom gg=$top Tab=$second, title '$(title "$gtk_win")'"
     fi
 else
     fail "scroll mode: no labels"
@@ -348,6 +441,99 @@ if timeout 5 "$bin" hints && wait_for 5 scans_at_least "$daemon_log" $((before_s
 else
     fail "command socket: the daemon did not scan after \`nomouse hints\`"
 fi
+
+echo "--- toggle: the hotkey (and \`nomouse hints\`) pressed again dismisses the labels"
+focus "$gtk_win"
+before_title="$(title "$gtk_win")"
+before_scans="$(scans "$daemon_log")"
+xdotool key ctrl+space
+if wait_for 5 scans_at_least "$daemon_log" $((before_scans + 1)) && wait_for 5 overlay_viewable; then
+    xdotool key ctrl+space
+    if wait_for 3 no_overlay_viewable && [[ "$(title "$gtk_win")" == "$before_title" ]]; then pass "hotkey twice: no overlay left, nothing clicked"; else fail "hotkey twice: overlay still viewable or title changed to '$(title "$gtk_win")'"; fi
+else
+    fail "hotkey toggle: no labels after the first press"
+fi
+focus "$gtk_win"
+before_scans="$(scans "$daemon_log")"
+if timeout 5 "$bin" hints && wait_for 5 scans_at_least "$daemon_log" $((before_scans + 1)) && wait_for 5 overlay_viewable; then
+    timeout 5 "$bin" hints || true
+    if wait_for 3 no_overlay_viewable; then pass "\`nomouse hints\` twice: no overlay left"; else fail "\`nomouse hints\` twice: overlay still viewable"; fi
+else
+    fail "socket toggle: no labels after the first \`nomouse hints\`"
+fi
+
+echo "--- ignore.apps, \`nomouse reload\` and the config file watch (the running daemon)"
+config="$XDG_CONFIG_HOME/nomouse/config.toml"
+mkdir -p "$XDG_CONFIG_HOME/nomouse"
+reloads() { grep -c 'config reloaded' "$daemon_log" || true; }
+reloads_at_least() { (($(reloads) >= $1)); }
+ignores() { grep -c 'the focused app is ignored' "$daemon_log" || true; }
+ignores_at_least() { (($(ignores) >= $1)); }
+# last_labels: the labels of the daemon's latest scan, one per line.
+last_labels() {
+    awk '/scan [0-9]+:/ { start = NR } { line[NR] = $0 } END { for (i = start + 1; i <= NR; i++) print line[i] }' "$daemon_log" |
+        grep -oE 'hint [a-z]+ = ' | cut -d' ' -f2
+}
+before="$(reloads)"
+# GTK names the window after its program: WM_CLASS "gtk_app.py", "Gtk_app.py".
+printf '[ignore]\napps = ["gtk_app.py"]\n' >"$config"
+# A reload restarts the platform (X connection, hotkeys), which takes a moment on a busy host.
+if timeout 5 "$bin" reload && wait_for 15 reloads_at_least $((before + 1)); then
+    focus "$gtk_win"
+    before_scans="$(scans "$daemon_log")"
+    before_ignores="$(ignores)"
+    xdotool key ctrl+space
+    if wait_for 5 ignores_at_least $((before_ignores + 1)) && ! overlay_viewable && (($(scans "$daemon_log") == before_scans)); then
+        pass "ignore.apps: the hotkey over the ignored GTK app showed nothing"
+    else
+        fail "ignore.apps: $(($(ignores) - before_ignores)) ignore(s), $(($(scans "$daemon_log") - before_scans)) scan(s)"
+        xdotool key Escape
+    fi
+    if "$bin" doctor 2>/dev/null | grep -q 'ignored apps: gtk_app.py$'; then pass "doctor lists the ignored app"; else fail "doctor: $("$bin" doctor 2>&1 | grep 'ignored apps')"; fi
+else
+    fail "reload: the daemon did not reload after \`nomouse reload\`"
+fi
+kept() { grep -c 'keeping the running configuration' "$daemon_log" || true; }
+kept_at_least() { (($(kept) >= $1)); }
+before="$(kept)"
+# i and o are not label characters: the file is invalid and the daemon keeps its settings.
+printf '[hints]\nalphabet = "qwertyuiop"\n' >"$config"
+if timeout 5 "$bin" reload && wait_for 15 kept_at_least $((before + 1)); then pass "nomouse reload: an invalid config is reported and the running settings stay"; else fail "nomouse reload: no report of the invalid config"; fi
+before="$(reloads)"
+printf '[hints]\nalphabet = "qwertyup"\n' >"$config"
+if timeout 5 "$bin" reload && wait_for 15 reloads_at_least $((before + 1)); then
+    focus "$gtk_win"
+    before_scans="$(scans "$daemon_log")"
+    xdotool key ctrl+space
+    if wait_for 5 scans_at_least "$daemon_log" $((before_scans + 1)) && wait_for 5 overlay_viewable; then
+        labels="$(last_labels)"
+        xdotool key Escape
+        if [[ -n "$labels" ]] && ! grep -qvE '^[qwertyup]+$' <<<"$labels"; then pass "nomouse reload: the next labels use the new alphabet ($(tr '\n' ' ' <<<"$labels" | cut -c1-40)...)"; else fail "nomouse reload: labels '$(tr '\n' ' ' <<<"$labels")'"; fi
+    else
+        fail "nomouse reload: no labels after the hotkey"
+    fi
+else
+    fail "nomouse reload: the daemon did not reload"
+fi
+before="$(reloads)"
+printf '[hints]\nalphabet = "zxcvbnm"\n' >"$config"
+if wait_for 15 reloads_at_least $((before + 1)); then
+    focus "$gtk_win"
+    before_scans="$(scans "$daemon_log")"
+    xdotool key ctrl+space
+    if wait_for 5 scans_at_least "$daemon_log" $((before_scans + 1)) && wait_for 5 overlay_viewable; then
+        labels="$(last_labels)"
+        xdotool key Escape
+        if [[ -n "$labels" ]] && ! grep -qvE '^[zxcvbnm]+$' <<<"$labels"; then pass "file watch: an edited config applies without \`nomouse reload\`"; else fail "file watch: labels '$(tr '\n' ' ' <<<"$labels")'"; fi
+    else
+        fail "file watch: no labels after the hotkey"
+    fi
+else
+    fail "file watch: the daemon did not notice the edited config"
+fi
+before="$(reloads)"
+rm "$config"
+wait_for 15 reloads_at_least $((before + 1)) || fail "file watch: removing the config did not reload the defaults"
 
 if ((chromium)); then
     chrome="$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)"

@@ -7,7 +7,7 @@ use std::io::Read;
 use kbvm::lookup::LookupTable;
 use kbvm::xkb::diagnostic::Diagnostic;
 use kbvm::{GroupIndex, Keycode, ModifierMask};
-use nomouse_core::{InputEvent, Rect};
+use nomouse_core::{InputEvent, Modifiers, Rect};
 use wayland_client::globals::GlobalListContents;
 use wayland_client::protocol::{
     wl_buffer, wl_compositor, wl_keyboard, wl_output, wl_region, wl_registry, wl_seat, wl_shm,
@@ -23,7 +23,7 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1, zwlr_virtual_pointer_v1,
 };
 
-use crate::x11::keys::key_press;
+use crate::x11::keys::{key_press, modifiers};
 
 /// One output (monitor) and what is known of its logical geometry.
 #[derive(Debug)]
@@ -88,6 +88,9 @@ pub(crate) struct Keyboard {
     pub text: String,
     table: LookupTable,
     mods: ModifierMask,
+    /// Depressed and latched modifiers (locks excluded), in the core X mask layout: the real
+    /// modifiers come first in every keymap xkbcommon writes.
+    held: u32,
     group: GroupIndex,
 }
 
@@ -170,6 +173,7 @@ impl Keyboard {
             table: keymap.to_builder().build_lookup_table(),
             text,
             mods: ModifierMask(0),
+            held: 0,
             group: GroupIndex(0),
         })
     }
@@ -183,7 +187,13 @@ impl Keyboard {
         group: u32,
     ) {
         self.mods = ModifierMask(depressed | latched | locked);
+        self.held = depressed | latched;
         self.group = GroupIndex(group);
+    }
+
+    /// The modifiers held now.
+    pub(crate) fn modifiers(&self) -> Modifiers {
+        modifiers(u16::try_from(self.held & 0xff).unwrap_or(0))
     }
 
     /// The keysym of evdev key `key` with the current modifiers and group.
@@ -359,8 +369,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                     "key {key} = keysym {keysym:#x} {press:?} (overlay focused: {})",
                     state.focused
                 );
+                let held = state
+                    .layout
+                    .as_ref()
+                    .map_or(Modifiers::NONE, Keyboard::modifiers);
                 if let Some(press) = press.filter(|_| state.focused) {
-                    state.pending.push_back(InputEvent::Key(press));
+                    state.pending.push_back(InputEvent::Key(press.with(held)));
                 }
             }
             _ => {}

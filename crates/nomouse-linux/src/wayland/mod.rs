@@ -14,8 +14,7 @@ mod state;
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
-use nomouse_core::search::search_box_anchor;
-use nomouse_core::{Action, Hint, InputEvent, PlatformError, Rect};
+use nomouse_core::{Action, Frame, InputEvent, PlatformError, Rect};
 use wayland_client::globals::{GlobalList, registry_queue_init};
 use wayland_client::protocol::{wl_compositor, wl_output, wl_seat, wl_shm};
 use wayland_client::{Connection, EventQueue, Proxy};
@@ -27,7 +26,7 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_man
 use self::input::{Step, Uinput, Virtual};
 use self::state::{State, Surface};
 use crate::x11::input::plan;
-use crate::x11::render::{Label, Renderer};
+use crate::x11::render::Renderer;
 
 pub(crate) use self::input::uinput_writable;
 
@@ -250,6 +249,11 @@ impl Wayland {
         bounding(self.outputs())
     }
 
+    /// Draws labels with `style` from now on.
+    pub(crate) const fn set_style(&mut self, style: crate::x11::render::Style) {
+        self.renderer.set_style(style);
+    }
+
     fn dispatch(&mut self) -> Result<(), PlatformError> {
         self.queue.dispatch_pending(&mut self.state).map_err(lost)?;
         self.queue.flush().map_err(lost)
@@ -400,18 +404,12 @@ impl Wayland {
         Ok(())
     }
 
-    /// Shows `hints` on the outputs they lie on and takes the keyboard. With a `query`
-    /// (search-by-text) a search box `/query` is drawn near the top centre of the output of
-    /// the best match (the first hint), or of the first output when nothing matches.
+    /// Shows `frame` (its hints on the outputs they lie on, the highlight and the search box;
+    /// see [`Renderer::frame`]) and takes the keyboard.
     ///
     /// # Errors
     /// When the surfaces cannot be created or drawn.
-    pub(crate) fn show(
-        &mut self,
-        hints: &[Hint],
-        typed: &str,
-        query: Option<&str>,
-    ) -> Result<(), PlatformError> {
+    pub(crate) fn show(&mut self, frame: &Frame<'_>) -> Result<(), PlatformError> {
         self.dispatch()?;
         self.ensure_surfaces()?;
         let outputs: Vec<(u32, Rect)> = self
@@ -423,39 +421,8 @@ impl Wayland {
         if outputs.is_empty() {
             return Err(PlatformError::Backend("no outputs".to_owned()));
         }
-        let typed = typed.chars().count();
-        let mut per_output: Vec<Vec<Label>> = vec![Vec::new(); outputs.len()];
-        let mut first_output = None;
-        for hint in hints {
-            let bounds = hint.element.bounds;
-            let index = outputs
-                .iter()
-                .position(|(_, area)| area.contains(bounds.center()))
-                .or_else(|| {
-                    outputs
-                        .iter()
-                        .position(|(_, area)| area.intersects(&bounds))
-                })
-                .unwrap_or(0);
-            first_output.get_or_insert(index);
-            if let Some(label) = self
-                .renderer
-                .label(&hint.label, typed, bounds, outputs[index].1)
-            {
-                per_output[index].push(label);
-            }
-        }
-        if let Some(query) = query {
-            let index = first_output.unwrap_or(0);
-            let area = outputs[index].1;
-            let text = format!("/{query}");
-            if let Some(label) =
-                self.renderer
-                    .label(&text, text.chars().count(), search_box_anchor(area), area)
-            {
-                per_output[index].push(label);
-            }
-        }
+        let areas: Vec<Rect> = outputs.iter().map(|(_, area)| *area).collect();
+        let per_output = self.renderer.frame(frame, &areas);
         let qh = self.queue.handle();
         for ((global, area), labels) in outputs.iter().zip(per_output) {
             let Some(surface) = self.state.surfaces.iter().find(|s| s.output == *global) else {

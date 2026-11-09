@@ -18,7 +18,7 @@ use crate::element::{Element, ElementId, Point, Rect, Role};
 use crate::hints::Hint;
 use crate::hotkey::{Hotkey, KeyPress};
 use crate::platform::{
-    ElementSource, HotkeyId, HotkeySource, InputEvent, InputInjector, Overlay, Platform,
+    ElementSource, Frame, HotkeyId, HotkeySource, InputEvent, InputInjector, Overlay, Platform,
     PlatformError, Scope,
 };
 
@@ -142,6 +142,8 @@ fn probe_hint(at: Point) -> Hint {
             id: ElementId(0),
             role: Role::Button,
             name: "nomouse contract probe".to_owned(),
+            description: String::new(),
+            value: String::new(),
             bounds: Rect::new(at.x, at.y, 40, 20),
             enabled: true,
         },
@@ -159,19 +161,46 @@ fn check_overlay<P: Platform + ?Sized>(platform: &mut P, probe: Probe, out: &mut
         }
     }
     let hints = [probe_hint(probe.hover_at)];
-    // (step, hints, typed, search query): `None` calls `show`, `Some` calls `show_search`.
-    let steps: [(&str, &[Hint], &str, Option<&str>); 6] = [
-        ("show", &hints, "", None),
-        ("show replaces", &hints, "a", None),
-        ("show nothing", &[], "", None),
-        ("search box, empty query", &hints, "", Some("")),
-        ("search box with a query", &hints, "", Some("probe")),
-        ("search box, nothing matches", &[], "", Some("zzz")),
+    let label = hints[0].label.as_str();
+    let frame = |hints, typed, query, focused| Frame {
+        hints,
+        typed,
+        query,
+        focused,
+        area: None,
+    };
+    // A frame with neither a query, a highlight nor an outline goes through `show`, the rest
+    // through `show_frame`.
+    let steps: [(&str, Frame<'_>); 8] = [
+        ("show", frame(&hints, "", None, None)),
+        ("show replaces", frame(&hints, "a", None, None)),
+        ("show nothing", frame(&[], "", None, None)),
+        ("highlighted hint", frame(&hints, "", None, Some(label))),
+        (
+            "search box, empty query",
+            frame(&hints, "", Some(""), Some(label)),
+        ),
+        (
+            "search box with a query",
+            frame(&hints, "", Some("probe"), None),
+        ),
+        (
+            "search box, nothing matches",
+            frame(&[], "", Some("zzz"), None),
+        ),
+        (
+            "scroll area outlined",
+            Frame {
+                area: Some(hints[0].element.bounds),
+                ..frame(&hints, "", None, Some(label))
+            },
+        ),
     ];
-    for (step, shown, typed, query) in steps {
-        let result = match query {
-            None => platform.show(shown, typed),
-            Some(query) => platform.show_search(shown, typed, query),
+    for (step, frame) in steps {
+        let result = if frame.query.is_none() && frame.focused.is_none() && frame.area.is_none() {
+            platform.show(frame.hints, frame.typed)
+        } else {
+            platform.show_frame(&frame)
         };
         match result {
             Ok(()) | Err(PlatformError::PermissionDenied(_) | PlatformError::Unsupported(_)) => {}
@@ -311,7 +340,10 @@ impl FakePlatform {
     pub fn new(elements: Vec<Element>, keys: impl IntoIterator<Item = KeyPress>) -> Self {
         Self {
             elements,
-            events: keys.into_iter().map(InputEvent::Key).collect(),
+            events: keys
+                .into_iter()
+                .map(|key| InputEvent::Key(key.into()))
+                .collect(),
             ..Self::default()
         }
     }
