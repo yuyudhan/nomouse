@@ -109,6 +109,24 @@ for form in pretty min; do
         "$(lib asset_api_url "nomouse v0.1.0" "${work}/${form}.json")"
 done
 
+# A release as large as a real one (megabytes of assets after the match): the lookup must
+# still succeed under the installer's pipefail, where a reader that exits early used to kill
+# its writer with SIGPIPE and fail the install without a word.
+{
+    printf '{"assets":[{"url":"https://api.github.com/repos/yuyudhan/nomouse/releases/assets/1",'
+    printf '"name":"nomouse-x86_64-unknown-linux-gnu.tar.gz"}'
+    for i in $(seq 2 20000); do
+        printf ',{"url":"https://api.github.com/repos/yuyudhan/nomouse/releases/assets/%s","name":"filler-%s"}' "$i" "$i"
+    done
+    printf ']}\n'
+} >"${work}/large.json"
+if url="$(lib asset_api_url nomouse-x86_64-unknown-linux-gnu.tar.gz "${work}/large.json")"; then
+    check "asset_api_url (large release) finds the first asset" \
+        https://api.github.com/repos/yuyudhan/nomouse/releases/assets/1 "$url"
+else
+    fail "asset_api_url (large release) failed with status $?"
+fi
+
 # --- A fake release for this machine ----------------------------------------------------------
 
 target="$(lib asset_for "$os" "$(uname -m)")"

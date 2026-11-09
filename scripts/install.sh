@@ -101,8 +101,11 @@ archive_for() {
 
 # The API URL of release asset NAME in the GitHub release JSON in FILE, or nothing. Each asset
 # object lists its "url" (…/releases/assets/ID) before its "name"; uploader URLs never match.
+# awk reads the file itself, one comma-separated record at a time: with a pipe in front, its
+# early exit would kill the writer with SIGPIPE, and pipefail would fail the whole lookup.
 asset_api_url() {
-    tr ',' '\n' <"$2" | awk -v want="$1" '
+    awk -v want="$1" '
+        BEGIN { RS = "," }
         match($0, /"url": *"[^"]*\/releases\/assets\/[0-9]+"/) {
             url = substr($0, RSTART, RLENGTH)
             sub(/^"url": *"/, "", url)
@@ -117,7 +120,7 @@ asset_api_url() {
                 exit
             }
         }
-    '
+    ' "$2"
 }
 
 # The same rule as nomouse's own config path on macOS and Linux.

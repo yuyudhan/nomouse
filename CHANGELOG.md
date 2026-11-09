@@ -7,6 +7,15 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-09
+
+### Fixed
+
+- `install.sh` with `GH_TOKEN` or `GITHUB_TOKEN` stopped right after "installing the latest
+  nomouse", without an error: on a release as large as a real one, its asset lookup died of
+  SIGPIPE under `pipefail`. The lookup now reads the file directly, and
+  `scripts/test-installer.sh` checks it against a release of that size.
+
 ## [0.1.0] - 2026-11-09
 
 ### Added
