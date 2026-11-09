@@ -28,6 +28,8 @@
     <string>11.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>MIT OR Apache-2.0 · github.com/yuyudhan/nomouse</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>

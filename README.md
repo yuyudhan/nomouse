@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo/nomouse.svg" width="128" height="128" alt="nomouse logo: a yellow keycap with a mouse pointer on it">
+</p>
+
 # nomouse
 
 **Click anything on screen without touching the mouse.** A free, open-source

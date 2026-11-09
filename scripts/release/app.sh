@@ -5,10 +5,10 @@
 #   BINARY   the built nomouse for macOS (universal or one architecture)
 #   OUTDIR   where nomouse.app, nomouse-universal-apple-darwin.app.zip and its .sha256 go
 #
-# The bundle: Contents/MacOS/nomouse (with no arguments it runs the daemon), Contents/Info.plist
-# from packaging/macos/Info.plist.in (LSUIElement: no Dock icon and no menu bar of its own;
-# version from scripts/release/version.sh), Contents/Resources/AppIcon.icns drawn by
-# packaging/macos/icon.swift.
+# The bundle: Contents/MacOS/nomouse (with no arguments it runs the daemon with its menu bar
+# item), Contents/Info.plist from packaging/macos/Info.plist.in (LSUIElement: no Dock icon;
+# version from scripts/release/version.sh), Contents/Resources/AppIcon.icns built from the
+# logo PNG files in assets/logo/png (scripts/render-logo.sh draws them from assets/logo/*.svg).
 #
 # Environment:
 #   NOMOUSE_BUNDLE_ID         bundle identifier (default com.yuyudhan.nomouse)
@@ -51,8 +51,13 @@ chmod 755 "${app}/Contents/MacOS/nomouse"
 sed -e "s/@VERSION@/${version}/g" -e "s/@BUNDLE_ID@/${bundle_id}/g" \
     "${root}/packaging/macos/Info.plist.in" >"${app}/Contents/Info.plist"
 plutil -lint -s "${app}/Contents/Info.plist"
-swift "${root}/packaging/macos/icon.swift" "${work}/AppIcon.iconset"
-iconutil -c icns -o "${app}/Contents/Resources/AppIcon.icns" "${work}/AppIcon.iconset"
+iconset="${work}/AppIcon.iconset"
+mkdir -p "$iconset"
+for size in 16 32 128 256 512; do
+    cp "${root}/assets/logo/png/nomouse-${size}.png" "${iconset}/icon_${size}x${size}.png"
+    cp "${root}/assets/logo/png/nomouse-$((size * 2)).png" "${iconset}/icon_${size}x${size}@2x.png"
+done
+iconutil -c icns -o "${app}/Contents/Resources/AppIcon.icns" "$iconset"
 
 sign=(codesign --force --sign "$identity" --identifier "$bundle_id")
 if [ "$identity" != "-" ]; then
