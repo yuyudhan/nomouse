@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-09
+
 ### Added
 
 - `hints.browser = "exhaustive"`: a scan reads the whole web page (browser tabs, Electron
