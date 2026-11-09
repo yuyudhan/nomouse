@@ -98,26 +98,33 @@ mod tests {
 
     #[test]
     fn path_follows_xdg_config_home() {
-        let env = |pairs: &'static [(&'static str, &'static str)]| {
+        let env = |pairs: &[(&str, &str)]| {
+            let pairs: Vec<(String, String)> = pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect();
             move |name: &str| {
                 pairs
                     .iter()
-                    .find(|(k, _)| *k == name)
-                    .map(|(_, v)| (*v).to_owned())
+                    .find(|(k, _)| k == name)
+                    .map(|(_, v)| v.clone())
             }
         };
+        // Paths are built with `join` and the absolute one from the temp dir: a literal
+        // "/cfg" is not absolute on Windows, where this module's tests also run.
+        let home = std::env::temp_dir().join("home-u");
+        let cfg = std::env::temp_dir().join("cfg");
+        let (home_str, cfg_str) = (home.to_str().unwrap(), cfg.to_str().unwrap());
+        let default = home.join(".config").join("autostart").join(FILE_NAME);
+        assert_eq!(path_from(env(&[("HOME", home_str)])), Some(default.clone()));
         assert_eq!(
-            path_from(env(&[("HOME", "/home/u")])),
-            Some(PathBuf::from("/home/u/.config/autostart/nomouse.desktop"))
-        );
-        assert_eq!(
-            path_from(env(&[("HOME", "/home/u"), ("XDG_CONFIG_HOME", "/cfg")])),
-            Some(PathBuf::from("/cfg/autostart/nomouse.desktop"))
+            path_from(env(&[("HOME", home_str), ("XDG_CONFIG_HOME", cfg_str)])),
+            Some(cfg.join("autostart").join(FILE_NAME))
         );
         // A relative XDG_CONFIG_HOME is invalid by the spec and ignored.
         assert_eq!(
-            path_from(env(&[("HOME", "/home/u"), ("XDG_CONFIG_HOME", "cfg")])),
-            Some(PathBuf::from("/home/u/.config/autostart/nomouse.desktop"))
+            path_from(env(&[("HOME", home_str), ("XDG_CONFIG_HOME", "cfg")])),
+            Some(default)
         );
         assert_eq!(path_from(env(&[])), None);
     }
