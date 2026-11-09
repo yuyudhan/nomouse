@@ -34,9 +34,20 @@ shellcheck:
 clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-# Clippy with -D warnings for every target triple.
+# Clippy with -D warnings for every target triple. Cross-checking Linux from another OS skips
+# nomouse-settings: its GTK and libadwaita build scripts need the target's system libraries,
+# so it is linted on Linux hosts and in CI, where they are installed.
 clippy-all:
-    for target in {{targets}}; do cargo clippy --workspace --all-targets --all-features --target "$target" -- -D warnings; done
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for target in {{targets}}; do
+        skip=()
+        if [[ "$target" == *-linux-* && "$(uname -s)" != Linux ]]; then
+            echo "clippy-all: $target without nomouse-settings (needs GTK 4 for that target)"
+            skip=(--exclude nomouse-settings)
+        fi
+        cargo clippy --workspace ${skip[@]+"${skip[@]}"} --all-targets --all-features --target "$target" -- -D warnings
+    done
 
 # Lint: clippy with -D warnings for every target triple (same as clippy-all).
 lint: clippy-all
