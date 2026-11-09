@@ -361,6 +361,7 @@ mod tests {
                 value: String::new(),
                 bounds,
                 enabled: true,
+                offscreen: false,
             },
         }
     }

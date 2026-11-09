@@ -144,6 +144,8 @@ action = "click"             # click | right-click | double-click | hover | drag
 semantic_click = false       # AXPress / AT-SPI action / UIA Invoke instead of a pointer click
 keys = "nomouse"             # nomouse: a label acts at once | homerow: a label highlights,
                              # Return clicks, twice double clicks, Shift-Return right clicks
+browser = "fast"             # fast: web pages read in view only | exhaustive: the whole page,
+                             # so search finds links scrolled away (and scrolls them in)
 
 [hotkeys]                    # modifiers: ctrl, alt (Option), shift, meta (Command / Super)
 hints = "ctrl+space"

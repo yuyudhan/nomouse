@@ -19,8 +19,10 @@ use nomouse_sys_macos::{
     Button, KeyLayout, Label, LabelStyle, ModifierFlags, Outline, TapEvent, layout,
 };
 
-use crate::ax_tree::{LiveTree, RootSet, not_trusted, roots};
-use crate::geometry::{lerp, screen_rect, to_panel, to_panel_rects, union, wheel_deltas};
+use crate::ax_tree::{LiveTree, RootSet, frame_of, not_trusted, roots};
+use crate::geometry::{
+    clamp_into, lerp, screen_rect, to_panel, to_panel_rects, union, wheel_deltas,
+};
 use crate::keys::{chord, held, key_press, modifier_flags};
 use crate::roles::{PRESS, SHOW_MENU};
 use crate::style::{Themed, appearance};
@@ -36,11 +38,26 @@ const DRAG_STEPS: i32 = 12;
 const INPUT_PAUSE: Duration = Duration::from_millis(8);
 /// Event flags for pointer input without modifier keys.
 const NO_FLAGS: ModifierFlags = modifier_flags(nomouse_core::Modifiers::NONE);
+/// Room kept for a label of an off-screen element pinned to the edge of its viewport, in
+/// points (two or three characters at the default size).
+const EDGE_LABEL_ROOM: (u32, u32) = (40, 20);
+/// How long a scroll into view may take before acting where the element ended up.
+const REVEAL_TIMEOUT: Duration = Duration::from_millis(1000);
+/// How often the element's frame is re-read while it scrolls into view.
+const REVEAL_POLL: Duration = Duration::from_millis(30);
+/// Readings in a row that must agree before the scroll counts as finished: browsers report
+/// the final frame while their smooth scroll still runs, and ignore a click meanwhile.
+const REVEAL_STEADY: u32 = 8;
 
-/// One element of the last snapshot, kept for semantic clicks.
+/// One element of the last snapshot, kept for semantic clicks and for scrolling off-screen
+/// elements into view.
 struct Snapshot {
     element: AxElement,
     bounds: Rect,
+    /// Scrolled out of view (`hints.browser = "exhaustive"`).
+    offscreen: bool,
+    /// The region it is visible in once scrolled there.
+    visible: Rect,
 }
 
 /// The macOS backend. Must be created and used on the main thread.
@@ -115,7 +132,10 @@ impl MacPlatform {
             next_hotkey: 1,
             hotkeys: Vec::new(),
             layout: layout::current(),
-            limits: Limits::default(),
+            limits: Limits {
+                browser: config.hints.browser,
+                ..Limits::default()
+            },
         })
     }
 
@@ -150,6 +170,44 @@ impl MacPlatform {
             .unwrap_or_default()
     }
 
+    /// Where an action aimed at `at` should land: `at` itself, unless it is the centre of an
+    /// off-screen element of the last snapshot, which is first scrolled into view
+    /// (`AXScrollToVisible`); its new centre once its frame is in view and has stopped moving
+    /// (browsers scroll smoothly), or after [`REVEAL_TIMEOUT`] wherever it ended up.
+    fn reveal(&self, at: Point) -> Point {
+        let Some(entry) = self
+            .snapshot
+            .iter()
+            .find(|entry| entry.offscreen && entry.bounds.center() == at)
+        else {
+            return at;
+        };
+        if let Err(error) = entry.element.perform_action("AXScrollToVisible") {
+            tracing::debug!("scrolling an off-screen element into view: {error}");
+            return at;
+        }
+        let started = Instant::now();
+        let mut last: Option<Rect> = None;
+        let mut steady = 0;
+        while started.elapsed() < REVEAL_TIMEOUT {
+            thread::sleep(REVEAL_POLL);
+            let frame = frame_of(&entry.element).filter(|frame| !frame.is_empty());
+            steady = if frame.is_some() && frame == last {
+                steady + 1
+            } else {
+                0
+            };
+            last = frame.or(last);
+            if steady >= REVEAL_STEADY && last.is_some_and(|frame| frame.intersects(&entry.visible))
+            {
+                break;
+            }
+        }
+        let landed = last.map_or(at, |frame| frame.center());
+        tracing::debug!("scrolled into view: acting at {landed:?} instead of {at:?}");
+        landed
+    }
+
     /// Tries the accessibility action for a click at `at` on the element last labelled there.
     fn semantic(&self, at: Point, action: &str) -> bool {
         self.snapshot
@@ -169,7 +227,16 @@ impl MacPlatform {
             .iter()
             .filter_map(|hint| {
                 let bounds = hint.element.bounds;
-                let anchor = to_panel(Point::new(bounds.x, bounds.y), &screens)?;
+                let mut corner = Point::new(bounds.x, bounds.y);
+                // An off-screen element's label is pinned to the nearest edge of its viewport.
+                if let Some(entry) = usize::try_from(hint.element.id.0)
+                    .ok()
+                    .and_then(|index| self.snapshot.get(index))
+                    .filter(|entry| entry.offscreen)
+                {
+                    corner = clamp_into(corner, entry.visible, EDGE_LABEL_ROOM);
+                }
+                let anchor = to_panel(corner, &screens)?;
                 Some(Label {
                     screen: anchor.screen,
                     x: anchor.x,
@@ -265,6 +332,24 @@ impl ElementSource for MacPlatform {
         if scope == Scope::FocusedWindow && !found_roots.has_window && result.found.is_empty() {
             return Err(PlatformError::NoFocusedWindow);
         }
+        tracing::debug!(
+            "walked {} nodes in {:?}: {} elements, {} of them off-screen{}",
+            result.visited,
+            started.elapsed(),
+            result.found.len(),
+            result.found.iter().filter(|found| found.offscreen).count(),
+            result.truncated.map_or_else(String::new, |limit| format!(
+                " (stopped by the {limit:?} limit)"
+            ))
+        );
+        for found in result.found.iter().filter(|found| found.offscreen) {
+            tracing::debug!(
+                "off-screen {:?} {:?} at {:?}",
+                found.role,
+                found.name,
+                found.bounds
+            );
+        }
         self.snapshot.clear();
         let mut elements = Vec::with_capacity(result.found.len());
         for (index, found) in result.found.into_iter().enumerate() {
@@ -276,10 +361,13 @@ impl ElementSource for MacPlatform {
                 value: found.value,
                 bounds: found.bounds,
                 enabled: found.enabled,
+                offscreen: found.offscreen,
             });
             self.snapshot.push(Snapshot {
                 element: found.node,
                 bounds: found.bounds,
+                offscreen: found.offscreen,
+                visible: found.visible,
             });
         }
         Ok(elements)
@@ -366,6 +454,7 @@ impl InputInjector for MacPlatform {
                 }
                 // The flags on the mouse events are what apps read for cmd/shift/option+click.
                 let flags = modifier_flags(modifiers);
+                let at = self.reveal(at);
                 post(MouseEventKind::Move, at, 0, flags)?;
                 thread::sleep(INPUT_PAUSE);
                 for click in 1..=count.max(1) {
@@ -373,12 +462,13 @@ impl InputInjector for MacPlatform {
                     post(MouseEventKind::Up(button(b)), at, i64::from(click), flags)?;
                 }
             }
-            Action::Hover { at } => post(MouseEventKind::Move, at, 0, NO_FLAGS)?,
+            Action::Hover { at } => post(MouseEventKind::Move, self.reveal(at), 0, NO_FLAGS)?,
             Action::Drag {
                 from,
                 to,
                 button: b,
             } => {
+                let from = self.reveal(from);
                 post(MouseEventKind::Move, from, 0, NO_FLAGS)?;
                 thread::sleep(INPUT_PAUSE);
                 post(MouseEventKind::Down(button(b)), from, 1, NO_FLAGS)?;

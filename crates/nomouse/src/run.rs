@@ -422,6 +422,7 @@ mod tests {
                 value: String::new(),
                 bounds: Rect::new(i32::try_from(i).unwrap() * 100, 0, 10, 10),
                 enabled: true,
+                offscreen: false,
             })
             .collect();
         // `!` Escape, `<` Backspace, `=` Enter, `>` Tab, `^` Shift-Tab, `+` Shift-Enter,

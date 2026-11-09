@@ -16,6 +16,7 @@ fn element(id: usize, name: &str, description: &str, value: &str) -> Element {
         value: value.to_owned(),
         bounds: Rect::new(0, row.saturating_mul(20), 50, 10),
         enabled: true,
+        offscreen: false,
     }
 }
 

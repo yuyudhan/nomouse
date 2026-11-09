@@ -116,6 +116,7 @@ impl ScrollSession {
                     value: String::new(),
                     bounds: *bounds,
                     enabled: true,
+                    offscreen: false,
                 },
             })
             .collect()
@@ -320,6 +321,7 @@ mod tests {
             value: String::new(),
             bounds,
             enabled,
+            offscreen: false,
         };
         let elements = [
             element(Role::Button, Rect::new(0, 0, 10, 10), true),

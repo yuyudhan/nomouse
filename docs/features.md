@@ -61,7 +61,7 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-HINT-11 | Focus-then-act: Tab/↓/Ctrl-N and Shift-Tab/↑/Ctrl-P move a highlight across labels; Return acts on it | core | core | P1 | done / done / done / partial (keys work; no highlight drawn) |
 | NM-HINT-12 | Tutor: `?` shows the focused element's role, name and searchable properties | AX attributes | AT-SPI attributes | P2 | missing |
 | NM-HINT-13 | Mission Control: label window thumbnails while Mission Control is open; optional auto-activate | Dock AX tree | n/a | P2 | missing |
-| NM-HINT-14 | Browser modes: fast (visible viewport) and exhaustive (whole document) | `AXEnhancedUserInterface`, `AXManualAccessibility` | Chromium `--force-renderer-accessibility` | P1 | partial (opt-in list `macos.enhanced_ui_apps`; no fast/exhaustive switch) |
+| NM-HINT-14 | Browser modes: fast (visible viewport) and exhaustive (whole document) | `hints.browser`; web areas walked past the viewport, picked off-screen elements scrolled in with `AXScrollToVisible` (`AXEnhancedUserInterface` via `macos.enhanced_ui_apps`) | `hints.browser`; `DOCUMENT_WEB` objects that are `VISIBLE` but not `SHOWING` kept, scrolled in with `Component.ScrollTo` | P1 | partial (done on macOS, checked in Chrome; Linux written and compile-checked, its unit tests and a Chromium check still to run on Linux) |
 
 ### Actions (ACT)
 

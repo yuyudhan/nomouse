@@ -29,6 +29,7 @@ pub(crate) fn process_name(pid: u32) -> Option<String> {
 pub struct LinuxPlatform {
     x: X11,
     source: Option<AtspiSource>,
+    limits: ScanLimits,
     semantic_click: bool,
     themed: Themed,
 }
@@ -36,7 +37,7 @@ pub struct LinuxPlatform {
 impl LinuxPlatform {
     fn source(&mut self) -> Result<&mut AtspiSource, PlatformError> {
         if self.source.is_none() {
-            self.source = Some(AtspiSource::connect(ScanLimits::default(), CALL_TIMEOUT)?);
+            self.source = Some(AtspiSource::connect(self.limits, CALL_TIMEOUT)?);
         }
         self.source
             .as_mut()
@@ -91,7 +92,8 @@ impl Overlay for LinuxPlatform {
 
 impl InputInjector for LinuxPlatform {
     /// Clicks hold [`Action::modifiers`] (ctrl+click, shift+click, ...) with XTEST key presses
-    /// around the button; the semantic AT-SPI click is used only for a plain left click.
+    /// around the button; the semantic AT-SPI click is used only for a plain left click. An
+    /// off-screen target (exhaustive browser mode) is scrolled into view first.
     fn perform(&mut self, action: &Action) -> Result<(), PlatformError> {
         if let Action::Click {
             at,
@@ -105,7 +107,11 @@ impl InputInjector for LinuxPlatform {
         {
             return Ok(());
         }
-        self.x.perform(action)
+        let action = self
+            .source
+            .as_ref()
+            .map_or(*action, |source| source.reveal(*action));
+        self.x.perform(&action)
     }
 }
 
@@ -141,15 +147,17 @@ impl Platform for LinuxPlatform {
 /// overlay colours or a missing font.
 pub fn platform(config: &Config) -> Result<Box<dyn Platform>, PlatformError> {
     let session = DisplayServer::current();
+    let limits = ScanLimits::for_config(config);
     #[cfg(feature = "wayland")]
     if let DisplayServer::Wayland(_) = session {
         let (themed, style) = Themed::new(&config.overlay)?;
         let wayland = crate::wayland::Wayland::connect(Renderer::new(style)?)?;
-        let source = accessibility();
+        let source = accessibility(limits);
         return Ok(Box::new(crate::wayland::platform::WaylandPlatform::new(
             wayland,
             crate::wayland::compositor::Compositor::current(),
             source,
+            limits,
             config.hints.semantic_click,
             themed,
         )));
@@ -157,10 +165,11 @@ pub fn platform(config: &Config) -> Result<Box<dyn Platform>, PlatformError> {
     session.require_x11()?;
     let (themed, style) = Themed::new(&config.overlay)?;
     let x = X11::connect(Renderer::new(style)?)?;
-    let source = accessibility();
+    let source = accessibility(limits);
     Ok(Box::new(LinuxPlatform {
         x,
         source,
+        limits,
         semantic_click: config.hints.semantic_click,
         themed,
     }))
@@ -168,7 +177,7 @@ pub fn platform(config: &Config) -> Result<Box<dyn Platform>, PlatformError> {
 
 /// Turns the accessibility switch on when it is off and connects to the AT-SPI bus (`None`
 /// when it is unreachable now; scans retry).
-fn accessibility() -> Option<AtspiSource> {
+fn accessibility(limits: ScanLimits) -> Option<AtspiSource> {
     match bus::accessibility_enabled() {
         Ok(false) => match bus::enable_accessibility() {
             Ok(()) => tracing::info!("turned on the session accessibility switch"),
@@ -177,7 +186,7 @@ fn accessibility() -> Option<AtspiSource> {
         Ok(true) => {}
         Err(error) => tracing::warn!("{error}"),
     }
-    AtspiSource::connect(ScanLimits::default(), CALL_TIMEOUT)
+    AtspiSource::connect(limits, CALL_TIMEOUT)
         .inspect_err(|error| tracing::warn!("{error}"))
         .ok()
 }

@@ -94,6 +94,15 @@ fn frame(position: Option<&AxValue>, size: Option<&AxValue>) -> Option<Rect> {
     }
 }
 
+/// The element's current frame in global top-left coordinates, read afresh.
+pub(crate) fn frame_of(element: &AxElement) -> Option<Rect> {
+    let values = element.attributes(&["AXPosition", "AXSize"]).ok()?;
+    frame(
+        values.first().and_then(Option::as_ref),
+        values.get(1).and_then(Option::as_ref),
+    )
+}
+
 fn read_list(element: &AxElement, attribute: &str) -> Option<Vec<AxElement>> {
     elements(element.attribute(attribute).ok().flatten())
 }

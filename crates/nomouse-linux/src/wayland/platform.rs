@@ -10,7 +10,7 @@ use nomouse_core::{
 
 use super::Wayland;
 use super::compositor::{Compositor, Windows};
-use crate::a11y::AtspiSource;
+use crate::a11y::{AtspiSource, ScanLimits};
 use crate::appearance::Themed;
 
 /// The Wayland backend: AT-SPI elements placed with the compositor's window positions, a
@@ -19,6 +19,7 @@ pub struct WaylandPlatform {
     wayland: Wayland,
     compositor: Compositor,
     source: Option<AtspiSource>,
+    limits: ScanLimits,
     semantic_click: bool,
     themed: Themed,
 }
@@ -28,6 +29,7 @@ impl WaylandPlatform {
         wayland: Wayland,
         compositor: Compositor,
         source: Option<AtspiSource>,
+        limits: ScanLimits,
         semantic_click: bool,
         themed: Themed,
     ) -> Self {
@@ -40,6 +42,7 @@ impl WaylandPlatform {
             wayland,
             compositor,
             source,
+            limits,
             semantic_click,
             themed,
         }
@@ -118,7 +121,7 @@ impl ElementSource for WaylandPlatform {
         let screen = self.wayland.screen();
         if self.source.is_none() {
             self.source = Some(AtspiSource::connect(
-                crate::a11y::ScanLimits::default(),
+                self.limits,
                 crate::linux::CALL_TIMEOUT,
             )?);
         }
@@ -162,7 +165,8 @@ impl Overlay for WaylandPlatform {
 
 impl InputInjector for WaylandPlatform {
     /// Clicks hold [`Action::modifiers`] with virtual keyboard (or uinput) key presses; the
-    /// semantic AT-SPI click is used only for a plain left click.
+    /// semantic AT-SPI click is used only for a plain left click. An off-screen target
+    /// (exhaustive browser mode) is scrolled into view first.
     fn perform(&mut self, action: &Action) -> Result<(), PlatformError> {
         if let Action::Click {
             at,
@@ -176,8 +180,12 @@ impl InputInjector for WaylandPlatform {
         {
             return Ok(());
         }
+        let action = self
+            .source
+            .as_ref()
+            .map_or(*action, |source| source.reveal(*action));
         tracing::debug!("injecting {action:?}");
-        self.wayland.perform(action)
+        self.wayland.perform(&action)
     }
 }
 

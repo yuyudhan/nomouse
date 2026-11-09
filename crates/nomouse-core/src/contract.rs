@@ -146,6 +146,7 @@ fn probe_hint(at: Point) -> Hint {
             value: String::new(),
             bounds: Rect::new(at.x, at.y, 40, 20),
             enabled: true,
+            offscreen: false,
         },
     }
 }

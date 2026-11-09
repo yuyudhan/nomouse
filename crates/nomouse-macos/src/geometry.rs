@@ -125,6 +125,21 @@ pub fn union(a: Rect, b: Rect) -> Rect {
     Rect::new(left, top, width, height)
 }
 
+/// `point` moved into `rect`, leaving `room` (width, height) before the right and bottom
+/// edges so a label drawn there stays inside; a `rect` smaller than `room` pins it to the
+/// top-left corner.
+pub fn clamp_into(point: Point, rect: Rect, room: (u32, u32)) -> Point {
+    let clamp = |value: i32, start: i32, length: u32, room: u32| {
+        let last = i64::from(start) + i64::from(length.saturating_sub(room));
+        let last = i32::try_from(last).unwrap_or(i32::MAX);
+        value.clamp(start, last.max(start))
+    };
+    Point::new(
+        clamp(point.x, rect.x, rect.width, room.0),
+        clamp(point.y, rect.y, rect.height, room.1),
+    )
+}
+
 /// The coordinate `step` of `steps` along the way from `from` to `to` (`step == steps` is
 /// exactly `to`); `steps == 0` yields `to`.
 pub fn lerp(from: i32, to: i32, step: i32, steps: i32) -> i32 {
@@ -263,6 +278,32 @@ mod tests {
             vec![]
         );
         assert_eq!(to_panel_rects(Rect::new(0, 0, 10, 10), &[]), vec![]);
+    }
+
+    #[test]
+    fn points_clamp_inside_a_rect_with_room_for_a_label() {
+        let viewport = Rect::new(100, 50, 800, 600);
+        let room = (40, 20);
+        assert_eq!(
+            clamp_into(Point::new(300, 200), viewport, room),
+            Point::new(300, 200)
+        );
+        assert_eq!(
+            clamp_into(Point::new(300, -900), viewport, room),
+            Point::new(300, 50)
+        );
+        assert_eq!(
+            clamp_into(Point::new(950, 4000), viewport, room),
+            Point::new(860, 630)
+        );
+        assert_eq!(
+            clamp_into(Point::new(0, 0), viewport, room),
+            Point::new(100, 50)
+        );
+        let tiny = Rect::new(5, 5, 10, 10);
+        assert_eq!(clamp_into(Point::new(90, 90), tiny, room), Point::new(5, 5));
+        let huge = Rect::new(i32::MAX - 10, 0, u32::MAX, 10);
+        assert_eq!(clamp_into(Point::new(i32::MAX, 5), huge, room).x, i32::MAX);
     }
 
     #[test]

@@ -51,6 +51,7 @@ every build, so this page cannot fall behind it.
 | `hints.action` | `"click"` | what picking a label does: `"click"`, `"right-click"`, `"double-click"`, `"hover"`, `"drag"` (pick the start, then the end) or `"scroll"` (pick an area, then scroll it) |
 | `hints.semantic_click` | `false` | `true` presses the element through the accessibility API (AT-SPI `do_action`, `AXPress`, UI Automation `Invoke`) when it offers that, so the pointer does not move; `false` moves the pointer and clicks |
 | `hints.keys` | `"nomouse"` | `"nomouse"`: typing a complete label acts at once. `"homerow"`: a complete label only highlights; Return clicks, Return twice double-clicks, Shift-Return right-clicks, Cmd-Return (Super-Return) cmd-clicks |
+| `hints.browser` | `"fast"` | how much of a web page (a browser tab, an Electron window) a scan reads. `"fast"`: only what is in view. `"exhaustive"`: the whole document, so search also finds links and buttons scrolled out of view, and picking one scrolls it into view first. Hint mode labels only what is in view either way. Linux and macOS |
 
 ### `[hotkeys]`: the global shortcuts
 

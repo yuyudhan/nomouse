@@ -7,10 +7,16 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use atspi::Role as AtRole;
-use nomouse_core::{Element, ElementId, PlatformError, Point, Rect, Scope};
+use nomouse_core::config::{BrowserMode, Config};
+use nomouse_core::{Action, Element, ElementId, PlatformError, Point, Rect, Scope};
 
 use bus::{App, Bus, Obj};
 use walk::{Found, Limits};
+
+/// How long a scroll into view may take before acting where the element ended up.
+const REVEAL_TIMEOUT: Duration = Duration::from_millis(600);
+/// How often the element's extents are re-read while it scrolls into view.
+const REVEAL_POLL: Duration = Duration::from_millis(30);
 
 /// Tunables for one element scan.
 #[derive(Debug, Clone, Copy)]
@@ -21,6 +27,8 @@ pub(crate) struct ScanLimits {
     pub max_nodes: usize,
     /// Whole-scan budget.
     pub budget: Duration,
+    /// Whether web content scrolled out of view is collected too (`hints.browser`).
+    pub browser: BrowserMode,
 }
 
 impl Default for ScanLimits {
@@ -29,6 +37,17 @@ impl Default for ScanLimits {
             max_depth: 40,
             max_nodes: 5000,
             budget: Duration::from_millis(1500),
+            browser: BrowserMode::Fast,
+        }
+    }
+}
+
+impl ScanLimits {
+    /// The default limits with `config`'s browser mode.
+    pub(crate) fn for_config(config: &Config) -> Self {
+        Self {
+            browser: config.hints.browser,
+            ..Self::default()
         }
     }
 }
@@ -148,6 +167,8 @@ pub(crate) struct AtspiSource {
     bus: Bus,
     limits: ScanLimits,
     last: Vec<Found<Obj>>,
+    /// The area the last scan was clipped to.
+    last_clip: Rect,
 }
 
 impl AtspiSource {
@@ -163,6 +184,7 @@ impl AtspiSource {
             bus: Bus::connect(call_timeout)?,
             limits,
             last: Vec::new(),
+            last_clip: Rect::default(),
         })
     }
 
@@ -183,6 +205,7 @@ impl AtspiSource {
         let started = Instant::now();
         let apps = self.bus.applications()?;
         let (roots, clip) = select_roots(&apps, active_pid, scope, screen)?;
+        self.last_clip = clip;
         tracing::debug!(
             "found {} applications in {:?}",
             apps.len(),
@@ -193,6 +216,7 @@ impl AtspiSource {
             max_nodes: self.limits.max_nodes,
             deadline: started + self.limits.budget,
             bulk: true,
+            browser: self.limits.browser,
         };
         let root_count = roots.len();
         self.last = if offsets.is_empty() {
@@ -236,6 +260,76 @@ impl AtspiSource {
             .find(|found| found.has_action && found.element.target() == point)
             .is_some_and(|found| self.bus.activate(&found.node))
     }
+
+    /// `action` aimed where it lands once its target is in view: an off-screen element of the
+    /// last snapshot ([`Element::offscreen`]) is first scrolled into view (`Component.ScrollTo`)
+    /// and the action follows it by as much as its extents moved (so window-relative Wayland
+    /// extents work too); any other action is returned as it is.
+    pub(crate) fn reveal(&self, action: Action) -> Action {
+        let at = match action {
+            Action::Click { at, .. } | Action::Hover { at } => at,
+            Action::Drag { from, .. } => from,
+            Action::Scroll { .. } => return action,
+        };
+        let Some(found) = self
+            .last
+            .iter()
+            .find(|found| found.element.offscreen && found.element.target() == at)
+        else {
+            return action;
+        };
+        let Some(before) = self.bus.extents(&found.node) else {
+            return action;
+        };
+        if !self.bus.scroll_into_view(&found.node) {
+            tracing::debug!("the toolkit did not scroll the element into view");
+            return action;
+        }
+        let started = Instant::now();
+        let mut moved = at;
+        while started.elapsed() < REVEAL_TIMEOUT {
+            std::thread::sleep(REVEAL_POLL);
+            if let Some(after) = self.bus.extents(&found.node) {
+                moved = follow(at, before, after);
+                if self.last_clip.contains(moved) {
+                    break;
+                }
+            }
+        }
+        tracing::debug!("scrolled into view: acting at {moved:?} instead of {at:?}");
+        match action {
+            Action::Click {
+                button,
+                count,
+                modifiers,
+                ..
+            } => Action::Click {
+                at: moved,
+                button,
+                count,
+                modifiers,
+            },
+            Action::Hover { .. } => Action::Hover { at: moved },
+            Action::Drag { to, button, .. } => Action::Drag {
+                from: moved,
+                to,
+                button,
+            },
+            Action::Scroll { .. } => action,
+        }
+    }
+}
+
+/// `at` moved by as much as an element's extents moved from `before` to `after`.
+fn follow(at: Point, before: Rect, after: Rect) -> Point {
+    let shift = |value: i32, from: i32, to: i32| {
+        let moved = i64::from(value) + i64::from(to) - i64::from(from);
+        i32::try_from(moved).unwrap_or(if moved < 0 { i32::MIN } else { i32::MAX })
+    };
+    Point::new(
+        shift(at.x, before.x, after.x),
+        shift(at.y, before.y, after.y),
+    )
 }
 
 #[cfg(test)]
@@ -244,6 +338,24 @@ mod tests {
     use super::*;
 
     const SCREEN: Rect = Rect::new(0, 0, 1920, 1080);
+
+    #[test]
+    fn actions_follow_an_element_scrolled_into_view() {
+        // A link 3000 px below the viewport scrolled up to y = 400; the pointer target moves
+        // by as much, whatever the extents' origin (Wayland reports window-relative ones).
+        let before = Rect::new(10, 3000, 80, 20);
+        let after = Rect::new(10, 400, 80, 20);
+        assert_eq!(
+            follow(Point::new(150, 3110), before, after),
+            Point::new(150, 510)
+        );
+        assert_eq!(follow(Point::new(5, 5), before, before), Point::new(5, 5));
+        let far = Rect::new(0, i32::MIN, 1, 1);
+        assert_eq!(
+            follow(Point::new(0, 0), far, Rect::new(0, i32::MAX, 1, 1)).y,
+            i32::MAX
+        );
+    }
 
     fn top(path: &str, role: AtRole, active: bool, extents: Rect) -> TopLevel {
         TopLevel {

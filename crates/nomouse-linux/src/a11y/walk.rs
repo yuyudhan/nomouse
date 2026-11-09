@@ -3,12 +3,17 @@
 //! The walk is pure logic over the [`Tree`] seam, so it is tested with an in-memory tree; the
 //! AT-SPI implementation lives in [`super::bus`]. Requests are batched per tree level so the
 //! D-Bus implementation can pipeline them.
+//!
+//! With `hints.browser = "exhaustive"` the parts of web documents (below a `DOCUMENT_WEB`
+//! object) that are scrolled out of view are kept too: their objects are not `SHOWING`, only
+//! `VISIBLE`. They are walked after everything in view and reported as off-screen.
 
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::time::Instant;
 
 use atspi::Role as AtRole;
+use nomouse_core::config::BrowserMode;
 use nomouse_core::{Element, ElementId, Rect, Role};
 
 /// What the walk needs to know about one accessible object.
@@ -20,6 +25,8 @@ pub(crate) struct NodeInfo {
     pub name: String,
     /// `SHOWING` and `VISIBLE` are both set.
     pub showing: bool,
+    /// `VISIBLE` is set: web content scrolled out of view keeps it while losing `SHOWING`.
+    pub visible: bool,
     /// `ENABLED` and `SENSITIVE` are both set.
     pub enabled: bool,
     /// `FOCUSABLE` is set.
@@ -74,8 +81,11 @@ pub(crate) struct Limits {
     pub max_nodes: usize,
     /// The walk stops (returning what it found) at this instant.
     pub deadline: Instant,
-    /// Use bulk matching where the tree supports it.
+    /// Use bulk matching where the tree supports it (never with [`BrowserMode::Exhaustive`]:
+    /// the server-side match sees only showing objects).
     pub bulk: bool,
+    /// Whether web content scrolled out of view is collected too.
+    pub browser: BrowserMode,
 }
 
 /// What search reads of a labelled object besides its role.
@@ -217,10 +227,17 @@ fn is_interactive_role(role: AtRole) -> bool {
     INTERACTIVE_ROLES.contains(&role)
 }
 
+/// Whether the object is on screen: showing and with its extents inside `clip`.
+fn in_view(info: &NodeInfo, bounds: Rect, clip: Rect) -> bool {
+    info.showing && bounds.intersects(&clip)
+}
+
 /// Whether the object gets a label, and why; `clip` is the visible area (window or screen).
-fn qualifies(info: &NodeInfo, clip: Rect) -> Option<(Role, Reason)> {
+/// `out_of_view` also accepts web content scrolled out of it (`VISIBLE` but not `SHOWING`, or
+/// outside `clip`).
+fn qualifies(info: &NodeInfo, clip: Rect, out_of_view: bool) -> Option<(Role, Reason)> {
     let bounds = info.extents?;
-    if !info.showing || bounds.is_empty() || !bounds.intersects(&clip) {
+    if bounds.is_empty() || !(in_view(info, bounds, clip) || (out_of_view && info.visible)) {
         return None;
     }
     let role = match map_role(info.role)? {
@@ -246,17 +263,37 @@ fn qualifies(info: &NodeInfo, clip: Rect) -> Option<(Role, Reason)> {
     }
 }
 
-/// Whether the walk descends into the object: hidden or fully clipped subtrees are skipped,
-/// and so are the insides of controls (a button's label, a link's text), except list and tree
-/// items, which can hold controls of their own.
-fn descend(info: &NodeInfo, clip: Rect) -> bool {
+/// When the walk reads an object's children.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Descend {
+    /// In the next level.
+    Now,
+    /// After everything in view: web content scrolled out of view, under exhaustive mode.
+    Later,
+    /// Never.
+    No,
+}
+
+/// Whether the walk descends into the object: hidden or fully clipped subtrees are skipped
+/// (unless `out_of_view` keeps web content scrolled away, for later), and so are the insides
+/// of controls (a button's label, a link's text), except list and tree items, which can hold
+/// controls of their own.
+fn descend(info: &NodeInfo, clip: Rect, out_of_view: bool) -> Descend {
     let control =
         is_interactive_role(info.role) && !matches!(info.role, AtRole::ListItem | AtRole::TreeItem);
-    info.showing
-        && !control
+    let shown = info.showing
         && info
             .extents
-            .is_none_or(|bounds| bounds.is_empty() || bounds.intersects(&clip))
+            .is_none_or(|bounds| bounds.is_empty() || bounds.intersects(&clip));
+    if control {
+        Descend::No
+    } else if shown {
+        Descend::Now
+    } else if out_of_view && info.visible {
+        Descend::Later
+    } else {
+        Descend::No
+    }
 }
 
 fn contains(outer: Rect, inner: Rect) -> bool {
@@ -273,8 +310,8 @@ struct Collector<N> {
 }
 
 impl<N> Collector<N> {
-    fn consider(&mut self, node: N, info: &NodeInfo, clip: Rect) {
-        let Some((role, reason)) = qualifies(info, clip) else {
+    fn consider(&mut self, node: N, info: &NodeInfo, clip: Rect, out_of_view: bool) {
+        let Some((role, reason)) = qualifies(info, clip, out_of_view) else {
             return;
         };
         let Some(bounds) = info.extents else {
@@ -292,6 +329,7 @@ impl<N> Collector<N> {
                     value: String::new(),
                     bounds,
                     enabled: info.enabled,
+                    offscreen: !in_view(info, bounds, clip),
                 },
                 has_action: info.has_action,
                 value: ValueKind::of(info.role),
@@ -330,35 +368,42 @@ impl<N> Collector<N> {
 /// Uses one bulk query per root when `limits.bulk` is set and the tree supports it, otherwise
 /// a breadth-first walk bounded by depth, node count and deadline. Every object is visited at
 /// most once, so reference cycles in a broken tree cannot loop. Per-object errors (objects that
-/// vanished mid-walk) are skipped.
+/// vanished mid-walk) are skipped. With [`BrowserMode::Exhaustive`] every root is walked, and
+/// the out-of-view subtrees of web documents are walked last, so they never use up the node
+/// budget or the deadline before what is in view.
 pub(crate) fn collect<T: Tree>(
     tree: &mut T,
     roots: &[T::Node],
     clip: Rect,
     limits: Limits,
 ) -> Vec<Found<T::Node>> {
-    let mut collector = Collector { found: Vec::new() };
-    let mut visited: HashSet<T::Node> = HashSet::new();
+    let mut walker = Walker {
+        clip,
+        limits,
+        visited: HashSet::new(),
+        collector: Collector { found: Vec::new() },
+    };
+    let bulk = limits.bulk && limits.browser == BrowserMode::Fast;
     let mut walk_roots = Vec::new();
     for root in roots {
-        let bulk = if limits.bulk {
+        let candidates = if bulk {
             tree.candidates(root, limits.max_nodes)
         } else {
             Ok(None)
         };
-        match bulk {
+        match candidates {
             // An empty answer may be a toolkit whose Collection matching is broken; the walk
             // costs little when there really is nothing to label.
             Ok(Some(nodes)) if !nodes.is_empty() => {
                 tracing::debug!("bulk match returned {} objects", nodes.len());
                 let nodes: Vec<T::Node> = nodes
                     .into_iter()
-                    .filter(|node| visited.insert(node.clone()))
+                    .filter(|node| walker.visited.insert(node.clone()))
                     .take(limits.max_nodes)
                     .collect();
                 for (node, info) in nodes.iter().zip(tree.info(&nodes)) {
                     if let Ok(info) = info {
-                        collector.consider(node.clone(), &info, clip);
+                        walker.collector.consider(node.clone(), &info, clip, false);
                     }
                 }
             }
@@ -369,8 +414,22 @@ pub(crate) fn collect<T: Tree>(
             }
         }
     }
-    walk(tree, walk_roots, clip, limits, &mut visited, &mut collector);
-    let mut found = collector.finish();
+    let level: Vec<T::Node> = walk_roots
+        .into_iter()
+        .filter(|node| walker.visited.insert(node.clone()))
+        .collect();
+    let webs = vec![false; level.len()];
+    let (later, later_webs) = walker.walk(tree, level, webs, Pass::InView);
+    if !later.is_empty() {
+        tracing::debug!("walking {} web subtrees out of view", later.len());
+        let (level, webs, full) = walker.expand(tree, &later, &later_webs);
+        if full {
+            walker.finish_level(tree, level, &webs, Pass::OutOfView);
+        } else {
+            walker.walk(tree, level, webs, Pass::OutOfView);
+        }
+    }
+    let mut found = walker.collector.finish();
     let nodes: Vec<(T::Node, ValueKind)> =
         found.iter().map(|f| (f.node.clone(), f.value)).collect();
     for (found, texts) in found.iter_mut().zip(tree.texts(&nodes)) {
@@ -383,74 +442,132 @@ pub(crate) fn collect<T: Tree>(
     found
 }
 
-fn walk<T: Tree>(
-    tree: &mut T,
-    roots: Vec<T::Node>,
+/// Which objects a walk pass reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    /// Everything in view; out-of-view web subtrees are set aside.
+    InView,
+    /// The set-aside web subtrees.
+    OutOfView,
+}
+
+/// The state of one scan's breadth-first walks.
+struct Walker<N> {
     clip: Rect,
     limits: Limits,
-    visited: &mut HashSet<T::Node>,
-    collector: &mut Collector<T::Node>,
-) {
-    let mut level: Vec<T::Node> = roots
-        .into_iter()
-        .filter(|node| visited.insert(node.clone()))
-        .collect();
-    let mut depth = 0;
-    while !level.is_empty() {
-        if Instant::now() >= limits.deadline {
-            tracing::debug!("tree walk hit its deadline at depth {depth}");
-            return;
-        }
-        let level_started = Instant::now();
-        let count = level.len();
-        let infos = tree.info(&level);
-        tracing::trace!(
-            "level {depth}: {count} objects in {:?}",
-            level_started.elapsed()
-        );
-        let parents: Vec<T::Node> = level
-            .into_iter()
-            .zip(infos)
-            .filter_map(|(node, info)| {
-                let info = info.ok()?;
-                collector.consider(node.clone(), &info, clip);
-                descend(&info, clip).then_some(node)
-            })
-            .collect();
-        if depth >= limits.max_depth {
-            tracing::debug!("tree walk hit its depth limit {depth}");
-            return;
-        }
-        depth += 1;
-        let mut next = Vec::new();
-        for children in tree.children(&parents).into_iter().flatten() {
-            for child in children {
-                if visited.len() >= limits.max_nodes {
-                    tracing::debug!("tree walk hit its node limit {}", limits.max_nodes);
-                    level = next;
-                    // Examine what was already fetched, then stop.
-                    finish_level(tree, level, clip, collector);
-                    return;
+    visited: HashSet<N>,
+    collector: Collector<N>,
+}
+
+impl<N: Clone + Eq + Hash> Walker<N> {
+    /// Whether an object may be collected (and walked) while out of view.
+    fn out_of_view(&self, pass: Pass, web: bool) -> bool {
+        pass == Pass::OutOfView || (web && self.limits.browser == BrowserMode::Exhaustive)
+    }
+
+    /// Walks level by level from `level` (`webs[i]`: whether `level[i]` is inside a web
+    /// document). Returns the objects whose children were set aside for [`Pass::OutOfView`],
+    /// with the web flag of those children.
+    fn walk<T: Tree<Node = N>>(
+        &mut self,
+        tree: &mut T,
+        mut level: Vec<N>,
+        mut webs: Vec<bool>,
+        pass: Pass,
+    ) -> (Vec<N>, Vec<bool>) {
+        let (mut later, mut later_webs) = (Vec::new(), Vec::new());
+        let mut depth = 0;
+        while !level.is_empty() {
+            if Instant::now() >= self.limits.deadline {
+                tracing::debug!("tree walk hit its deadline at depth {depth}");
+                break;
+            }
+            let level_started = Instant::now();
+            let count = level.len();
+            let infos = tree.info(&level);
+            tracing::trace!(
+                "level {depth}: {count} objects in {:?}",
+                level_started.elapsed()
+            );
+            let (mut parents, mut parent_webs) = (Vec::new(), Vec::new());
+            for ((node, web), info) in level.into_iter().zip(webs).zip(infos) {
+                let Ok(info) = info else {
+                    continue;
+                };
+                let out_of_view = self.out_of_view(pass, web);
+                self.collector
+                    .consider(node.clone(), &info, self.clip, out_of_view);
+                let child_web = web || info.role == AtRole::DocumentWeb;
+                match descend(&info, self.clip, out_of_view) {
+                    Descend::Later if pass == Pass::InView => {
+                        later.push(node);
+                        later_webs.push(child_web);
+                    }
+                    Descend::Now | Descend::Later => {
+                        parents.push(node);
+                        parent_webs.push(child_web);
+                    }
+                    Descend::No => {}
                 }
-                if visited.insert(child.clone()) {
+            }
+            if depth >= self.limits.max_depth {
+                tracing::debug!("tree walk hit its depth limit {depth}");
+                break;
+            }
+            depth += 1;
+            let (next, next_webs, full) = self.expand(tree, &parents, &parent_webs);
+            if full {
+                // Examine what was already fetched, then stop.
+                self.finish_level(tree, next, &next_webs, pass);
+                break;
+            }
+            level = next;
+            webs = next_webs;
+        }
+        (later, later_webs)
+    }
+
+    /// The unvisited children of `parents`, each with its parent's entry of `webs`; `true`
+    /// when the node limit cut the list short.
+    fn expand<T: Tree<Node = N>>(
+        &mut self,
+        tree: &mut T,
+        parents: &[N],
+        webs: &[bool],
+    ) -> (Vec<N>, Vec<bool>, bool) {
+        let (mut next, mut next_webs) = (Vec::new(), Vec::new());
+        for (children, web) in tree.children(parents).into_iter().zip(webs) {
+            let Ok(children) = children else {
+                continue;
+            };
+            for child in children {
+                if self.visited.len() >= self.limits.max_nodes {
+                    tracing::debug!("tree walk hit its node limit {}", self.limits.max_nodes);
+                    return (next, next_webs, true);
+                }
+                if self.visited.insert(child.clone()) {
                     next.push(child);
+                    next_webs.push(*web);
                 }
             }
         }
-        level = next;
+        (next, next_webs, false)
     }
-}
 
-fn finish_level<T: Tree>(
-    tree: &mut T,
-    level: Vec<T::Node>,
-    clip: Rect,
-    collector: &mut Collector<T::Node>,
-) {
-    let infos = tree.info(&level);
-    for (node, info) in level.into_iter().zip(infos) {
-        if let Ok(info) = info {
-            collector.consider(node, &info, clip);
+    /// Considers `level` without descending (the node limit was reached).
+    fn finish_level<T: Tree<Node = N>>(
+        &mut self,
+        tree: &mut T,
+        level: Vec<N>,
+        webs: &[bool],
+        pass: Pass,
+    ) {
+        let infos = tree.info(&level);
+        for ((node, web), info) in level.into_iter().zip(webs).zip(infos) {
+            if let Ok(info) = info {
+                let out_of_view = self.out_of_view(pass, *web);
+                self.collector.consider(node, &info, self.clip, out_of_view);
+            }
         }
     }
 }
@@ -527,6 +644,7 @@ mod tests {
             role,
             name: format!("{role:?}"),
             showing: true,
+            visible: true,
             enabled: true,
             focusable: false,
             editable: false,
@@ -541,6 +659,7 @@ mod tests {
             max_nodes: 10_000,
             deadline: Instant::now() + Duration::from_secs(5),
             bulk: false,
+            browser: BrowserMode::Fast,
         }
     }
 
@@ -568,6 +687,82 @@ mod tests {
         custom.focusable = true;
         tree.add(10, Some(1), custom);
         tree
+    }
+
+    /// frame(20) > [document(21) > [link in view(22), link scrolled below(23), section below(24)
+    /// > link(25), hidden link(26)], native button off screen(27)]
+    fn long_page() -> FakeTree {
+        let scrolled = |role, rect| NodeInfo {
+            showing: false,
+            ..node(role, rect)
+        };
+        let mut tree = FakeTree::default();
+        tree.add(20, None, node(AtRole::Frame, CLIP));
+        tree.add(21, Some(20), node(AtRole::DocumentWeb, CLIP));
+        tree.add(22, Some(21), node(AtRole::Link, Rect::new(10, 10, 80, 20)));
+        tree.add(
+            23,
+            Some(21),
+            scrolled(AtRole::Link, Rect::new(10, 3000, 80, 20)),
+        );
+        tree.add(
+            24,
+            Some(21),
+            scrolled(AtRole::Section, Rect::new(0, 4000, 1000, 500)),
+        );
+        tree.add(
+            25,
+            Some(24),
+            scrolled(AtRole::Link, Rect::new(10, 4100, 80, 20)),
+        );
+        let mut hidden = scrolled(AtRole::Link, Rect::new(10, 20, 80, 20));
+        hidden.visible = false;
+        tree.add(26, Some(21), hidden);
+        tree.add(
+            27,
+            Some(20),
+            node(AtRole::Button, Rect::new(2000, 0, 10, 10)),
+        );
+        tree.bulk = Some(vec![22]);
+        tree
+    }
+
+    fn offscreen_flags(found: &[Found<u32>]) -> Vec<(u32, bool)> {
+        found
+            .iter()
+            .map(|f| (f.node, f.element.offscreen))
+            .collect()
+    }
+
+    #[test]
+    fn fast_collects_only_the_part_of_the_page_in_view() {
+        for bulk in [false, true] {
+            let fast = Limits { bulk, ..limits() };
+            let found = collect(&mut long_page(), &[20], CLIP, fast);
+            assert_eq!(offscreen_flags(&found), [(22, false)]);
+        }
+    }
+
+    #[test]
+    fn exhaustive_collects_the_page_scrolled_out_of_view_last() {
+        let exhaustive = Limits {
+            bulk: true,
+            browser: BrowserMode::Exhaustive,
+            ..limits()
+        };
+        // The bulk match sees showing objects only, so exhaustive mode walks instead.
+        let found = collect(&mut long_page(), &[20], CLIP, exhaustive);
+        assert_eq!(
+            offscreen_flags(&found),
+            [(22, false), (23, true), (25, true)]
+        );
+        // A node budget used up by what is in view leaves the set-aside subtrees unwalked.
+        let tight = Limits {
+            max_nodes: 7,
+            ..exhaustive
+        };
+        let found = collect(&mut long_page(), &[20], CLIP, tight);
+        assert_eq!(offscreen_flags(&found), [(22, false), (23, true)]);
     }
 
     #[test]

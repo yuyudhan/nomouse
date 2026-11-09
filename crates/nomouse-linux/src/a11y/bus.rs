@@ -13,7 +13,7 @@ use atspi::proxy::text::TextProxy;
 use atspi::proxy::value::ValueProxy;
 use atspi::{
     CoordType, Interface, InterfaceSet, MatchType, ObjectMatchRule, ObjectRefOwned, Role as AtRole,
-    SortOrder, State, StateSet,
+    ScrollType, SortOrder, State, StateSet,
 };
 use futures_util::future::join_all;
 use nomouse_core::{PlatformError, Rect};
@@ -34,6 +34,7 @@ fn node_info(
         role,
         name: String::new(),
         showing: states.contains(State::Showing) && states.contains(State::Visible),
+        visible: states.contains(State::Visible),
         enabled: states.contains(State::Enabled) && states.contains(State::Sensitive),
         focusable: states.contains(State::Focusable),
         editable: states.contains(State::Editable),
@@ -325,6 +326,25 @@ impl Bus {
                 None => false,
             }
         })
+    }
+
+    /// Asks the object's toolkit to scroll it into view (`Component.ScrollTo`, anywhere in its
+    /// window). Returns whether the toolkit agreed.
+    pub(crate) fn scroll_into_view(&self, obj: &Obj) -> bool {
+        block_on(async {
+            match self.component(obj).await {
+                Ok(component) => component
+                    .scroll_to(ScrollType::Anywhere)
+                    .await
+                    .unwrap_or(false),
+                Err(_) => false,
+            }
+        })
+    }
+
+    /// The object's current screen extents, `None` when they cannot be read.
+    pub(crate) fn extents(&self, obj: &Obj) -> Option<Rect> {
+        block_on(self.extents_of(obj)).ok()
     }
 }
 

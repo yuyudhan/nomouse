@@ -153,6 +153,7 @@ mod tests {
             value: String::new(),
             bounds: Rect::new(x, y, 5, 5),
             enabled: true,
+            offscreen: false,
         };
         let hints = assign_hints(&Alphabet::default(), vec![make(1, 10, 50), make(2, 0, 0)]);
         assert_eq!(hints[0].label, "a");

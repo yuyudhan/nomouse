@@ -64,6 +64,22 @@ pub struct HintsConfig {
     /// label highlights; Return clicks, Return twice double clicks, Shift-Return right clicks,
     /// Cmd-Return cmd-clicks).
     pub keys: KeyBindings,
+    /// How much of a web page is collected: `fast` (what is in the viewport) or `exhaustive`
+    /// (the whole document, so search finds links scrolled out of view).
+    pub browser: BrowserMode,
+}
+
+/// How much of a web document (a browser page, an Electron app) a scan collects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BrowserMode {
+    /// Only the part of the page inside the viewport: the quickest scan.
+    #[default]
+    Fast,
+    /// The whole document within the walk's limits: elements scrolled out of view are
+    /// collected too ([`crate::Element::offscreen`]); search finds them and picking one scrolls
+    /// it into view. Slower on long pages.
+    Exhaustive,
 }
 
 impl Default for HintsConfig {
@@ -74,6 +90,7 @@ impl Default for HintsConfig {
             action: ActionKind::Click,
             semantic_click: false,
             keys: KeyBindings::Nomouse,
+            browser: BrowserMode::Fast,
         }
     }
 }
@@ -620,6 +637,15 @@ mod tests {
         assert_eq!(auto.colours(Appearance::Light).unwrap()[1], [0, 0xff, 0]);
         // The defaults serialise without colours, so `config init` keeps following the theme.
         assert!(!Config::default().to_toml().contains("background"));
+    }
+
+    #[test]
+    fn browser_mode_defaults_to_fast_and_parses_exhaustive() {
+        assert_eq!(Config::default().hints.browser, BrowserMode::Fast);
+        let config = Config::from_toml("[hints]\nbrowser = \"exhaustive\"\n").unwrap();
+        assert_eq!(config.hints.browser, BrowserMode::Exhaustive);
+        assert!(Config::from_toml("[hints]\nbrowser = \"thorough\"\n").is_err());
+        assert!(Config::default().to_toml().contains("browser = \"fast\""));
     }
 
     #[test]

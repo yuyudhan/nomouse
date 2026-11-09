@@ -149,6 +149,7 @@ mod tests {
             value: String::new(),
             bounds: Rect::new(0, y, 10, 10),
             enabled: true,
+            offscreen: false,
         }
     }
 

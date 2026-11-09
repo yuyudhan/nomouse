@@ -22,6 +22,7 @@ fn elements(count: usize) -> Vec<Element> {
                 10,
             ),
             enabled: true,
+            offscreen: false,
         })
         .collect()
 }

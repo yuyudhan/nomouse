@@ -4,12 +4,14 @@
 //! The walk is a depth-first pre-order traversal with three limits (depth, node count and a
 //! time budget) and cycle detection (a node reached twice is visited once). Subtrees whose
 //! frame lies entirely outside the visible region are pruned: scrolled-away rows and off-screen
-//! content cannot be clicked.
+//! content cannot be clicked, except in web documents under `hints.browser = "exhaustive"`,
+//! where they are walked last and reported as off-screen (search finds them).
 
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::time::Duration;
 
+use nomouse_core::config::BrowserMode;
 use nomouse_core::{PlatformError, Rect, Role};
 
 use crate::roles::{RoleFacts, classify};
@@ -68,6 +70,10 @@ pub struct Limits {
     pub max_nodes: usize,
     /// The walk stops once this much time has passed.
     pub time_budget: Duration,
+    /// [`BrowserMode::Exhaustive`] keeps the parts of web documents (below an `AXWebArea`)
+    /// that are scrolled out of view, after everything visible; [`BrowserMode::Fast`] prunes
+    /// them like any other off-screen subtree.
+    pub browser: BrowserMode,
 }
 
 impl Default for Limits {
@@ -76,6 +82,7 @@ impl Default for Limits {
             max_depth: 48,
             max_nodes: 4000,
             time_budget: Duration::from_millis(600),
+            browser: BrowserMode::Fast,
         }
     }
 }
@@ -110,6 +117,12 @@ pub struct Found<N> {
     pub enabled: bool,
     /// Whether the element supports `AXPress`.
     pub pressable: bool,
+    /// Scrolled out of view: web content outside `visible`, kept by
+    /// [`BrowserMode::Exhaustive`].
+    pub offscreen: bool,
+    /// The region the element's content is visible in (its window, narrowed by the scroll
+    /// areas around it).
+    pub visible: Rect,
 }
 
 /// The result of a walk.
@@ -143,9 +156,15 @@ struct Pending<N> {
     max_depth: usize,
     visible: Rect,
     parent_role: Option<String>,
+    /// The frame of the innermost `AXWebArea` above it (empty when it reports none).
+    web: Option<Rect>,
+    /// Out of view, walked after everything visible: its subtree is not pruned.
+    offscreen: bool,
 }
 
-/// Walks `roots` in order. `elapsed` reports time since the walk began.
+/// Walks `roots` in order. `elapsed` reports time since the walk began. With
+/// [`BrowserMode::Exhaustive`] the out-of-view subtrees of web documents are set aside and walked
+/// once everything visible was, so they never use up the node or time budget first.
 ///
 /// # Errors
 /// The [`PlatformError`] of the first [`ReadError::Fatal`].
@@ -171,9 +190,22 @@ pub fn walk<T: AxTree>(
             max_depth: root.max_depth.min(limits.max_depth),
             visible: root.visible,
             parent_role: None,
+            web: None,
+            offscreen: false,
         })
         .collect();
-    while let Some(pending) = stack.pop() {
+    let mut set_aside: Vec<Pending<T::Node>> = Vec::new();
+    let exhaustive = limits.browser == BrowserMode::Exhaustive;
+    let mut stand_ins: u32 = 0;
+    loop {
+        let Some(pending) = stack.pop() else {
+            if set_aside.is_empty() {
+                break;
+            }
+            stack = std::mem::take(&mut set_aside);
+            stack.reverse();
+            continue;
+        };
         if result.visited >= limits.max_nodes {
             result.truncated.get_or_insert(Truncation::Nodes);
             break;
@@ -192,10 +224,16 @@ pub fn walk<T: AxTree>(
             Err(ReadError::Skip) => continue,
             Err(ReadError::Fatal(error)) => return Err(error),
         };
-        if let Some(frame) = info.frame
-            && !frame.is_empty()
-            && !frame.intersects(&pending.visible)
-        {
+        let out_of_view = is_out_of_view(info.frame, &pending, exhaustive);
+        if out_of_view && !pending.offscreen {
+            if pending.web.is_some() && exhaustive {
+                // Read again in the second pass, so forget it was seen.
+                seen.remove(&pending.node);
+                set_aside.push(Pending {
+                    offscreen: true,
+                    ..pending
+                });
+            }
             continue;
         }
         let facts = RoleFacts {
@@ -204,50 +242,106 @@ pub fn walk<T: AxTree>(
             parent_role: pending.parent_role.as_deref(),
             pressable: info.pressable,
         };
-        if let Some(role) = classify(facts) {
+        let role = classify(facts);
+        if !info.children.is_empty() {
+            if pending.depth < pending.max_depth {
+                push_children(&mut stack, &pending, &info.role, info.frame, info.children);
+            } else if pending.max_depth == limits.max_depth {
+                result.truncated.get_or_insert(Truncation::Depth);
+            }
+        }
+        if let Some(role) = role {
+            let bounds = match (info.frame, pending.web) {
+                (Some(frame), Some(web)) if out_of_view && frame.is_empty() => {
+                    stand_ins = stand_ins.saturating_add(1);
+                    stand_in(frame, web, stand_ins - 1)
+                }
+                (frame, _) => frame.unwrap_or_default(),
+            };
             result.found.push(Found {
                 node: pending.node,
                 role,
                 name: info.name,
                 description: info.description,
                 value: info.value,
-                bounds: info.frame.unwrap_or_default(),
+                bounds,
                 enabled: info.enabled,
                 pressable: info.pressable,
-            });
-        }
-        if info.children.is_empty() {
-            continue;
-        }
-        if pending.depth >= pending.max_depth {
-            if pending.max_depth == limits.max_depth {
-                result.truncated.get_or_insert(Truncation::Depth);
-            }
-            continue;
-        }
-        // A scroll area or a clipping container narrows what is visible below it.
-        let visible = match info.frame {
-            Some(frame) if !frame.is_empty() && clips(&info.role) => {
-                intersection(frame, pending.visible)
-            }
-            _ => pending.visible,
-        };
-        for child in info.children.into_iter().rev() {
-            stack.push(Pending {
-                node: child,
-                depth: pending.depth + 1,
-                max_depth: pending.max_depth,
-                visible,
-                parent_role: Some(info.role.clone()),
+                offscreen: out_of_view,
+                visible: pending.visible,
             });
         }
     }
     Ok(result)
 }
 
+/// Queues the `children` of `parent` (role `role`, frame `frame`) so they pop in order.
+fn push_children<N>(
+    stack: &mut Vec<Pending<N>>,
+    parent: &Pending<N>,
+    role: &str,
+    frame: Option<Rect>,
+    children: Vec<N>,
+) {
+    // A scroll area or a clipping container narrows what is visible below it (not out of
+    // view, where the region stays the one the content would be scrolled into).
+    let visible = match frame {
+        Some(frame) if !frame.is_empty() && clips(role) && !parent.offscreen => {
+            intersection(frame, parent.visible)
+        }
+        _ => parent.visible,
+    };
+    let web = if role == "AXWebArea" {
+        Some(frame.unwrap_or_default())
+    } else {
+        parent.web
+    };
+    for child in children.into_iter().rev() {
+        stack.push(Pending {
+            node: child,
+            depth: parent.depth + 1,
+            max_depth: parent.max_depth,
+            visible,
+            parent_role: Some(role.to_owned()),
+            web,
+            offscreen: parent.offscreen,
+        });
+    }
+}
+
 /// Roles whose frame clips their content.
 fn clips(role: &str) -> bool {
     matches!(role, "AXScrollArea" | "AXWindow" | "AXSheet" | "AXDrawer")
+}
+
+/// Whether a node with `frame` lies outside the region `pending` is visible in. In exhaustive
+/// mode an empty frame in a web document counts too: Chromium reports content scrolled out of
+/// view zero pixels high, pinned to the edge it went past (and leaves that stale when the
+/// window moves), so the frame says nothing about where the element is.
+fn is_out_of_view<N>(frame: Option<Rect>, pending: &Pending<N>, exhaustive: bool) -> bool {
+    frame.is_some_and(|frame| {
+        if frame.is_empty() {
+            exhaustive && pending.web.is_some()
+        } else {
+            !frame.intersects(&pending.visible)
+        }
+    })
+}
+
+/// A one-point-high frame standing in for the `index`-th element with an empty `reported`
+/// frame in the web area `web`: just past the edge it is nearer to, one point further out per
+/// element, so every such element keeps a target of its own (until it is scrolled into view
+/// and read again).
+fn stand_in(reported: Rect, web: Rect, index: u32) -> Rect {
+    let offset = i64::from(index);
+    let below = i64::from(reported.y) > i64::from(web.y) + i64::from(web.height / 2);
+    let y = if below {
+        i64::from(web.y) + i64::from(web.height) + offset
+    } else {
+        i64::from(web.y) - 1 - offset
+    };
+    let y = i32::try_from(y).unwrap_or(if y < 0 { i32::MIN } else { i32::MAX });
+    Rect::new(reported.x, y, reported.width.max(1), 1)
 }
 
 fn intersection(a: Rect, b: Rect) -> Rect {
@@ -505,6 +599,105 @@ mod tests {
         let walk = walk(&mut tree, vec![root(1)], limits, no_time()).unwrap();
         assert_eq!(ids(&walk), [2, 3]);
         assert_eq!(walk.truncated, Some(Truncation::Nodes));
+    }
+
+    /// window(1) > [web area(2) > [link above the viewport(3), group below(4) > link(5),
+    /// visible link(6)], native button off screen(7)]
+    fn long_page() -> FakeTree {
+        let mut tree = FakeTree::default();
+        tree.add(1, "AXWindow", SCREEN, &[2, 7]);
+        tree.add(2, "AXWebArea", SCREEN, &[3, 4, 6]);
+        tree.add(3, "AXLink", Rect::new(10, -500, 20, 20), &[]);
+        tree.add(4, "AXGroup", Rect::new(0, 2000, 1000, 900), &[5]);
+        tree.add(5, "AXLink", Rect::new(10, 2500, 20, 20), &[]);
+        tree.add(6, "AXLink", SMALL, &[]);
+        tree.add(7, "AXButton", Rect::new(3000, 10, 20, 20), &[]);
+        tree
+    }
+
+    #[test]
+    fn fast_prunes_the_page_outside_the_viewport() {
+        let walk = walk(
+            &mut long_page(),
+            vec![root(1)],
+            Limits::default(),
+            no_time(),
+        )
+        .unwrap();
+        assert_eq!(ids(&walk), [6]);
+        assert!(!walk.found[0].offscreen);
+    }
+
+    #[test]
+    fn empty_web_frames_get_stand_ins_in_exhaustive_mode() {
+        // Chromium reports content scrolled out of view zero pixels high on the web area's
+        // edge it went past (stale once the window moved): two links below on the same spot,
+        // one above, one left mid-area. A native zero-size button keeps its empty frame.
+        let web = Rect::new(0, 100, 1000, 500);
+        let mut tree = FakeTree::default();
+        tree.add(1, "AXWindow", SCREEN, &[2, 7]);
+        tree.add(2, "AXWebArea", web, &[3, 4, 5, 6]);
+        tree.add(3, "AXLink", Rect::new(10, 600, 40, 0), &[]);
+        tree.add(4, "AXLink", Rect::new(10, 600, 40, 0), &[]);
+        tree.add(5, "AXLink", Rect::new(10, 100, 40, 0), &[]);
+        tree.add(6, "AXLink", Rect::new(10, 300, 40, 0), &[]);
+        tree.add(7, "AXButton", Rect::new(10, 700, 0, 0), &[]);
+        let exhaustive = Limits {
+            browser: BrowserMode::Exhaustive,
+            ..Limits::default()
+        };
+        let found = walk(&mut tree, vec![root(1)], exhaustive, no_time()).unwrap();
+        assert_eq!(ids(&found), [7, 3, 4, 5, 6]);
+        let bounds: Vec<(Rect, bool)> = found
+            .found
+            .iter()
+            .map(|f| (f.bounds, f.offscreen))
+            .collect();
+        assert_eq!(
+            bounds,
+            [
+                (Rect::new(10, 700, 0, 0), false),
+                (Rect::new(10, 600, 40, 1), true),
+                (Rect::new(10, 601, 40, 1), true),
+                (Rect::new(10, 97, 40, 1), true),
+                (Rect::new(10, 96, 40, 1), true),
+            ]
+        );
+        // Fast mode leaves them as they are: empty, so they get no label.
+        let found = walk(&mut tree, vec![root(1)], Limits::default(), no_time()).unwrap();
+        assert_eq!(ids(&found), [3, 4, 5, 6, 7]);
+        assert!(
+            found
+                .found
+                .iter()
+                .all(|f| !f.offscreen && f.bounds.is_empty())
+        );
+    }
+
+    #[test]
+    fn exhaustive_walks_the_rest_of_the_page_last() {
+        let exhaustive = Limits {
+            browser: BrowserMode::Exhaustive,
+            ..Limits::default()
+        };
+        let mut tree = long_page();
+        let found = walk(&mut tree, vec![root(1)], exhaustive, no_time()).unwrap();
+        // The visible link first; then the page above and below it; never native windows'
+        // off-screen controls.
+        assert_eq!(ids(&found), [6, 3, 5]);
+        let offscreen: Vec<bool> = found.found.iter().map(|f| f.offscreen).collect();
+        assert_eq!(offscreen, [false, true, true]);
+        assert!(found.found.iter().all(|f| f.visible == SCREEN));
+        assert_eq!(found.truncated, None);
+
+        // A budget that runs out in the second pass still covers what is visible.
+        let tight = Limits {
+            max_nodes: 5,
+            ..exhaustive
+        };
+        let found = walk(&mut long_page(), vec![root(1)], tight, no_time()).unwrap();
+        assert_eq!(ids(&found), [6]);
+        assert_eq!(found.truncated, Some(Truncation::Nodes));
     }
 
     #[test]

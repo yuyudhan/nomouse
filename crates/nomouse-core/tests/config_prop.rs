@@ -1,7 +1,7 @@
 //! Property tests: every valid configuration survives a TOML round trip, out-of-range values are
 //! rejected, and fuzzy search accepts exactly the queries that are subsequences of the name.
 
-use nomouse_core::config::{Config, HintsConfig, OverlayConfig, ScrollConfig, Theme};
+use nomouse_core::config::{BrowserMode, Config, HintsConfig, OverlayConfig, ScrollConfig, Theme};
 use nomouse_core::search::fuzzy_score;
 use nomouse_core::{ActionKind, ConfigError, KeyBindings, Scope};
 use proptest::prelude::*;
@@ -26,6 +26,7 @@ prop_compose! {
         action in prop::sample::select(ActionKind::ALL.to_vec()),
         semantic_click in any::<bool>(),
         keys in prop::sample::select(vec![KeyBindings::Nomouse, KeyBindings::Homerow]),
+        browser in prop::sample::select(vec![BrowserMode::Fast, BrowserMode::Exhaustive]),
         step in 1u32..=50,
         dash_step in 1u32..=100,
         font_size in 6u32..=72,
@@ -40,7 +41,7 @@ prop_compose! {
     ) -> Config {
         let [background, foreground, typed_foreground, border] = colours;
         Config {
-            hints: HintsConfig { alphabet, scope, action, semantic_click, keys },
+            hints: HintsConfig { alphabet, scope, action, semantic_click, keys, browser },
             scroll: ScrollConfig { step, dash_step },
             overlay: OverlayConfig {
                 font_size,

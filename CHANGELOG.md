@@ -7,6 +7,14 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Added
+
+- `hints.browser = "exhaustive"`: a scan reads the whole web page (browser tabs, Electron
+  windows), not only what is in view, so search also finds links and buttons scrolled out of
+  view; picking one scrolls it into view first (`AXScrollToVisible` on macOS,
+  `Component.ScrollTo` on Linux) and acts where it lands. Hint mode still labels only what is
+  in view. The default, `"fast"`, keeps reading only the viewport.
+
 ## [0.1.1] - 2026-11-09
 
 ### Fixed

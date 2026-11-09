@@ -185,6 +185,10 @@ pub struct Element {
     pub bounds: Rect,
     /// Whether the element is enabled (disabled elements get no hint).
     pub enabled: bool,
+    /// Outside the visible part of its window: web content beyond the viewport, collected only
+    /// with `hints.browser = "exhaustive"`. Search finds it and picking it scrolls it into view
+    /// first; hint mode does not label it (the label could not be seen).
+    pub offscreen: bool,
 }
 
 impl Element {
@@ -199,9 +203,10 @@ impl Element {
     }
 }
 
-/// Deterministic reading order: top to bottom, then left to right, then by id.
+/// Deterministic reading order: visible elements before [`Element::offscreen`] ones, then top
+/// to bottom, then left to right, then by id.
 pub fn reading_order(a: &Element, b: &Element) -> Ordering {
-    (a.bounds.y, a.bounds.x, a.id).cmp(&(b.bounds.y, b.bounds.x, b.id))
+    (a.offscreen, a.bounds.y, a.bounds.x, a.id).cmp(&(b.offscreen, b.bounds.y, b.bounds.x, b.id))
 }
 
 #[cfg(test)]
@@ -217,6 +222,7 @@ mod tests {
             value: String::new(),
             bounds: Rect::new(x, y, 10, 10),
             enabled: true,
+            offscreen: false,
         }
     }
 

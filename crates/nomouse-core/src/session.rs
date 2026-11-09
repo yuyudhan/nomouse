@@ -126,10 +126,11 @@ impl HintSession {
     /// Scroll mode labels the scrollable containers ([`Role::ScrollArea`]), so scrolling acts on
     /// the area rather than on a control inside it; when the backend reports no scroll area the
     /// clickable elements are labelled instead. Every other kind labels the clickable elements.
+    /// Elements scrolled out of view ([`Element::offscreen`]) get no label: it could not be seen.
     pub fn new(alphabet: &Alphabet, elements: Vec<Element>, kind: ActionKind) -> Self {
+        let visible = elements.into_iter().filter(|e| !e.offscreen);
         let targets = if kind == ActionKind::Scroll {
-            let (areas, rest): (Vec<Element>, Vec<Element>) = elements
-                .into_iter()
+            let (areas, rest): (Vec<Element>, Vec<Element>) = visible
                 .partition(|e| e.role == Role::ScrollArea && e.enabled && !e.bounds.is_empty());
             if areas.is_empty() {
                 rest.into_iter().filter(Element::is_clickable).collect()
@@ -137,7 +138,7 @@ impl HintSession {
                 areas
             }
         } else {
-            elements.into_iter().filter(Element::is_clickable).collect()
+            visible.filter(Element::is_clickable).collect()
         };
         let mut session = Self::empty(alphabet, kind, None);
         session.set_hints(assign_hints(alphabet, targets));
@@ -496,6 +497,7 @@ mod tests {
                 value: String::new(),
                 bounds: Rect::new(0, i32::try_from(i).unwrap() * 100, 10, 10),
                 enabled: true,
+                offscreen: false,
             })
             .collect()
     }
@@ -554,6 +556,7 @@ mod tests {
                 value: String::new(),
                 bounds: Rect::new(i32::try_from(i).unwrap() * 20, 0, 10, 10),
                 enabled: true,
+                offscreen: false,
             })
             .collect();
         let mut session = HintSession::new(&Alphabet::default(), many, ActionKind::Scroll);
@@ -598,6 +601,7 @@ mod tests {
             value: String::new(),
             bounds: Rect::new(0, y, 10, 10),
             enabled: true,
+            offscreen: false,
         }
     }
 
@@ -629,6 +633,46 @@ mod tests {
         );
         let clicks = HintSession::new(&Alphabet::default(), page(), ActionKind::Click);
         assert!(clicks.hints().iter().all(|h| h.element.id != ElementId(5)));
+    }
+
+    #[test]
+    fn offscreen_elements_are_searched_but_not_labelled() {
+        // Two "Next" links: one scrolled above the viewport (exhaustive browser collection),
+        // one visible further down; plus an off-viewport "Archive" link and a scroll area.
+        let mut above = element(7, Role::Link, "Next", -900);
+        above.offscreen = true;
+        let mut archive = element(8, Role::Link, "Archive", 4000);
+        archive.offscreen = true;
+        let mut hidden_area = element(9, Role::ScrollArea, "Comments", 3000);
+        hidden_area.offscreen = true;
+        let mut elements = page();
+        elements.extend([
+            above,
+            element(10, Role::Link, "Next", 600),
+            archive,
+            hidden_area,
+        ]);
+
+        let clicks = HintSession::new(&Alphabet::default(), elements.clone(), ActionKind::Click);
+        let ids: Vec<u64> = clicks.hints().iter().map(|h| h.element.id.0).collect();
+        assert_eq!(ids, vec![1, 2, 4, 6, 10]);
+        let scroll = HintSession::new(&Alphabet::default(), elements.clone(), ActionKind::Scroll);
+        assert_eq!(scroll.hints().len(), 1);
+        assert_eq!(scroll.hints()[0].element.id, ElementId(5));
+
+        // Search reaches the off-viewport link, and a visible match beats an off-viewport one
+        // with the same score even though the latter is higher up the page.
+        let mut search =
+            HintSession::search(&Alphabet::default(), elements.clone(), ActionKind::Click);
+        type_query(&mut search, "archive");
+        assert_eq!(
+            search.key(KeyPress::Enter),
+            SessionEvent::Perform(Action::click(Point::new(5, 4005)))
+        );
+        let mut search = HintSession::search(&Alphabet::default(), elements, ActionKind::Click);
+        type_query(&mut search, "next");
+        let ids: Vec<u64> = search.visible().iter().map(|h| h.element.id.0).collect();
+        assert_eq!(ids, vec![10, 7]);
     }
 
     #[test]

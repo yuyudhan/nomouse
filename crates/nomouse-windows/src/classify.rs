@@ -69,6 +69,7 @@ pub(crate) fn to_element(raw: &RawElement) -> Element {
             raw.bounds.height(),
         ),
         enabled: raw.enabled,
+        offscreen: false,
     }
 }
 

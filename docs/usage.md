@@ -104,6 +104,11 @@ Search matches an element's name, its tooltip or description, a text field's con
 slider's value, and its role, so `button` or `check box` find those. Password fields are never
 searched.
 
+On a long web page, search normally sees only what is in view. With
+`hints.browser = "exhaustive"` it reads the whole page (Linux and macOS), so it also finds a
+link or button you would have to scroll to; picking it scrolls it into view and clicks it
+there. On macOS, Chromium browsers also need their bundle id in `macos.enhanced_ui_apps`.
+
 ## Homerow key bindings
 
 If your fingers know [Homerow](https://www.homerow.app/), set `hints.keys = "homerow"`: a
