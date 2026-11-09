@@ -84,7 +84,8 @@ another in the config.
 `doctor`'s "tray icon" line says why. GNOME shows tray icons only with the AppIndicator
 extension: Ubuntu ships it on (`gnome-extensions list --enabled` lists
 `ubuntu-appindicators@ubuntu.com`); elsewhere install "AppIndicator and KStatusNotifierItem
-Support". i3 and Sway need a bar with a tray (i3bar's `tray_output`, waybar's `tray` module).
+Support". Sway and Hyprland need a bar with a tray (waybar's `tray` module); i3bar shows only
+the older XEmbed tray icons, so run `snixembed` to bridge them.
 Without a tray, open the settings from the app launcher; the hotkeys work either way.
 
 **Picking nomouse in the launcher shows a notification, not the settings window**

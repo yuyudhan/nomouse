@@ -10,7 +10,7 @@ apps, shows real labels and asserts the clicks landed; [testing.md](testing.md) 
 | macOS 11+, Apple silicon | supported | `nomouse-universal-apple-darwin.app.zip` (also `.dmg`, `.tar.gz`) | unit and fake-system tests in CI; desktop e2e (`just e2e-macos`) on an Apple silicon Mac against a Swift fixture app |
 | macOS 11+, Intel | supported | the same universal build | the Intel half is built in CI; no Intel desktop test |
 | Linux X11, x86_64 | supported | `nomouse-x86_64-unknown-linux-gnu.tar.gz`, `nomouse_amd64.deb` | e2e in CI on Xvfb + i3 with GTK, Chromium and Qt apps |
-| Linux X11, aarch64 | supported | `nomouse-aarch64-unknown-linux-gnu.tar.gz`, `nomouse_arm64.deb` | cross-built in CI; same code as x86_64 |
+| Linux X11, aarch64 | supported | `nomouse-aarch64-unknown-linux-gnu.tar.gz`, `nomouse_arm64.deb` | built on an arm64 runner in CI; same code as x86_64 |
 | Linux Wayland: Sway | supported | the Linux builds | e2e in CI on headless Sway with native Wayland and XWayland GTK windows, hotkey from a Sway `bindsym` |
 | Linux Wayland: Hyprland | supported, not e2e-tested | the Linux builds | the same wlroots protocols as Sway; window positions from Hyprland's IPC (`j/clients`) |
 | Linux Wayland: KDE Plasma | partial | the Linux builds | labels on the layer shell; clicks through `/dev/uinput`; only XWayland apps are placed correctly; no automated test |
@@ -59,6 +59,19 @@ need `--force-renderer-accessibility`.
 Apps running on XWayland report global coordinates and work fully on every compositor above.
 Setup for each is in [install.md](install.md#linux-wayland); the internals are in
 [wayland.md](wayland.md).
+
+## The Linux app: tray icon and settings window
+
+| Desktop | Tray icon | Settings window |
+|---------|-----------|-----------------|
+| GNOME (Xorg or Wayland) | with the AppIndicator extension (on by default on Ubuntu) | yes; on GNOME Wayland it says to log in with "Ubuntu on Xorg" |
+| KDE Plasma, Xfce, Cinnamon, MATE | yes (StatusNotifierItem) | yes |
+| Sway, Hyprland | with a bar that has a tray (waybar's `tray` module) | yes; the Hotkeys page shows the compositor lines |
+| i3 | not in i3bar, which shows only the older XEmbed icons; `snixembed` bridges them | yes |
+
+The settings window needs GTK 4.6 and libadwaita 1.1 or later (Ubuntu 22.04, Debian 12,
+Fedora 36 and later). The daemon runs without them. Tested in CI on Xvfb + i3 with a stand-in
+tray host and on headless Sway with waybar (`scripts/e2e-desktop.sh`).
 
 ## Apps
 
