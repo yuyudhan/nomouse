@@ -5,6 +5,7 @@ class Nomouse < Formula
     desc "Keyboard-driven clicking via the accessibility tree"
     homepage "https://github.com/yuyudhan/nomouse"
     version "@VERSION@"
+    license any_of: ["MIT", "Apache-2.0"]
 
     on_macos do
         url "https://github.com/yuyudhan/nomouse/releases/download/v@VERSION@/nomouse-universal-apple-darwin.tar.gz"

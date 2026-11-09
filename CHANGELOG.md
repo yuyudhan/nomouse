@@ -9,6 +9,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ### Added
 
+- Licence: MIT OR Apache-2.0, at your option (`LICENSE-MIT`, `LICENSE-APACHE`); release archives
+  carry both files and the Homebrew formula declares it.
 - Focus-then-act: a highlight starts on the first label; Tab, ↓ and Ctrl-N move it forward,
   Shift-Tab, ↑ and Ctrl-P back, and Return acts on it (holding any modifier pressed with
   Return). The highlighted label is drawn in inverted colours on Linux.

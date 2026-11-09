@@ -4,6 +4,7 @@ description = "Platform-independent core of nomouse: elements, hint labels, acti
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 publish.workspace = true
 

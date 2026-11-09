@@ -6,8 +6,9 @@
 #   BINARY   the built nomouse (or nomouse.exe)
 #   OUTDIR   where nomouse-NAME.tar.gz (or .zip for Windows) and its .sha256 go
 #
-# The archive holds one folder, nomouse-NAME/, with the binary, README.md, CHANGELOG.md and
-# LICENSE. Asset names carry no version, so releases/latest/download/<asset> always resolves.
+# The archive holds one folder, nomouse-NAME/, with the binary, README.md, CHANGELOG.md,
+# LICENSE-MIT and LICENSE-APACHE. Asset names carry no version, so releases/latest/download/<asset>
+# always resolves.
 set -euo pipefail
 
 if [ "$#" -ne 3 ]; then
@@ -29,7 +30,8 @@ trap 'rm -rf "$work"' EXIT
 folder="nomouse-${name}"
 mkdir -p "${work}/${folder}"
 cp "$binary" "${work}/${folder}/"
-cp "${root}/README.md" "${root}/CHANGELOG.md" "${root}/LICENSE" "${work}/${folder}/"
+cp "${root}/README.md" "${root}/CHANGELOG.md" "${root}/LICENSE-MIT" "${root}/LICENSE-APACHE" \
+    "${work}/${folder}/"
 chmod 755 "${work}/${folder}/$(basename "$binary")"
 
 if [[ "$name" == *-windows-* ]]; then

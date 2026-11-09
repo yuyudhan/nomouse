@@ -28,7 +28,7 @@ allow = [
     "ISC",
     "Zlib",
 ]
-# The workspace crates are unpublished and the project licence is not yet chosen.
+# The workspace crates (MIT OR Apache-2.0) are unpublished, so cargo-deny skips their own licence.
 private = { ignore = true }
 
 [bans]

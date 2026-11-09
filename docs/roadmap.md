@@ -16,7 +16,8 @@
   clients (native apps there are placed only through XWayland).
 - **M5, packaging**: `cargo install`, a Homebrew tap, an apt repository or PPA, winget and an MSI.
 
-Open: the licence (undecided).
+Decided: the licence is MIT OR Apache-2.0, and the name stays nomouse with the macOS bundle id
+`com.yuyudhan.nomouse` ([ADR 0003](adr/0003-licence-and-identity.md)).
 
 The remaining work, in slices with machines and acceptance tests, is in [plan.md](plan.md); the
 feature inventory and gap analysis against Homerow is in [features.md](features.md).

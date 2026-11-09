@@ -4,6 +4,7 @@ description = "Linux backend for nomouse: AT-SPI elements; X11 (XTEST, XGrabKey)
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
