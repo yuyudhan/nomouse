@@ -49,7 +49,7 @@ impl std::fmt::Debug for Overlay {
     }
 }
 
-fn cg_color(colour: Rgba) -> CFRetained<CGColor> {
+pub(crate) fn cg_color(colour: Rgba) -> CFRetained<CGColor> {
     CGColor::new_srgb(colour.red, colour.green, colour.blue, colour.alpha)
 }
 
@@ -130,10 +130,13 @@ fn text_units(text: &str) -> CGFloat {
     CGFloat::from(u32::try_from(text.chars().count()).unwrap_or(u32::MAX))
 }
 
-fn label_layer(
+/// One label as a layer, its box sized to the text and kept inside an area of `width` by
+/// `height` points (a screen's panel, or a settings window's preview) drawn at `scale`.
+pub(crate) fn label_layer(
     label: &Label,
     style: &LabelStyle,
-    panel: &Panel,
+    (width, height): (f64, f64),
+    scale: f64,
     opacity: f32,
 ) -> Retained<CALayer> {
     let advance = char_width(style.font_size);
@@ -142,13 +145,13 @@ fn label_layer(
     let typed_width = advance * text_units(&typed);
     let rest_width = advance * text_units(&rest);
     let line_height = (style.font_size * 1.25).ceil();
-    let width = typed_width + rest_width + 2.0 * PAD_X;
-    let height = line_height + 2.0 * PAD_Y;
-    let x = label.x.clamp(0.0, (panel.frame.width - width).max(0.0));
-    let y = (label.y - height).clamp(0.0, (panel.frame.height - height).max(0.0));
+    let box_width = typed_width + rest_width + 2.0 * PAD_X;
+    let box_height = line_height + 2.0 * PAD_Y;
+    let x = label.x.clamp(0.0, (width - box_width).max(0.0));
+    let y = (label.y - box_height).clamp(0.0, (height - box_height).max(0.0));
 
     let container = CALayer::new();
-    container.setFrame(rect(x, y, width, height));
+    container.setFrame(rect(x, y, box_width, box_height));
     // The highlighted label swaps background and text colours, so it stands out.
     let (fill, text) = if label.focused {
         (style.foreground, style.background)
@@ -160,14 +163,14 @@ fn label_layer(
     container.setBorderWidth(1.0);
     container.setCornerRadius(3.0);
     container.setOpacity(opacity);
-    container.setContentsScale(panel.scale);
+    container.setContentsScale(scale);
     if !typed.is_empty() {
-        let part = text_layer(&typed, style, style.typed_foreground, panel.scale);
+        let part = text_layer(&typed, style, style.typed_foreground, scale);
         part.setFrame(rect(PAD_X, PAD_Y, typed_width, line_height));
         container.addSublayer(&part);
     }
     if !rest.is_empty() {
-        let part = text_layer(&rest, style, text, panel.scale);
+        let part = text_layer(&rest, style, text, scale);
         part.setFrame(rect(PAD_X + typed_width, PAD_Y, rest_width, line_height));
         container.addSublayer(&part);
     }
@@ -249,9 +252,10 @@ impl Overlay {
         }
         for label in labels {
             if let Some(panel) = self.panels.get(label.screen) {
+                let area = (panel.frame.width, panel.frame.height);
                 panel
                     .root
-                    .addSublayer(&label_layer(label, style, panel, opacity));
+                    .addSublayer(&label_layer(label, style, area, panel.scale, opacity));
             }
         }
         CATransaction::commit();

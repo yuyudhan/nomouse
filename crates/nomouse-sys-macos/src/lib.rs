@@ -22,9 +22,13 @@ pub mod input;
 #[cfg(target_os = "macos")]
 pub mod layout;
 #[cfg(target_os = "macos")]
+pub mod login;
+#[cfg(target_os = "macos")]
 pub mod overlay;
 #[cfg(target_os = "macos")]
 pub mod tap;
+#[cfg(target_os = "macos")]
+pub mod ui;
 
 pub use error::AxError;
 pub use types::{
