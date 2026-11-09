@@ -74,7 +74,7 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-ACT-05 | Hover (move the pointer only) | `CGEvent` move | pointer motion | P1 | done (all) |
 | NM-ACT-06 | Drag: pick start, pick end | down, moves, up | same | P1 | done (all) |
 | NM-ACT-07 | Semantic click without moving the pointer | `AXPress`, `AXShowMenu` | AT-SPI `do_action` | P1 | done (all; `hints.semantic_click`) |
-| NM-ACT-08 | Middle click | `CGEvent` other button | button 2 | P2 | done (all; `--action`) |
+| NM-ACT-08 | Middle click | `CGEvent` other button | button 2 | P2 | partial (backends inject `MouseButton::Middle`; no `ActionKind` binds it) |
 | NM-ACT-09 | Homerow key bindings as an option: Return click, Return twice double click, Shift-Return right click, Cmd-Return cmd click | core | core | P1 | missing |
 | NM-ACT-10 | Focus a text field and leave the keyboard there (no chain click into inputs) | `AXFocused` | AT-SPI `grab_focus` | P1 | partial (clicking focuses; continuous mode does not stop at inputs) |
 
@@ -166,8 +166,8 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | --- | --- | --- | --- | --- |
 | P0 | 29 | 26 | 2 | 1 |
 | P1 | 25 | 4 | 4 | 17 |
-| P2 | 17 | 1 | 2 | 14 |
-| **All** | **71** | **31** | **8** | **32** |
+| P2 | 17 | 0 | 3 | 14 |
+| **All** | **71** | **30** | **9** | **32** |
 
 A feature counts as done when it is done on macOS and Linux X11 (Wayland limits are listed per
 row). The three open P0 items are all macOS distribution and onboarding: the signed and
