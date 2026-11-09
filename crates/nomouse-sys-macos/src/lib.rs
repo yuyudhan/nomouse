@@ -20,9 +20,13 @@ pub mod ax;
 #[cfg(target_os = "macos")]
 pub mod input;
 #[cfg(target_os = "macos")]
+pub mod layout;
+#[cfg(target_os = "macos")]
 pub mod overlay;
 #[cfg(target_os = "macos")]
 pub mod tap;
 
 pub use error::AxError;
-pub use types::{Button, Chord, Label, LabelStyle, ModifierFlags, Rgba, ScreenFrame, TapEvent};
+pub use types::{
+    Button, Chord, KeyLayout, Label, LabelStyle, ModifierFlags, Rgba, ScreenFrame, TapEvent,
+};

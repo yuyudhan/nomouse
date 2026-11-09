@@ -42,10 +42,12 @@ allowed, the Input Monitoring state and the Chromium/Electron opt-in list.
 
   The tree appears a moment after the attribute is set, so the very first activation in such
   an app may find few elements; activate again.
-- **Hotkeys** match by key position (ANSI layout) with exact modifiers; `meta` is Command and
-  `alt` is Option. The default `ctrl+space` is also macOS's "select previous input source"
-  shortcut: nomouse's tap sees it first and swallows it while nomouse runs. F21 to F24 do not
-  exist on Mac keyboards and are rejected.
+- **Hotkeys** on a character key match the key that types that character on the current
+  keyboard layout (re-matched when the layout changes); characters no key types alone (digits
+  on AZERTY, letters on Cyrillic) keep their ANSI position. Modifiers are exact; `meta` is
+  Command and `alt` is Option. The default `ctrl+space` is also macOS's "select previous input
+  source" shortcut: nomouse's tap sees it first and swallows it while nomouse runs. F21 to F24
+  do not exist on Mac keyboards and are rejected.
 - **Semantic click** (`hints.semantic_click = true`): a left click on a labelled element runs
   `AXPress`, a right click `AXShowMenu`; when the element refuses, nomouse clicks the pointer.
 - Coordinates are points in the global top-left space Accessibility and Quartz share; labels

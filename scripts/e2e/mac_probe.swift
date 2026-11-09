@@ -11,7 +11,9 @@
 //                                     in the current keyboard layout
 //   mac_probe key <chord>...          press chords such as escape, return, tab, ctrl+space
 //   mac_probe layout                  print the current keyboard layout's input source id
-//   mac_probe select-layout <id>      select the keyboard layout input source <id>
+//   mac_probe select-layout <id>      enable and select the keyboard layout input source <id>
+//   mac_probe layout-enabled <id>     exit 0 when <id> is in the user's input sources
+//   mac_probe disable-layout <id>     remove <id> from the user's input sources
 //
 // Every query is bounded: Accessibility calls time out after one second.
 import AppKit
@@ -95,6 +97,15 @@ func keyFor(_ character: Character) -> (UInt16, Bool) {
         }
     }
     fail("no key types \(character) in the current layout")
+}
+
+/// The input source with id `id`, among the enabled ones or, with `includeDisabled`, all.
+func inputSource(_ id: String, includeDisabled: Bool) -> TISInputSource {
+    let filter = [kTISPropertyInputSourceID: id] as CFDictionary
+    guard let list = TISCreateInputSourceList(filter, includeDisabled)?.takeRetainedValue() as? [TISInputSource],
+        let source = list.first
+    else { fail("no input source \(id)") }
+    return source
 }
 
 let named: [String: UInt16] = [
@@ -225,12 +236,17 @@ case ("layout", 1):
     guard let id = property(currentLayout(), kTISPropertyInputSourceID) else { fail("no id") }
     print(Unmanaged<CFString>.fromOpaque(id).takeUnretainedValue())
 case ("select-layout", 2):
-    let filter = [kTISPropertyInputSourceID: arguments[1]] as CFDictionary
-    guard let list = TISCreateInputSourceList(filter, true)?.takeRetainedValue() as? [TISInputSource],
-        let source = list.first
-    else { fail("no input source \(arguments[1])") }
+    let source = inputSource(arguments[1], includeDisabled: true)
     TISEnableInputSource(source)
     guard TISSelectInputSource(source) == noErr else { fail("cannot select \(arguments[1])") }
+case ("layout-enabled", 2):
+    let filter = [kTISPropertyInputSourceID: arguments[1]] as CFDictionary
+    let list = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource]
+    exit(list?.isEmpty == false ? 0 : 1)
+case ("disable-layout", 2):
+    guard TISDisableInputSource(inputSource(arguments[1], includeDisabled: true)) == noErr else {
+        fail("cannot disable \(arguments[1])")
+    }
 default:
     fail("unknown command: \(arguments.joined(separator: " "))")
 }

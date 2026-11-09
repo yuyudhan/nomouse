@@ -15,7 +15,7 @@ use nomouse_sys_macos::ax::{AxElement, is_process_trusted};
 use nomouse_sys_macos::input::{self, MouseEventKind};
 use nomouse_sys_macos::overlay::Overlay as Panels;
 use nomouse_sys_macos::tap::EventTap;
-use nomouse_sys_macos::{Button, Label, LabelStyle, ModifierFlags, TapEvent};
+use nomouse_sys_macos::{Button, KeyLayout, Label, LabelStyle, ModifierFlags, TapEvent, layout};
 
 use crate::ax_tree::{LiveTree, RootSet, not_trusted, roots};
 use crate::geometry::{lerp, screen_rect, to_panel, union, wheel_deltas};
@@ -55,6 +55,9 @@ pub struct MacPlatform {
     next_hotkey: u32,
     /// Registered chords by id; a chord registered twice is [`PlatformError::HotkeyTaken`].
     hotkeys: Vec<(u32, Hotkey)>,
+    /// The keyboard layout hotkeys were matched against; `None` when the input source has no
+    /// key layout data (hotkeys then match ANSI positions).
+    layout: Option<KeyLayout>,
     limits: Limits,
 }
 
@@ -103,6 +106,7 @@ impl MacPlatform {
             snapshot: Vec::new(),
             next_hotkey: 1,
             hotkeys: Vec::new(),
+            layout: layout::current(),
             limits: Limits::default(),
         })
     }
@@ -181,6 +185,25 @@ impl MacPlatform {
         self.panels
             .show(&self.app, &labels, &self.style, self.opacity);
         self.tap.set_grab(true);
+    }
+
+    /// Re-matches every hotkey when the user switched keyboard layouts, so `ctrl+alt+/` stays
+    /// on the key that types `/`.
+    fn follow_layout(&mut self) {
+        let current = layout::current_id();
+        if current.as_deref() == self.layout.as_ref().map(|held| held.id.as_str()) {
+            return;
+        }
+        self.layout = layout::current();
+        tracing::info!(
+            "keyboard layout {}: hotkeys re-matched",
+            current.as_deref().unwrap_or("without key layout data")
+        );
+        for (id, hotkey) in &self.hotkeys {
+            if let Some(chord) = chord(*hotkey, self.layout.as_ref()) {
+                self.tap.register(*id, chord);
+            }
+        }
     }
 }
 
@@ -334,7 +357,7 @@ impl HotkeySource for MacPlatform {
         if self.hotkeys.iter().any(|(_, held)| *held == hotkey) {
             return Err(PlatformError::HotkeyTaken(hotkey));
         }
-        let chord = chord(hotkey).ok_or_else(|| {
+        let chord = chord(hotkey, self.layout.as_ref()).ok_or_else(|| {
             PlatformError::Unsupported(format!("{hotkey}: macOS keyboards have no such key"))
         })?;
         let id = self.next_hotkey;
@@ -356,6 +379,7 @@ impl HotkeySource for MacPlatform {
         self.tap
             .ensure_enabled()
             .map_err(|error| PlatformError::PermissionDenied(error.to_string()))?;
+        self.follow_layout();
         let deadline = Instant::now() + timeout;
         loop {
             while let Some(event) = self.tap.pop() {

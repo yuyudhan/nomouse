@@ -107,7 +107,7 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | --- | --- | --- | --- | --- | --- |
 | NM-KEY-01 | Configurable chords for hints, continuous, scroll, search; duplicates rejected | event tap | `XGrabKey` / compositor binding | P0 | done (all) |
 | NM-KEY-02 | Wayland: compositor binds `nomouse hints` etc., which reach the daemon socket | n/a | socket in `$XDG_RUNTIME_DIR` | P0 | n/a / done / done / n/a |
-| NM-KEY-03 | Layout-aware hotkeys and labels (Dvorak, Colemak, AZERTY, non-Latin layouts) | `UCKeyTranslate` per input source | xkb keysyms (done) | P1 | partial (macOS matches ANSI key positions) / done / done / done |
+| NM-KEY-03 | Layout-aware hotkeys and labels (Dvorak, Colemak, AZERTY, non-Latin layouts) | `UCKeyTranslate` per input source | xkb keysyms (done) | P1 | done (macOS: hotkeys on the key that types the character, re-matched on layout switches; ANSI position when no key types it alone) / done / done / done |
 | NM-KEY-04 | Modifier-only shortcuts (e.g. double-tap Right Command) | flags-changed events in the tap | XInput2 raw modifier events | P2 | missing |
 | NM-KEY-05 | Hyper key friendly (cmd+ctrl+alt+shift chords recorded and matched) | tap | key grab | P2 | partial (chords with all four modifiers parse; untested with Hyperkey/Karabiner) |
 | NM-KEY-06 | GlobalShortcuts portal on Wayland (KDE, GNOME 48+) | n/a | `org.freedesktop.portal.GlobalShortcuts` | P2 | missing |
@@ -165,9 +165,9 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | Priority | Features | Done | Partial | Missing |
 | --- | --- | --- | --- | --- |
 | P0 | 29 | 26 | 3 | 0 |
-| P1 | 25 | 4 | 4 | 17 |
+| P1 | 25 | 5 | 3 | 17 |
 | P2 | 17 | 0 | 3 | 14 |
-| **All** | **71** | **30** | **10** | **31** |
+| **All** | **71** | **31** | **9** | **31** |
 
 A feature counts as done when it is done on macOS and Linux X11 (Wayland limits are listed per
 row). The three open P0 items are all macOS distribution and onboarding: the signed and

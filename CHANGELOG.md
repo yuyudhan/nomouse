@@ -48,6 +48,10 @@ the release's section; add entries under Unreleased as changes land.
   explains each permission, asks macOS for it and opens the Accessibility pane, waits for the
   switch, then restarts the daemon. Without a terminal (`nomouse.app`) it uses dialogs. On
   Linux `nomouse setup` turns the AT-SPI switch on.
+- Layout-aware hotkeys on macOS: a hotkey on a letter, digit or `; , / .` matches the key that
+  types that character on the current keyboard layout (Dvorak, Colemak, AZERTY, German, ...)
+  and follows layout switches while the daemon runs; characters no key types alone (digits on
+  AZERTY, letters on non-Latin layouts) keep their ANSI position, as macOS shortcuts do.
 - macOS backend: AX tree walk, NSPanel overlay, CGEvent input and event-tap hotkeys.
 - Windows backend: UI Automation elements, layered overlay, SendInput and hotkeys.
 - `nomouse doctor` reports whether the platform's accessibility and input access work.

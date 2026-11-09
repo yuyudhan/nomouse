@@ -35,6 +35,16 @@ pub struct Chord {
     pub modifiers: ModifierFlags,
 }
 
+/// A keyboard layout: what each key types, so hotkeys can follow characters, not positions.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct KeyLayout {
+    /// The input source id, such as `com.apple.keylayout.Dvorak`.
+    pub id: String,
+    /// `(virtual key code, character it types alone, character it types with Shift)`, in
+    /// ascending key-code order; keys that type nothing printable are left out.
+    pub keys: Vec<(u16, Option<char>, Option<char>)>,
+}
+
 /// A key-down event seen by the event tap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TapEvent {

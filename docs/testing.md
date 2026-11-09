@@ -150,16 +150,25 @@ Swift programs with `swiftc` (Xcode or the Command Line Tools):
 - `scripts/e2e/mac_probe.swift`: reads those counters through Accessibility (`value`), brings
   the fixture to the front (`front`), counts a process's windows as Accessibility lists them
   (`windows`), and posts key events (`type`, `key ctrl+space`) on the key that types each
-  character in the current layout, with real modifier key presses around chords.
+  character in the current layout, with real modifier key presses around chords. It also
+  reads, selects and removes keyboard layouts (`layout`, `select-layout`, `layout-enabled`,
+  `disable-layout`).
 
 With a private `XDG_CONFIG_HOME` and `XDG_RUNTIME_DIR` (the user's config and daemon are never
 touched) it asserts: 10/10 left clicks on `One`..`Ten`; a right click opens the context menu
 without a left click; a double click adds two; a drag moves the Source onto the Target; scroll
 mode scrolls the list; search `seven` + Enter clicks `Seven`; the daemon's `ctrl+space` hotkey
 then a label clicks; `nomouse hints` hands its mode to the daemon, and after Escape the daemon
-has no window left. `--bin <path>` tests another binary (a bundle's
+has no window left; a daemon with the hints hotkey `ctrl+alt+o` keeps working when the layout
+switches to Dvorak under it (`ctrl+alt+o` pressed on the key that types `o`, then the label
+typed on Dvorak, clicks `Three`). The user's layout is restored, and Dvorak removed again if
+the run added it, even when a check fails. `--bin <path>` tests another binary (a bundle's
 `nomouse.app/Contents/MacOS/nomouse` runs in place, so its own grant applies); `--keep` keeps
 the logs.
+
+The layout tables in `crates/nomouse-macos/testdata/layouts/` (US, Dvorak, Colemak, AZERTY,
+German) were captured with `swift crates/nomouse-macos/testdata/layouts/capture.swift <input
+source id>`; the hotkey tests in `keys.rs` run over them on every OS.
 
 The grant belongs to the process that runs the script: the terminal, or `sshd` for a remote
 run. Without it the script fails within seconds and says where to grant it; under `CI=true`

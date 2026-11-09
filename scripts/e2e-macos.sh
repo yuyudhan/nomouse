@@ -52,9 +52,17 @@ fi
 root="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d /tmp/nomouse-e2e-macos.XXXXXX)"
 pids=()
+# The Dvorak check switches the user's keyboard layout; cleanup puts it back (and removes
+# Dvorak from the input sources when the run added it), even when a check fails.
+layout_before=""
+dvorak_added=0
 cleanup() {
     for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
     wait 2>/dev/null || true
+    if [[ -n "$layout_before" ]]; then
+        "$probe" select-layout "$layout_before" || true
+        if ((dvorak_added)); then "$probe" disable-layout "$dvorak" || true; fi
+    fi
     if [[ "$keep" == 1 ]]; then echo "logs kept in $tmp"; else rm -rf "$tmp"; fi
 }
 trap cleanup EXIT
@@ -251,14 +259,16 @@ else
     fail "search: no search box"
 fi
 
+# scans: how many scans the daemon logged so far (in "$daemon_log").
+scans() { grep -c 'scan [0-9]*:' "$daemon_log" || true; }
+scans_above() { (($(scans) > $1)); }
+
 echo "--- daemon: hotkey click, a mode over the socket, no panel left after Escape"
 daemon_log="$tmp/daemon.log"
 NOMOUSE_LOG=debug "$bin" daemon 2>"$daemon_log" &
 daemon=$!
 pids+=("$daemon")
 if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
-    scans() { grep -c 'scan [0-9]*:' "$daemon_log" || true; }
-    scans_above() { (($(scans) > $1)); }
     front
     before_scans="$(scans)"
     before="$(value count.Two)"
@@ -284,6 +294,44 @@ if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
 else
     fail "daemon did not start: $(tail -n3 "$daemon_log")"
 fi
+
+echo "--- Dvorak: a letter hotkey triggers by character, labels type as shown"
+# The hints hotkey is ctrl+alt+o: on Dvorak `o` is on the ANSI `s` key. The daemon starts on
+# the user's layout, then the layout switches under it, so it must re-match the hotkey live.
+dvorak=com.apple.keylayout.Dvorak
+layout_before="$("$probe" layout)"
+if "$probe" layout-enabled "$dvorak"; then dvorak_added=0; else dvorak_added=1; fi
+mkdir -p "$tmp/dvorak-config/nomouse"
+printf '[hotkeys]\nhints = "ctrl+alt+o"\n' >"$tmp/dvorak-config/nomouse/config.toml"
+daemon_log="$tmp/daemon-dvorak.log"
+XDG_CONFIG_HOME="$tmp/dvorak-config" NOMOUSE_LOG=debug "$bin" daemon 2>"$daemon_log" &
+daemon=$!
+pids+=("$daemon")
+if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
+    "$probe" select-layout "$dvorak"
+    if wait_for 3 grep -q "keyboard layout $dvorak" "$daemon_log"; then
+        front
+        before_scans="$(scans)"
+        before="$(value count.Three)"
+        "$probe" key ctrl+alt+o
+        if wait_for 5 scans_above "$before_scans"; then
+            label="$(label_for "$daemon_log" Three)"
+            "$probe" type "$label"
+            if wait_for 3 value_is count.Three $((before + 1)); then pass "Dvorak: ctrl+alt+o and label '$label' clicked Three"; else fail "Dvorak: label '$label' typed, count.Three '$(value count.Three)'"; fi
+        else
+            fail "Dvorak: no scan after ctrl+alt+o (the key that types o)"
+        fi
+    else
+        fail "Dvorak: the daemon did not re-match its hotkeys after the layout switch"
+    fi
+else
+    fail "Dvorak daemon did not start: $(tail -n3 "$daemon_log")"
+fi
+kill "$daemon" 2>/dev/null || true
+reap "$daemon" 5 || true
+"$probe" select-layout "$layout_before"
+if ((dvorak_added)); then "$probe" disable-layout "$dvorak"; fi
+layout_before=""
 
 echo "--- $passed passed, $failed failed"
 ((failed == 0))
