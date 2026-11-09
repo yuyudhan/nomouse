@@ -144,9 +144,11 @@ macOS has no private display, so it moves the real pointer and types for real. I
 Swift programs with `swiftc` (Xcode or the Command Line Tools):
 
 - `scripts/e2e/mac_app.swift`, the fixture: one window `nomouse-e2e` with buttons `One`..`Ten`,
-  a `Context` button with a context menu, a text field, a 200-row list and a drag `Source` and
-  `Target`. Each control updates a static text with an accessibility identifier
-  (`count.<button>`, `menus`, `drops`, `first-row`, `field`).
+  a `Context` button with a context menu, an untitled button whose only text is its tooltip
+  `Keep a copy`, a text field, a 200-row and a 40-row list and a drag `Source` and `Target`.
+  Each control updates a static text with an accessibility identifier (`count.<button>`,
+  `count.Tooltip`, `cmd-clicks`, `menus`, `drops`, `first-row`, `last-row`, `first-row.b`,
+  `field`).
 - `scripts/e2e/mac_probe.swift`: reads those counters through Accessibility (`value`), brings
   the fixture to the front (`front`), counts a process's windows as Accessibility lists them
   (`windows`), and posts key events (`type`, `key ctrl+space`) on the key that types each
@@ -157,14 +159,27 @@ Swift programs with `swiftc` (Xcode or the Command Line Tools):
 With a private `XDG_CONFIG_HOME` and `XDG_RUNTIME_DIR` (the user's config and daemon are never
 touched) it asserts: 10/10 left clicks on `One`..`Ten`; a right click opens the context menu
 without a left click; a double click adds two; a drag moves the Source onto the Target; scroll
-mode scrolls the list; search `seven` + Enter clicks `Seven`; the daemon's `ctrl+space` hotkey
-then a label clicks; `nomouse hints` hands its mode to the daemon, and after Escape the daemon
-has no window left; a daemon with the hints hotkey `ctrl+alt+o` keeps working when the layout
-switches to Dvorak under it (`ctrl+alt+o` pressed on the key that types `o`, then the label
-typed on Dvorak, clicks `Three`). The user's layout is restored, and Dvorak removed again if
-the run added it, even when a check fails. `--bin <path>` tests another binary (a bundle's
-`nomouse.app/Contents/MacOS/nomouse` runs in place, so its own grant applies); `--keep` keeps
-the logs.
+mode labels both lists, starts on the larger one (`j` scrolls it, `G` shows its last row, `gg`
+its first, Shift-`j` dashes further than `jjj`) and Tab moves to the smaller one; search
+`seven` + Enter clicks `Seven`, and `keep a copy` + Enter clicks the untitled tooltip button;
+Tab moves the highlight to `Three` and Return clicks it; with `hints.keys = "homerow"` a label
+then Return clicks, Return twice double clicks, Shift-Return opens the context menu and
+Cmd-Return clicks with Command held; continuous mode ends after clicking the text field and
+the text typed next lands in it; `overlay.theme = "auto"` picks the colours of the system
+appearance (`defaults read -g AppleInterfaceStyle`), as logged; the daemon's `ctrl+space`
+hotkey then a label clicks; `nomouse hints` hands its mode to the daemon, and after Escape the
+daemon has no window left; the hotkey, and `nomouse hints`, pressed again while the labels are
+up leave no window and click nothing; with the fixture's executable `mac_app` in
+`ignore.apps`, `doctor` lists it and the hotkey shows nothing, and after the file is rewritten
+with a new alphabet, `nomouse reload` makes the next labels use it; a daemon with the hints
+hotkey `ctrl+alt+o` keeps working when the layout switches to Dvorak under it (`ctrl+alt+o`
+pressed on the key that types `o`, then the label typed on Dvorak, clicks `Three`). The user's
+layout is restored, and Dvorak removed again if the run added it, even when a check fails.
+`--bin <path>` tests another binary (a bundle's `nomouse.app/Contents/MacOS/nomouse` runs in
+place, so its own grant applies); `--keep` keeps the logs.
+
+The label colours are checked through the log, not by pixels: `screencapture` of other apps'
+windows needs the Screen Recording permission, which the test does not assume.
 
 The layout tables in `crates/nomouse-macos/testdata/layouts/` (US, Dvorak, Colemak, AZERTY,
 German) were captured with `swift crates/nomouse-macos/testdata/layouts/capture.swift <input
@@ -176,8 +191,10 @@ run. Without it the script fails within seconds and says where to grant it; unde
 apply: bounded polling only for the fixture window and the first scan, one attempt per
 assertion, every `nomouse` reaped with a deadline. The desktop is shared, so before each
 `nomouse` run the script checks that the fixture is still running and that no other app's
-window is in front of it (`mac_probe covering`, for example a floating launcher panel); either
-ends the run with a `FAIL:` naming the cause instead of failing every later check.
+window is in front of it (`mac_probe covering`, for example a floating launcher panel; the
+pointer's own Window Server window is not counted, and a covering window gets three seconds
+to go); either ends the run with a `FAIL:` naming the cause instead of failing every later
+check.
 
 ## Coverage
 

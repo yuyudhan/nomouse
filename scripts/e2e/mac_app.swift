@@ -6,9 +6,13 @@
 //
 //   count.One .. count.Ten  left clicks on the buttons One..Ten (a double click adds two)
 //   count.Context           left clicks on the Context button
+//   count.Tooltip           clicks on a button with no title, whose only text is its tooltip
+//                           "Keep a copy"
+//   cmd-clicks              clicks on any of those buttons with Command held
 //   menus                   times the Context button's context menu opened
 //   drops                   drags released on the Target; the Source then moves onto it
-//   first-row               index of the first visible row of the 200-row list
+//   first-row, last-row     indices of the first and last visible rows of the 200-row list
+//   first-row.b             index of the first visible row of the 40-row list beside it
 //   field                   the text field's contents
 import AppKit
 
@@ -88,8 +92,12 @@ final class Fixture: NSObject, NSApplicationDelegate, NSTableViewDataSource, NST
     var menus: Counter?
     var drops: Counter?
     var firstRow: Counter?
+    var lastRow: Counter?
+    var firstRowB: Counter?
+    var cmdClicks: Counter?
     var fieldMirror: NSTextField?
     let list = NSTableView()
+    let listB = NSTableView()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         window.title = "nomouse-e2e"
@@ -113,6 +121,13 @@ final class Fixture: NSObject, NSApplicationDelegate, NSTableViewDataSource, NST
         content.addSubview(context)
         counters["Context"] = Counter("count.Context", in: content, at: NSPoint(x: 25, y: 380))
         menus = Counter("menus", in: content, at: NSPoint(x: 130, y: 406))
+
+        let tooltip = NSButton(title: "", target: self, action: #selector(tooltipClicked(_:)))
+        tooltip.toolTip = "Keep a copy"
+        tooltip.frame = NSRect(x: 240, y: 330, width: 60, height: 30)
+        content.addSubview(tooltip)
+        counters["Tooltip"] = Counter("count.Tooltip", in: content, at: NSPoint(x: 310, y: 336))
+        cmdClicks = Counter("cmd-clicks", in: content, at: NSPoint(x: 620, y: 440))
 
         let field = NSTextField(string: "")
         field.placeholderString = "Type here"
@@ -148,23 +163,65 @@ final class Fixture: NSObject, NSApplicationDelegate, NSTableViewDataSource, NST
         scroll.hasVerticalScroller = true
         content.addSubview(scroll)
         firstRow = Counter("first-row", in: content, at: NSPoint(x: 620, y: 410))
+        lastRow = Counter("last-row", in: content, at: NSPoint(x: 720, y: 410))
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(
             self, selector: #selector(scrolled(_:)),
             name: NSView.boundsDidChangeNotification, object: scroll.contentView)
 
+        // A smaller list: scroll mode starts on the larger one, Tab moves here.
+        let columnB = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("item"))
+        columnB.title = "Items"
+        columnB.width = 180
+        columnB.isEditable = false
+        listB.addTableColumn(columnB)
+        listB.dataSource = self
+        listB.delegate = self
+        let scrollB = NSScrollView(frame: NSRect(x: 20, y: 40, width: 200, height: 150))
+        scrollB.documentView = listB
+        scrollB.hasVerticalScroller = true
+        content.addSubview(scrollB)
+        firstRowB = Counter("first-row.b", in: content, at: NSPoint(x: 20, y: 195))
+        scrollB.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(scrolled(_:)),
+            name: NSView.boundsDidChangeNotification, object: scrollB.contentView)
+        updateRows()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc func clicked(_ sender: NSButton) {
         counters[sender.title]?.add()
+        countCommand()
+    }
+
+    @objc func tooltipClicked(_ sender: NSButton) {
+        counters["Tooltip"]?.add()
+        countCommand()
+    }
+
+    func countCommand() {
+        if NSApp.currentEvent?.modifierFlags.contains(.command) == true {
+            cmdClicks?.add()
+        }
     }
 
     @objc func scrolled(_ notification: Notification) {
+        updateRows()
+    }
+
+    /// Sets a counter to `value`.
+    func set(_ counter: Counter?, _ value: Int) {
+        guard let counter else { return }
+        counter.add(value - counter.value)
+    }
+
+    func updateRows() {
         let visible = list.rows(in: list.visibleRect)
-        guard let counter = firstRow else { return }
-        counter.add(visible.location - counter.value)
+        set(firstRow, visible.location)
+        set(lastRow, visible.location + visible.length - 1)
+        set(firstRowB, listB.rows(in: listB.visibleRect).location)
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -176,10 +233,10 @@ final class Fixture: NSObject, NSApplicationDelegate, NSTableViewDataSource, NST
         fieldMirror?.stringValue = field.stringValue
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { 200 }
+    func numberOfRows(in tableView: NSTableView) -> Int { tableView === listB ? 40 : 200 }
 
     func tableView(_ tableView: NSTableView, objectValueFor column: NSTableColumn?, row: Int) -> Any? {
-        "Row \(row + 1)"
+        tableView === listB ? "Item \(row + 1)" : "Row \(row + 1)"
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

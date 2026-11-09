@@ -2,12 +2,16 @@
 # End-to-end test of the macOS backend against a fixture app, on the logged-in desktop.
 #
 # Compiles scripts/e2e/mac_app.swift (a window with buttons One..Ten, a Context button with a
-# context menu, a text field, a 200-row list and a drag Source and Target, each updating an
-# Accessibility-visible counter) and scripts/e2e/mac_probe.swift (Accessibility queries and a
-# synthetic key poster), then drives `nomouse` with typed labels and asserts the fixture's
-# counters through Accessibility: ten left clicks, a right click that opens the context menu,
-# a double click, a drag, scroll mode on the list, search, and the daemon (hotkey click, a
-# mode handed over its socket, no overlay window left after Escape).
+# context menu, a button whose only text is its tooltip, a text field, a 200-row and a 40-row
+# list and a drag Source and Target, each updating an Accessibility-visible counter) and
+# scripts/e2e/mac_probe.swift (Accessibility queries and a synthetic key poster), then drives
+# `nomouse` with typed labels and asserts the fixture's counters through Accessibility: ten
+# left clicks, a right click that opens the context menu, a double click, a drag, scroll mode
+# (largest list first, j, G, gg, Tab to the other list), search (by name and by tooltip),
+# focus-then-act, the Homerow key bindings, continuous mode ending at the text field, the
+# `auto` theme, the daemon (hotkey click, a mode handed over its socket, no overlay window
+# left after Escape, the hotkey and `nomouse hints` toggling the labels off), `ignore.apps`
+# with `nomouse reload`, and hotkeys and labels on the Dvorak layout.
 #
 # Usage: scripts/e2e-macos.sh [--bin <nomouse binary>] [--keep]
 #   --bin   test this binary (for example nomouse.app/Contents/MacOS/nomouse) instead of a
@@ -147,25 +151,26 @@ value_is() { [[ "$(value "$1")" == "$2" ]]; }
 value_above() { (($(value "$1") > $2)); }
 # front: the fixture to the front. Ends the run when the fixture is gone or another app's
 # window stays in front of it (a floating panel would take the clicks): the desktop is shared,
-# so that is reported instead of failing every check after it.
+# so that is reported instead of failing every check after it. Transient system windows (the
+# input source indicator macOS shows after typing into a field) get three seconds to go.
 front() {
-    local covering
+    local covering="" attempt
     kill -0 "$app" 2>/dev/null || {
         echo "FAIL: the fixture app exited (another program quit or closed it); $passed passed so far"
         exit 1
     }
-    "$probe" front "$app" || echo "  the fixture is not frontmost (frontmost pid $("$probe" frontmost))"
-    covering="$("$probe" covering "$app" | tr '\n' ' ')"
-    if [[ -n "$covering" ]]; then
-        echo "FAIL: windows of ${covering}are in front of the fixture; close them and run again ($passed passed so far)"
-        exit 1
-    fi
+    for attempt in 1 2 3 4 5 6; do
+        "$probe" front "$app" || echo "  the fixture is not frontmost (frontmost pid $("$probe" frontmost))"
+        covering="$("$probe" covering "$app" | tr '\n' ' ')"
+        [[ -z "$covering" ]] && return 0
+        ((attempt < 6)) && sleep 0.5
+    done
+    echo "FAIL: windows of ${covering}are in front of the fixture; close them and run again ($passed passed so far)"
+    exit 1
 }
 # label_for <log> <accessible name>: the label of the last scan's hint for that name, or
 # nothing.
 label_for() { { grep -E "hint [a-z]+ = [A-Za-z]+ \"$2\"$" "$1" || true; } | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
-# label_for_role <log> <role>: the label of the last scan's first hint with that role.
-label_for_role() { { grep -E "hint [a-z]+ = $2 " "$1" || true; } | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
 
 # run_hints <log> <args...>: brings the fixture to the front, starts `nomouse --standalone`
 # (so it runs and logs here even while the daemon runs) and waits for its first scan.
@@ -232,17 +237,32 @@ else
     fail "drag: no labels"
 fi
 
-echo "--- scroll mode moves the list"
+echo "--- scroll mode: the larger list is active; j, G, gg, Shift-j, then Tab to the smaller list"
 log="$tmp/scroll.log"
 if run_hints "$log" scroll; then
-    label="$(label_for_role "$log" ScrollArea)"
-    "$probe" type "$label"
+    # Areas are labelled with digits; the largest starts active, so keys scroll it at once.
+    areas="$({ grep -E 'hint [0-9] = ScrollArea ' "$log" || true; } | wc -l | tr -d ' ')"
+    "$probe" type jjj
+    wait_for 3 value_above first-row 0 && down=1 || down=0
+    after_j="$(value first-row)"
+    "$probe" type G
+    wait_for 5 value_is last-row 199 && bottom=1 || bottom=0
+    "$probe" type gg
+    wait_for 5 value_is first-row 0 && top=1 || top=0
+    # Shift-j scrolls scroll.dash_step (15) lines, five times j's step: further than jjj did.
+    "$probe" type J
+    wait_for 3 value_above first-row "$after_j" && dash=1 || dash=0
+    "$probe" key tab
     sleep 0.2
     "$probe" type jjj
-    wait_for 3 value_above first-row 0 && scrolled=1 || scrolled=0
+    wait_for 3 value_above first-row.b 0 && second=1 || second=0
     "$probe" key escape
     reap "$hints_pid" || true
-    if ((scrolled)) && [[ -n "$label" ]]; then pass "scroll mode scrolled the list (first row $(value first-row))"; else fail "scroll mode: label '$label', first row '$(value first-row)'"; fi
+    if ((areas == 2 && down && bottom && top && dash && second)); then
+        pass "scroll mode: j scrolled the larger list, G showed its last row, gg its first, Shift-j dashed, Tab moved to the smaller list"
+    else
+        fail "scroll mode: $areas areas labelled; j $down (first row $after_j), G $bottom, gg $top, Shift-j $dash (first row $(value first-row)), Tab and j $second (first row $(value first-row.b))"
+    fi
 else
     fail "scroll mode: no labels"
 fi
@@ -257,6 +277,100 @@ if run_hints "$log" search; then
     if wait_for 3 value_is count.Seven $((before + 1)); then pass "search clicked Seven"; else fail "search: count.Seven went from $before to '$(value count.Seven)'"; fi
 else
     fail "search: no search box"
+fi
+
+echo "--- search: a button whose only text is its tooltip is found (a query with spaces)"
+log="$tmp/tooltip.log"
+before="$(value count.Tooltip)"
+if run_hints "$log" search; then
+    "$probe" type "keep a copy"
+    "$probe" key return
+    reap "$hints_pid" || true
+    if wait_for 3 value_is count.Tooltip $((before + 1)); then pass "search by tooltip clicked the untitled button"; else fail "tooltip search: count.Tooltip went from $before to '$(value count.Tooltip)'"; fi
+else
+    fail "tooltip search: no search box"
+fi
+
+echo "--- focus-then-act: Tab moves the highlight, Return clicks the highlighted button"
+log="$tmp/focus.log"
+before="$(value count.Three)"
+if run_hints "$log" hints; then
+    # Hints are logged in label order and the highlight starts on the first; the menu bar's
+    # come first, so Three is some way down.
+    position="$({ grep -E 'hint [a-z]+ = ' "$log" || true; } | { grep -nE '= Button "Three"$' || true; } | head -n1 | cut -d: -f1)"
+    tabs=()
+    for ((i = 1; i < ${position:-0}; i++)); do tabs+=(tab); done
+    if ((${#tabs[@]})); then "$probe" key "${tabs[@]}"; fi
+    "$probe" key return
+    reap "$hints_pid" || true
+    if [[ -n "$position" ]] && wait_for 3 value_is count.Three $((before + 1)); then pass "Tab $((position - 1)) times and Return clicked Three (label $position)"; else fail "focus-then-act: Three is label '${position}', count.Three went from $before to '$(value count.Three)'"; fi
+else
+    fail "focus-then-act: no labels"
+fi
+
+echo "--- Homerow keys: a label highlights; Return clicks, twice double clicks, Shift right clicks, Cmd cmd-clicks"
+homerow_config="$tmp/homerow-config"
+mkdir -p "$homerow_config/nomouse"
+printf '[hints]\nkeys = "homerow"\n' >"$homerow_config/nomouse/config.toml"
+# homerow <log> <name> <chords...>: labels with the Homerow keys, types <name>'s label, then
+# presses the chords.
+homerow() {
+    local log="$1" name="$2"
+    shift 2
+    XDG_CONFIG_HOME="$homerow_config" run_hints "$log" hints || return 1
+    "$probe" type "$(label_for "$log" "$name")"
+    "$probe" key "$@"
+    reap "$hints_pid" || true
+}
+homerow_ok=0
+before="$(value count.Four)"
+if homerow "$tmp/homerow-click.log" Four return && wait_for 3 value_is count.Four $((before + 1)); then homerow_ok=$((homerow_ok + 1)); else echo "  Return: count.Four went from $before to '$(value count.Four)'"; fi
+before="$(value count.Four)"
+if homerow "$tmp/homerow-double.log" Four return return && wait_for 3 value_is count.Four $((before + 2)); then homerow_ok=$((homerow_ok + 1)); else echo "  Return twice: count.Four went from $before to '$(value count.Four)'"; fi
+before="$(value menus)"
+clicks="$(value count.Context)"
+if homerow "$tmp/homerow-right.log" Context shift+return && wait_for 3 value_is menus $((before + 1)) && value_is count.Context "$clicks"; then homerow_ok=$((homerow_ok + 1)); else echo "  Shift-Return: menus went from $before to '$(value menus)', left clicks from $clicks to '$(value count.Context)'"; fi
+"$probe" key escape
+before="$(value cmd-clicks)"
+if homerow "$tmp/homerow-cmd.log" Five cmd+return && wait_for 3 value_is cmd-clicks $((before + 1)); then homerow_ok=$((homerow_ok + 1)); else echo "  Cmd-Return: cmd-clicks went from $before to '$(value cmd-clicks)'"; fi
+if ((homerow_ok == 4)); then pass "Homerow keys: Return, Return twice, Shift-Return and Cmd-Return acted as bound"; else fail "Homerow keys: $homerow_ok/4 bindings acted"; fi
+
+echo "--- continuous mode ends after clicking the text field; typed text lands in it"
+log="$tmp/continuous-field.log"
+before="$(value count.One)"
+if run_hints "$log" hints --continuous; then
+    "$probe" type "$(label_for "$log" One)"
+    if wait_for 3 value_is count.One $((before + 1)) && wait_for 5 grep -q 'scan 2:' "$log"; then
+        sleep 0.3
+        "$probe" type "$(label_for "$log" "Text field")"
+        if reap "$hints_pid" 5; then
+            "$probe" type hello
+            if wait_for 3 value_is field hello; then pass "continuous mode ended at the text field and the typed text landed in it"; else fail "continuous mode: the text field holds '$(value field)'"; fi
+        else
+            fail "continuous mode did not end after clicking the text field"
+        fi
+    else
+        fail "continuous mode: count.One went from $before to '$(value count.One)' or no second scan"
+        kill "$hints_pid" 2>/dev/null || true
+        reap "$hints_pid" || true
+    fi
+else
+    fail "continuous mode: no labels"
+fi
+
+echo "--- theme auto follows the system appearance"
+system=Light
+if [[ "$(defaults read -g AppleInterfaceStyle 2>/dev/null || true)" == Dark ]]; then system=Dark; fi
+theme_config="$tmp/theme-config"
+mkdir -p "$theme_config/nomouse"
+printf '[overlay]\ntheme = "auto"\n' >"$theme_config/nomouse/config.toml"
+log="$tmp/theme.log"
+if XDG_CONFIG_HOME="$theme_config" run_hints "$log" hints; then
+    "$probe" key escape
+    reap "$hints_pid" || true
+    if grep -q "labels use the $system colours" "$log"; then pass "theme auto: $(grep -oE "labels use the $system colours \(background #[0-9a-f]{6}\)" "$log" | head -n1), as the system appearance"; else fail "theme auto: the system appearance is $system, the log says '$(grep -E 'labels use' "$log" || echo nothing)'"; fi
+else
+    fail "theme auto: no labels"
 fi
 
 # scans: how many scans the daemon logged so far (in "$daemon_log").
@@ -288,6 +402,63 @@ if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
         if wait_for 3 windows_is 0; then pass "no overlay panel left after Escape"; else fail "after Escape the daemon still has $("$probe" windows "$daemon") window(s)"; fi
     else
         fail "\`nomouse hints\` to the daemon: no scan or no panel ($("$probe" windows "$daemon" || true) windows)"
+    fi
+    echo "--- toggle: the hotkey, and \`nomouse hints\`, pressed again dismiss the labels"
+    front
+    before_scans="$(scans)"
+    before="$(value count.Two)"
+    "$probe" key ctrl+space
+    if wait_for 5 scans_above "$before_scans" && wait_for 3 windows_above 0; then
+        "$probe" key ctrl+space
+        if wait_for 3 windows_is 0 && kill -0 "$daemon" && value_is count.Two "$before"; then pass "the hotkey pressed twice left no overlay and clicked nothing"; else fail "hotkey twice: $("$probe" windows "$daemon" || true) window(s), count.Two went from $before to '$(value count.Two)'"; fi
+    else
+        fail "toggle: no labels after ctrl+space"
+    fi
+    front
+    before_scans="$(scans)"
+    if "$bin" hints && wait_for 5 scans_above "$before_scans" && wait_for 3 windows_above 0; then
+        "$bin" hints
+        if wait_for 3 windows_is 0; then pass "\`nomouse hints\` twice left no overlay"; else fail "\`nomouse hints\` twice: the daemon still has $("$probe" windows "$daemon") window(s)"; fi
+    else
+        fail "toggle over the socket: no scan or no panel"
+    fi
+    kill "$daemon" 2>/dev/null || true
+    reap "$daemon" 5 || true
+else
+    fail "daemon did not start: $(tail -n3 "$daemon_log")"
+fi
+
+echo "--- ignore.apps: no labels in the ignored fixture; \`nomouse reload\` applies a new config"
+reload_config="$tmp/reload-config"
+mkdir -p "$reload_config/nomouse"
+# The fixture is an unbundled program: its process name is what identifies it.
+printf '[ignore]\napps = ["mac_app"]\n' >"$reload_config/nomouse/config.toml"
+if XDG_CONFIG_HOME="$reload_config" "$bin" doctor | grep -qE 'ignored apps: .*mac_app'; then pass "doctor lists the ignored app"; else fail "doctor does not list mac_app among the ignored apps"; fi
+daemon_log="$tmp/daemon-reload.log"
+XDG_CONFIG_HOME="$reload_config" NOMOUSE_LOG=debug "$bin" daemon 2>"$daemon_log" &
+daemon=$!
+pids+=("$daemon")
+if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
+    front
+    "$probe" key ctrl+space
+    if wait_for 5 grep -q 'the focused app is ignored' "$daemon_log" && (($(scans) == 0)); then pass "the hotkey in the ignored fixture showed no labels"; else fail "ignore.apps: $(scans) scan(s), log '$({ grep -E 'ignored|performed' "$daemon_log" || true; } | tail -n1)'"; fi
+    printf '[hints]\nalphabet = "qwertyup"\n' >"$reload_config/nomouse/config.toml"
+    XDG_CONFIG_HOME="$reload_config" "$bin" reload
+    if wait_for 5 grep -q 'config reloaded' "$daemon_log"; then
+        front
+        before_scans="$(scans)"
+        before="$(value count.Two)"
+        "$probe" key ctrl+space
+        if wait_for 5 scans_above "$before_scans"; then
+            sleep 0.2
+            label="$(label_for "$daemon_log" Two)"
+            "$probe" type "$label"
+            if [[ "$label" =~ ^[qwertyup]+$ ]] && wait_for 3 value_is count.Two $((before + 1)); then pass "after \`nomouse reload\` the labels use the new alphabet ('$label' clicked Two)"; else fail "after reload: label '$label', count.Two went from $before to '$(value count.Two)'"; fi
+        else
+            fail "after reload: no scan after ctrl+space"
+        fi
+    else
+        fail "\`nomouse reload\`: the daemon did not reload ($(grep -E 'reload' "$daemon_log" | tail -n1))"
     fi
     kill "$daemon" 2>/dev/null || true
     reap "$daemon" 5 || true

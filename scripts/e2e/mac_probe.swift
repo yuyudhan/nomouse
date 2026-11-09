@@ -217,10 +217,16 @@ case ("covering", 2):
         fail("\(pid) has no window on screen")
     }
     let target = bounds(windows[index])
+    // The pointer itself is a Window Server window at the cursor level while it is drawn in
+    // software (after typing, for example); it takes no clicks.
+    let cursorLevel = Int(CGWindowLevelForKey(.cursorWindow))
     for window in windows[..<index] where bounds(window).intersects(target) {
+        let layer = window[kCGWindowLayer as String] as? Int ?? 0
+        if layer == cursorLevel { continue }
         let owner = window[kCGWindowOwnerName as String] as? String ?? "?"
         let ownerPid = window[kCGWindowOwnerPID as String] as? Int ?? 0
-        print("\(owner) (pid \(ownerPid))")
+        let frame = bounds(window)
+        print("\(owner) (pid \(ownerPid), layer \(layer), \(Int(frame.minX)),\(Int(frame.minY)) \(Int(frame.width))x\(Int(frame.height)))")
     }
 case ("type", 2):
     for character in arguments[1] {
