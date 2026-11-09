@@ -23,6 +23,10 @@ the release's section; add entries under Unreleased as changes land.
 - Scroll mode starts on the largest scrollable area and outlines it; areas are numbered, and
   Tab, Shift-Tab or a digit switch between them. `gg` and `G` go to the top and bottom, and
   Shift with `h` `j` `k` `l` scrolls faster (`scroll.dash_step`, default 15 wheel steps).
+- `ignore.apps`: apps (by macOS bundle id, Wayland app id, X11 `WM_CLASS` or process name)
+  where the hotkeys and commands show no labels; `nomouse doctor` lists them.
+- The daemon re-reads `config.toml` when it changes, or at once on `nomouse reload`; an
+  invalid file is logged and the running settings stay.
 - Hint mode: a hotkey labels every clickable element of the focused window from the
   accessibility tree; typing a label clicks it (left, right, double, middle, move, semantic
   click), with a continuous mode that keeps hinting after each click.

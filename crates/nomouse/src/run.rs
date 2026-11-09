@@ -76,6 +76,8 @@ pub(crate) struct Settings {
     pub(crate) dash_step: i32,
     /// Which keys act on a hint.
     pub(crate) keys: KeyBindings,
+    /// `ignore.apps`: apps where activation shows nothing.
+    pub(crate) ignore: Vec<String>,
 }
 
 /// What waiting for the next key produced.
@@ -104,7 +106,7 @@ fn wait(
 }
 
 /// How an activation ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Outcome {
     /// Actions were performed (the count; continuous mode may perform several).
     Performed(usize),
@@ -112,6 +114,28 @@ pub(crate) enum Outcome {
     Cancelled,
     /// The scan found nothing to label.
     NoElements,
+    /// The focused window belongs to an app in `ignore.apps` (the entry naming it).
+    Ignored(String),
+}
+
+/// The `ignore.apps` entry naming the focused window's app, if any. A failure to identify the
+/// app is logged and ignores nothing.
+fn ignored(platform: &mut dyn Platform, ignore: &[String]) -> Option<String> {
+    if ignore.is_empty() {
+        return None;
+    }
+    match platform.focused_app() {
+        Ok(Some(app)) => {
+            let names: Vec<&str> = app.names().collect();
+            tracing::debug!("focused app: {}", names.join(", "));
+            app.ignored_by(ignore).map(str::to_owned)
+        }
+        Ok(None) => None,
+        Err(error) => {
+            tracing::warn!("identifying the focused app: {error}");
+            None
+        }
+    }
 }
 
 /// Hides the overlay however the activation ends (errors included).
@@ -202,7 +226,8 @@ const fn ended(performed: usize) -> Outcome {
 
 /// Runs one activation in `mode`. `started` is when the trigger arrived, for the
 /// hotkey-to-labels timing logged at info level. `dismissed` reports a request to toggle the
-/// labels off that arrives outside the platform's events (the daemon's command socket).
+/// labels off that arrives outside the platform's events (the daemon's command socket). When
+/// the focused window's app is in `ignore.apps`, nothing is scanned or shown.
 ///
 /// # Errors
 /// Platform errors from scanning, drawing or acting; the overlay is hidden either way.
@@ -213,6 +238,9 @@ pub(crate) fn activate(
     started: Instant,
     dismissed: &dyn Fn() -> bool,
 ) -> Result<Outcome, PlatformError> {
+    if let Some(pattern) = ignored(platform, &settings.ignore) {
+        return Ok(Outcome::Ignored(pattern));
+    }
     let guard = Shown { platform };
     let platform = &mut *guard.platform;
     let mut performed = 0;
@@ -295,8 +323,8 @@ mod tests {
     use std::collections::VecDeque;
 
     use nomouse_core::{
-        Element, ElementId, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource, InputInjector,
-        KeyPress, Modifiers, Overlay, Point, Rect, Role,
+        AppIdentity, Element, ElementId, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource,
+        InputInjector, KeyPress, Modifiers, Overlay, Point, Rect, Role,
     };
 
     use super::*;
@@ -314,12 +342,18 @@ mod tests {
         focused: Vec<Option<String>>,
         /// The outlined scroll area of each frame.
         outlined: Vec<Option<Rect>>,
+        /// The focused window's app.
+        app: Option<AppIdentity>,
     }
 
     impl ElementSource for Fake {
         fn elements(&mut self, _scope: Scope) -> Result<Vec<Element>, PlatformError> {
             self.scans += 1;
             Ok(self.elements.clone())
+        }
+
+        fn focused_app(&mut self) -> Result<Option<AppIdentity>, PlatformError> {
+            Ok(self.app.clone())
         }
     }
 
@@ -423,6 +457,7 @@ mod tests {
             scroll_step: 3,
             dash_step: 15,
             keys: KeyBindings::Nomouse,
+            ignore: Vec::new(),
         }
     }
 
@@ -707,6 +742,42 @@ mod tests {
                 Action::scroll(at, 7, 0),
             ]
         );
+    }
+
+    #[test]
+    fn an_ignored_app_gets_no_scan_and_no_labels() {
+        let ignoring = Settings {
+            ignore: vec!["kitty".to_owned(), "org.gnome.Terminal".to_owned()],
+            ..settings()
+        };
+        let terminal = AppIdentity {
+            app_id: Some("org.gnome.Terminal".to_owned()),
+            ..AppIdentity::default()
+        };
+        for mode in [Mode::Once(ActionKind::Click), Mode::Scroll, Mode::Search] {
+            let mut p = fake(3, "a");
+            p.app = Some(terminal.clone());
+            assert_eq!(
+                activate(&mut p, &ignoring, mode, Instant::now(), &|| false),
+                Ok(Outcome::Ignored("org.gnome.Terminal".to_owned()))
+            );
+            assert_eq!((p.scans, p.shown.len()), (0, 0));
+            assert_eq!(p.performed, Vec::new());
+        }
+        // Another app, or no ignore list, labels as usual.
+        let mut other = fake(3, "a");
+        other.app = Some(AppIdentity {
+            process: Some("gedit".to_owned()),
+            ..AppIdentity::default()
+        });
+        let once = Mode::Once(ActionKind::Click);
+        assert_eq!(
+            activate(&mut other, &ignoring, once, Instant::now(), &|| false),
+            Ok(Outcome::Performed(1))
+        );
+        let mut unlisted = fake(3, "a");
+        unlisted.app = Some(terminal);
+        assert_eq!(run(&mut unlisted, once), Ok(Outcome::Performed(1)));
     }
 
     #[test]

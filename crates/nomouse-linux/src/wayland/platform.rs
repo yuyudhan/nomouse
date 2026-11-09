@@ -124,6 +124,14 @@ impl ElementSource for WaylandPlatform {
         }
         result
     }
+
+    fn focused_app(&mut self) -> Result<Option<nomouse_core::AppIdentity>, PlatformError> {
+        Ok(self.windows().focused().map(|window| {
+            let mut app = window.app.clone();
+            app.process = crate::linux::process_name(window.pid);
+            app
+        }))
+    }
 }
 
 impl Overlay for WaylandPlatform {

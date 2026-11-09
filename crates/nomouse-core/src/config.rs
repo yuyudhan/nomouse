@@ -24,6 +24,17 @@ pub struct Config {
     pub overlay: OverlayConfig,
     /// macOS-only settings; ignored on other systems.
     pub macos: MacosConfig,
+    /// Apps where the hotkeys show no labels.
+    pub ignore: IgnoreConfig,
+}
+
+/// `[ignore]`
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct IgnoreConfig {
+    /// Apps where activation shows no labels, each named by its macOS bundle id, Wayland app
+    /// id, X11 `WM_CLASS` (instance or class) or process name, matched ignoring case.
+    pub apps: Vec<String>,
 }
 
 /// `[macos]`
@@ -232,6 +243,12 @@ pub enum ConfigError {
         /// The given value.
         value: String,
     },
+    /// A list holds an empty (or blank) entry.
+    #[error("{field} has an empty entry")]
+    EmptyEntry {
+        /// The field.
+        field: &'static str,
+    },
 }
 
 fn check_range(field: &'static str, value: u32, min: u32, max: u32) -> Result<(), ConfigError> {
@@ -301,7 +318,13 @@ impl Config {
         check_range("scroll.dash_step", self.scroll.dash_step, 1, 100)?;
         check_range("overlay.font_size", self.overlay.font_size, 6, 72)?;
         check_range("overlay.opacity", self.overlay.opacity, 10, 100)?;
-        self.overlay.colours().map(|_| ())
+        self.overlay.colours().map(|_| ())?;
+        if self.ignore.apps.iter().any(|app| app.trim().is_empty()) {
+            return Err(ConfigError::EmptyEntry {
+                field: "ignore.apps",
+            });
+        }
+        Ok(())
     }
 
     /// The validated label alphabet.
@@ -378,6 +401,24 @@ mod tests {
         assert_eq!(config.hints.keys, KeyBindings::Homerow);
         assert!(matches!(
             Config::from_toml("[hints]\nkeys = \"vim\"\n"),
+            Err(ConfigError::Parse(_))
+        ));
+    }
+
+    #[test]
+    fn ignore_apps_parse_and_reject_blank_entries() {
+        assert_eq!(Config::default().ignore.apps, Vec::<String>::new());
+        let config =
+            Config::from_toml("[ignore]\napps = [\"org.gnome.Terminal\", \"kitty\"]\n").unwrap();
+        assert_eq!(config.ignore.apps, ["org.gnome.Terminal", "kitty"]);
+        assert!(matches!(
+            Config::from_toml("[ignore]\napps = [\"kitty\", \" \"]\n"),
+            Err(ConfigError::EmptyEntry {
+                field: "ignore.apps"
+            })
+        ));
+        assert!(matches!(
+            Config::from_toml("[ignore]\nprograms = []\n"),
             Err(ConfigError::Parse(_))
         ));
     }

@@ -163,12 +163,25 @@ foreground = "#1c1c1c"
 typed_foreground = "#8a8a8a" # already-typed characters
 border = "#1c1c1c"
 
+[ignore]
+apps = []                    # apps where activation shows nothing: macOS bundle id, Wayland
+                             # app id, X11 WM_CLASS instance or class, or process name
+                             # (ignoring case; a truncated 15-byte comm matches); no blanks
+
 [macos]
 enhanced_ui_apps = []        # bundle ids that get AXEnhancedUserInterface (Chromium browsers)
 ```
 
 New keys land in `nomouse-core/src/config.rs` with a default, a validation rule when the type
 alone does not constrain them, a unit test, and an entry here and in the README.
+
+The daemon re-reads the file when its modification time changes (checked every second) and on
+`nomouse reload` (a `reload` line on the command socket). An unreadable or invalid file is
+logged and the running configuration stays; an unchanged one does nothing. Otherwise the old
+platform is dropped first, releasing its hotkeys and overlay, and a new one starts with the
+new configuration (or the previous one again if the new one cannot start).
+`ElementSource::focused_app` names the focused window's app (`AppIdentity`) for
+`ignore.apps`; an ignored activation scans nothing and shows nothing.
 
 ## Logging
 

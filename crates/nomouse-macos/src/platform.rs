@@ -222,6 +222,14 @@ impl ElementSource for MacPlatform {
         }
         Ok(elements)
     }
+
+    fn focused_app(&mut self) -> Result<Option<nomouse_core::AppIdentity>, PlatformError> {
+        // The frontmost app by bundle id; process names are not read on macOS.
+        Ok(app::frontmost_pid().map(|pid| nomouse_core::AppIdentity {
+            app_id: app::bundle_id(pid),
+            ..nomouse_core::AppIdentity::default()
+        }))
+    }
 }
 
 impl Overlay for MacPlatform {

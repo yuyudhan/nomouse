@@ -8,10 +8,13 @@
 //! - [`platform`]: the traits each OS backend implements.
 //! - [`session`]: one hint-mode activation, tying the above together.
 //! - [`search`]: fuzzy matching of a typed query against element names (search-by-text).
+//! - [`scroll`]: scroll mode's areas and keys.
+//! - [`apps`]: the focused window's application, for `ignore.apps`.
 //! - `contract` (feature `testing`): the backend contract suite and an in-memory fake.
 #![forbid(unsafe_code)]
 
 pub mod action;
+pub mod apps;
 pub mod config;
 #[cfg(any(test, feature = "testing"))]
 pub mod contract;
@@ -27,6 +30,7 @@ pub mod search;
 pub mod session;
 
 pub use action::{Action, ActionKind, MouseButton};
+pub use apps::AppIdentity;
 pub use config::{Config, ConfigError};
 pub use element::{Element, ElementId, Point, Rect, Role};
 pub use filter::{FilterState, LabelFilter};

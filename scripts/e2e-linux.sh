@@ -437,6 +437,79 @@ else
     fail "socket toggle: no labels after the first \`nomouse hints\`"
 fi
 
+echo "--- ignore.apps, \`nomouse reload\` and the config file watch (the running daemon)"
+config="$XDG_CONFIG_HOME/nomouse/config.toml"
+mkdir -p "$XDG_CONFIG_HOME/nomouse"
+reloads() { grep -c 'config reloaded' "$daemon_log" || true; }
+reloads_at_least() { (($(reloads) >= $1)); }
+ignores() { grep -c 'the focused app is ignored' "$daemon_log" || true; }
+ignores_at_least() { (($(ignores) >= $1)); }
+# last_labels: the labels of the daemon's latest scan, one per line.
+last_labels() {
+    awk '/scan [0-9]+:/ { start = NR } { line[NR] = $0 } END { for (i = start + 1; i <= NR; i++) print line[i] }' "$daemon_log" |
+        grep -oE 'hint [a-z]+ = ' | cut -d' ' -f2
+}
+before="$(reloads)"
+# GTK names the window after its program: WM_CLASS "gtk_app.py", "Gtk_app.py".
+printf '[ignore]\napps = ["gtk_app.py"]\n' >"$config"
+# A reload restarts the platform (X connection, hotkeys), which takes a moment on a busy host.
+if timeout 5 "$bin" reload && wait_for 15 reloads_at_least $((before + 1)); then
+    focus "$gtk_win"
+    before_scans="$(scans "$daemon_log")"
+    before_ignores="$(ignores)"
+    xdotool key ctrl+space
+    if wait_for 5 ignores_at_least $((before_ignores + 1)) && ! overlay_viewable && (($(scans "$daemon_log") == before_scans)); then
+        pass "ignore.apps: the hotkey over the ignored GTK app showed nothing"
+    else
+        fail "ignore.apps: $(($(ignores) - before_ignores)) ignore(s), $(($(scans "$daemon_log") - before_scans)) scan(s)"
+        xdotool key Escape
+    fi
+    if "$bin" doctor 2>/dev/null | grep -q 'ignored apps: gtk_app.py$'; then pass "doctor lists the ignored app"; else fail "doctor: $("$bin" doctor 2>&1 | grep 'ignored apps')"; fi
+else
+    fail "reload: the daemon did not reload after \`nomouse reload\`"
+fi
+kept() { grep -c 'keeping the running configuration' "$daemon_log" || true; }
+kept_at_least() { (($(kept) >= $1)); }
+before="$(kept)"
+# i and o are not label characters: the file is invalid and the daemon keeps its settings.
+printf '[hints]\nalphabet = "qwertyuiop"\n' >"$config"
+if timeout 5 "$bin" reload && wait_for 15 kept_at_least $((before + 1)); then pass "nomouse reload: an invalid config is reported and the running settings stay"; else fail "nomouse reload: no report of the invalid config"; fi
+before="$(reloads)"
+printf '[hints]\nalphabet = "qwertyup"\n' >"$config"
+if timeout 5 "$bin" reload && wait_for 15 reloads_at_least $((before + 1)); then
+    focus "$gtk_win"
+    before_scans="$(scans "$daemon_log")"
+    xdotool key ctrl+space
+    if wait_for 5 scans_at_least "$daemon_log" $((before_scans + 1)) && wait_for 5 overlay_viewable; then
+        labels="$(last_labels)"
+        xdotool key Escape
+        if [[ -n "$labels" ]] && ! grep -qvE '^[qwertyup]+$' <<<"$labels"; then pass "nomouse reload: the next labels use the new alphabet ($(tr '\n' ' ' <<<"$labels" | cut -c1-40)...)"; else fail "nomouse reload: labels '$(tr '\n' ' ' <<<"$labels")'"; fi
+    else
+        fail "nomouse reload: no labels after the hotkey"
+    fi
+else
+    fail "nomouse reload: the daemon did not reload"
+fi
+before="$(reloads)"
+printf '[hints]\nalphabet = "zxcvbnm"\n' >"$config"
+if wait_for 15 reloads_at_least $((before + 1)); then
+    focus "$gtk_win"
+    before_scans="$(scans "$daemon_log")"
+    xdotool key ctrl+space
+    if wait_for 5 scans_at_least "$daemon_log" $((before_scans + 1)) && wait_for 5 overlay_viewable; then
+        labels="$(last_labels)"
+        xdotool key Escape
+        if [[ -n "$labels" ]] && ! grep -qvE '^[zxcvbnm]+$' <<<"$labels"; then pass "file watch: an edited config applies without \`nomouse reload\`"; else fail "file watch: labels '$(tr '\n' ' ' <<<"$labels")'"; fi
+    else
+        fail "file watch: no labels after the hotkey"
+    fi
+else
+    fail "file watch: the daemon did not notice the edited config"
+fi
+before="$(reloads)"
+rm "$config"
+wait_for 15 reloads_at_least $((before + 1)) || fail "file watch: removing the config did not reload the defaults"
+
 if ((chromium)); then
     chrome="$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)"
     if [[ -n "$chrome" ]]; then

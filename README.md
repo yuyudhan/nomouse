@@ -104,7 +104,9 @@ compositor binds these commands and they reach the running daemon: see
 ## Configuration
 
 `~/.config/nomouse/config.toml` on macOS and Linux (`$XDG_CONFIG_HOME` is honoured). Every key
-is optional; `nomouse config init` writes the defaults, `nomouse config check` validates.
+is optional; `nomouse config init` writes the defaults, `nomouse config check` validates. The
+running daemon picks up an edited file within two seconds, or at once with `nomouse reload`;
+an invalid file is reported in its log and the previous settings stay.
 
 ```toml
 [hints]
@@ -131,6 +133,10 @@ background = "#ffd75f"
 foreground = "#1c1c1c"
 typed_foreground = "#8a8a8a"
 border = "#1c1c1c"
+
+[ignore]
+apps = ["org.wezfurlong.wezterm", "kitty"]   # no labels in these apps: bundle id, Wayland
+                                             # app id, X11 WM_CLASS or process name
 
 [macos]
 enhanced_ui_apps = ["com.google.Chrome"]   # Chromium browsers build their tree only on request

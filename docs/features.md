@@ -95,7 +95,7 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | --- | --- | --- | --- | --- | --- |
 | NM-SCRL-01 | Scroll mode labels scrollable areas (digits) and scrolls with `h`/`j`/`k`/`l`; without one, pick an element to scroll | `AXScrollArea` + wheel `CGEvent` | AT-SPI scroll panes + wheel buttons / discrete axis | P0 | done (all) |
 | NM-SCRL-02 | Page scroll `d`/`u` (and Space) | wheel × 5 | same | P0 | done (all) |
-| NM-SCRL-03 | `gg` top, `G` bottom | many wheel steps or `AXScrollToVisible` on first/last child | 500 wheel steps (core `scroll::EDGE_STEPS`; X11 lets go of a held Shift around the wheel) | P1 | partial (core; not verified on macOS) / done / done / partial (core; not verified) |
+| NM-SCRL-03 | `gg` top, `G` bottom | many wheel steps or `AXScrollToVisible` on first/last child | 500 wheel steps (core `scroll::EDGE_STEPS`; X11 waits up to 1 s for a held Shift to be released, since wheel events carry it) | P1 | partial (core; not verified on macOS) / done / done / partial (core; not verified) |
 | NM-SCRL-04 | Dash scroll: Shift-`hjkl` at a separate, configurable speed | wheel | wheel; `scroll.dash_step` | P1 | partial (core; not verified on macOS) / done / done / partial (core; not verified) |
 | NM-SCRL-05 | Tab/Shift-Tab cycle scroll areas; digits `0`-`9` jump to one; the largest is preselected | core | core `ScrollSession` | P1 | partial (core; not verified on macOS) / done / done / partial (core; not verified) |
 | NM-SCRL-06 | Smooth (pixel) scrolling instead of wheel notches | `kCGScrollEventUnitPixel` | `AXIS_VALUE120` / virtual pointer axis | P2 | missing |
@@ -129,9 +129,9 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-APP-02 | `nomouse doctor`: platform backend, permissions, display server, compositor abilities, config validity | AX trust, synthetic input, Input Monitoring | display server, AT-SPI bus and switch, compositor globals, uinput | P0 | done (all) |
 | NM-APP-03 | Config in `~/.config/nomouse/config.toml` (`$XDG_CONFIG_HOME` honoured) with defaults for every key, validated, `config init|path|show|check` | XDG path | XDG path | P0 | done (Windows: `%APPDATA%`) |
 | NM-APP-04 | Logging: `NOMOUSE_LOG=info|debug` to stderr | `tracing` | `tracing` | P0 | done (all) |
-| NM-APP-05 | Ignored apps: no activation in listed apps (bundle id / app id / process name) | frontmost bundle id | AT-SPI app name, `WM_CLASS`, Wayland app id | P1 | missing |
+| NM-APP-05 | Ignored apps: no activation in listed apps (bundle id / app id / process name) | frontmost bundle id | `WM_CLASS` and `/proc/<pid>/comm` (X11); compositor app id, `WM_CLASS` (Sway, Hyprland) | P1 | partial (bundle id read; not verified on macOS) / done / done (Sway, Hyprland) / missing |
 | NM-APP-06 | Per-app settings overrides (alphabet, action, scope, semantic click) | bundle id | app id | P2 | partial (only `macos.enhanced_ui_apps`) |
-| NM-APP-07 | Config reload without restarting the daemon (file watch or `nomouse reload`) | `FSEvents` / socket | inotify / socket | P1 | missing |
+| NM-APP-07 | Config reload without restarting the daemon (file watch or `nomouse reload`) | mtime watch / socket | mtime watch / socket | P1 | partial (shared code; not run on macOS) / done / done / partial (file watch only, not run) |
 | NM-APP-08 | Menu bar / tray icon: enabled state, open config, doctor, quit | `NSStatusItem` | StatusNotifierItem (KDE, GNOME with the AppIndicator extension) | P1 | missing |
 | NM-APP-09 | Launch at login | `SMAppService` (needs the `.app`) | XDG autostart `.desktop`, systemd user unit | P1 | missing |
 | NM-APP-10 | First-run onboarding: explain and request each permission, then verify with a live probe | AX prompt + System Settings deep link | enable `org.a11y.Status.IsEnabled`, explain Qt/Chromium flags and uinput | P0 | partial (prompt and doctor exist; no guided first run) |
@@ -165,9 +165,9 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | Priority | Features | Done | Partial | Missing |
 | --- | --- | --- | --- | --- |
 | P0 | 29 | 26 | 2 | 1 |
-| P1 | 25 | 5 | 12 | 8 |
+| P1 | 25 | 5 | 14 | 6 |
 | P2 | 17 | 0 | 3 | 14 |
-| **All** | **71** | **31** | **17** | **23** |
+| **All** | **71** | **31** | **19** | **21** |
 
 A feature counts as done when it is done on macOS and Linux X11 (Wayland limits are listed per
 row). The three open P0 items are all macOS distribution and onboarding: the signed and

@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use nomouse_core::{
-    Action, Config, Element, ElementSource, Frame, Hint, Hotkey, HotkeyId, HotkeySource,
-    InputEvent, InputInjector, MouseButton, Overlay, Platform, PlatformError, Scope,
+    Action, AppIdentity, Config, Element, ElementSource, Frame, Hint, Hotkey, HotkeyId,
+    HotkeySource, InputEvent, InputInjector, MouseButton, Overlay, Platform, PlatformError, Scope,
 };
 
 use crate::a11y::{AtspiSource, ScanLimits, bus};
@@ -14,6 +14,13 @@ use crate::x11::{self, X11};
 
 /// Timeout of one AT-SPI call: a hung application must not freeze hint mode.
 pub(crate) const CALL_TIMEOUT: Duration = Duration::from_millis(400);
+
+/// The name of process `pid` (`/proc/<pid>/comm`: the executable name, at most 15 bytes).
+pub(crate) fn process_name(pid: u32) -> Option<String> {
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    let name = comm.trim_end_matches('\n');
+    (!name.is_empty()).then(|| name.to_owned())
+}
 
 /// The Linux X11 backend: AT-SPI elements, X11 overlay, XTEST input, XGrabKey hotkeys.
 pub struct LinuxPlatform {
@@ -45,6 +52,14 @@ impl ElementSource for LinuxPlatform {
             self.source = None;
         }
         result
+    }
+
+    fn focused_app(&mut self) -> Result<Option<AppIdentity>, PlatformError> {
+        Ok(self.x.active_app().map(|(wm_class, pid)| AppIdentity {
+            app_id: None,
+            wm_class,
+            process: pid.and_then(process_name),
+        }))
     }
 }
 

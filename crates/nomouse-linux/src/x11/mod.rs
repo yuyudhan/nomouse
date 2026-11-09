@@ -26,7 +26,7 @@ use x11rb::protocol::{Event, randr, xtest};
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
-use input::{Fake, plan, plan_scroll_unmodified};
+use input::{Fake, plan};
 use keys::{KeyMap, sym};
 use render::{Label, Renderer};
 
@@ -118,6 +118,18 @@ fn numlock_mask(conn: &RustConnection, map: &KeyMap) -> Result<u16, PlatformErro
         .position(|codes| codes.iter().any(|code| numlock.contains(code)))
         .and_then(|index| u32::try_from(index).ok())
         .map_or(0, |index| 1 << index))
+}
+
+/// The longest a scroll waits for held modifiers to be released (see [`X11::perform`]).
+const MODIFIER_RELEASE_WAIT: Duration = Duration::from_secs(1);
+
+/// The names in a `WM_CLASS` value: NUL-terminated Latin-1 strings, instance then class.
+fn wm_class_names(value: &[u8]) -> Vec<String> {
+    value
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+        .map(|name| name.iter().map(|byte| char::from(*byte)).collect())
+        .collect()
 }
 
 fn rect_of(x: i16, y: i16, width: u16, height: u16) -> Rect {
@@ -291,12 +303,28 @@ impl X11 {
         reply.value32()?.next()
     }
 
+    fn active_window(&self) -> Option<xproto::Window> {
+        self.property32(self.root, self.net_active_window, AtomEnum::WINDOW)
+            .filter(|w| *w != 0)
+    }
+
     /// The process owning the active window (`_NET_ACTIVE_WINDOW`, `_NET_WM_PID`).
     pub(crate) fn active_pid(&self) -> Option<u32> {
-        let window = self
-            .property32(self.root, self.net_active_window, AtomEnum::WINDOW)
-            .filter(|w| *w != 0)?;
-        self.property32(window, self.net_wm_pid, AtomEnum::CARDINAL)
+        self.property32(self.active_window()?, self.net_wm_pid, AtomEnum::CARDINAL)
+    }
+
+    /// The active window's `WM_CLASS` names (instance, then class), and its process.
+    pub(crate) fn active_app(&self) -> Option<(Vec<String>, Option<u32>)> {
+        let window = self.active_window()?;
+        let class = self
+            .conn
+            .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .map(|reply| wm_class_names(&reply.value))
+            .unwrap_or_default();
+        let pid = self.property32(window, self.net_wm_pid, AtomEnum::CARDINAL);
+        Some((class, pid))
     }
 
     fn sync(&self) -> Result<(), PlatformError> {
@@ -713,19 +741,28 @@ impl X11 {
         ))
     }
 
-    /// Performs `action` with XTEST, holding its [`Action::modifiers`] (ctrl+click, ...). A
-    /// scroll lets go of the modifiers the user holds for its duration: wheel events carry the
-    /// server's modifier state, and Shift (pressed for scroll mode's `G` and dash keys) would
-    /// make toolkits scroll sideways.
+    /// Performs `action` with XTEST, holding its [`Action::modifiers`] (ctrl+click, ...).
+    ///
+    /// Wheel events carry the server's modifier state, and Shift (held for scroll mode's `G`
+    /// and dash keys) makes toolkits scroll sideways, so a scroll first waits, up to
+    /// [`MODIFIER_RELEASE_WAIT`], for the user to let go of every modifier. Faking the
+    /// releases instead would not work: XTEST cannot release a key held on the physical
+    /// keyboard, and pressing it again afterwards would leave it stuck.
     ///
     /// # Errors
     /// When the connection is lost.
     pub(crate) fn perform(&mut self, action: &Action) -> Result<(), PlatformError> {
-        let fakes = if matches!(action, Action::Scroll { .. }) {
-            plan_scroll_unmodified(action, &self.pressed_modifiers()?)
-        } else {
-            plan(action, &self.modifier_keycodes(action.modifiers()))
-        };
+        if matches!(action, Action::Scroll { .. }) {
+            let started = Instant::now();
+            while !self.pressed_modifiers()?.is_empty() {
+                if started.elapsed() >= MODIFIER_RELEASE_WAIT {
+                    tracing::debug!("scrolling with modifiers still held");
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let fakes = plan(action, &self.modifier_keycodes(action.modifiers()));
         for fake in fakes {
             let (kind, detail, at) = match fake {
                 Fake::Motion(at) => (xproto::MOTION_NOTIFY_EVENT, 0, at),
@@ -784,6 +821,17 @@ fn modifier_keysyms(modifiers: Modifiers) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wm_class_value_gives_instance_then_class() {
+        assert_eq!(
+            wm_class_names(b"gnome-terminal-server\0Gnome-terminal\0"),
+            ["gnome-terminal-server", "Gnome-terminal"]
+        );
+        assert_eq!(wm_class_names(b"xterm\0XTerm"), ["xterm", "XTerm"]);
+        assert_eq!(wm_class_names(b"r\xe9sum\xe9\0"), ["résumé"]);
+        assert_eq!(wm_class_names(b""), Vec::<String>::new());
+    }
 
     #[test]
     fn modifiers_map_to_left_keysyms_in_press_order() {

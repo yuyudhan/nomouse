@@ -1,12 +1,14 @@
 //! The daemon's command socket: `nomouse hints|continuous|scroll|search` hand their mode to a
-//! running daemon instead of starting a second overlay. On Wayland this is how hotkeys work at
-//! all: the compositor binds the command (Sway `bindsym ... exec nomouse hints`).
+//! running daemon instead of starting a second overlay, and `nomouse reload` makes it re-read
+//! its configuration. On Wayland this is how hotkeys work at all: the compositor binds the
+//! command (Sway `bindsym ... exec nomouse hints`).
 //!
 //! The socket is `$XDG_RUNTIME_DIR/nomouse.sock` (owner-only, like the runtime dir). Without a
 //! runtime dir it is `nomouse.sock` inside `<tmp>/nomouse-<uid>/`, a directory created with
 //! mode 0700 and refused when it is a symlink, not ours, or open to group or others. A request
 //! is one line of at most [`MAX_REQUEST`] bytes (`hints click`, `continuous right-click`,
-//! `scroll`, `search`); the daemon answers `ok` before it runs the mode, or `error: <reason>`.
+//! `scroll`, `search`, `reload`); the daemon answers `ok` before it acts, or
+//! `error: <reason>`.
 
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
@@ -19,6 +21,7 @@ use std::time::Duration;
 
 use nomouse_core::ActionKind;
 
+use crate::Request;
 use crate::run::Mode;
 
 /// How long either side waits for the other's line.
@@ -97,21 +100,22 @@ pub(crate) fn current_path() -> std::io::Result<PathBuf> {
     )
 }
 
-/// The request line for `mode`.
-pub(crate) fn encode(mode: Mode) -> String {
-    match mode {
-        Mode::Once(kind) => format!("hints {kind}"),
-        Mode::Continuous(kind) => format!("continuous {kind}"),
-        Mode::Scroll => "scroll".to_owned(),
-        Mode::Search => "search".to_owned(),
+/// The request line for `request`.
+pub(crate) fn encode(request: Request) -> String {
+    match request {
+        Request::Run(Mode::Once(kind)) => format!("hints {kind}"),
+        Request::Run(Mode::Continuous(kind)) => format!("continuous {kind}"),
+        Request::Run(Mode::Scroll) => "scroll".to_owned(),
+        Request::Run(Mode::Search) => "search".to_owned(),
+        Request::Reload => "reload".to_owned(),
     }
 }
 
-/// The mode of a request line.
+/// The request of a request line.
 ///
 /// # Errors
 /// The reason, for the `error:` reply.
-pub(crate) fn decode(line: &str) -> Result<Mode, String> {
+pub(crate) fn decode(line: &str) -> Result<Request, String> {
     let mut words = line.split_whitespace();
     let command = words.next().unwrap_or_default();
     let kind = |word: Option<&str>| -> Result<ActionKind, String> {
@@ -119,20 +123,21 @@ pub(crate) fn decode(line: &str) -> Result<Mode, String> {
             w.parse::<ActionKind>().map_err(|e| e.to_string())
         })
     };
-    let mode = match command {
-        "hints" => match kind(words.next())? {
+    let request = match command {
+        "hints" => Request::Run(match kind(words.next())? {
             ActionKind::Scroll => Mode::Scroll,
             kind => Mode::Once(kind),
-        },
-        "continuous" => Mode::Continuous(kind(words.next())?),
-        "scroll" => Mode::Scroll,
-        "search" => Mode::Search,
+        }),
+        "continuous" => Request::Run(Mode::Continuous(kind(words.next())?)),
+        "scroll" => Request::Run(Mode::Scroll),
+        "search" => Request::Run(Mode::Search),
+        "reload" => Request::Reload,
         other => return Err(format!("unknown request `{other}`")),
     };
     if words.next().is_some() {
         return Err(format!("trailing words in `{line}`"));
     }
-    Ok(mode)
+    Ok(request)
 }
 
 /// Why a request could not be delivered.
@@ -151,11 +156,11 @@ pub(crate) enum SendError {
     },
 }
 
-/// Asks the daemon at `path` to run `mode`.
+/// Sends `request` to the daemon at `path`.
 ///
 /// # Errors
 /// [`SendError::NoDaemon`] when nothing listens there (the caller then runs the mode itself).
-pub(crate) fn send(path: &Path, mode: Mode) -> Result<(), SendError> {
+pub(crate) fn send(path: &Path, request: Request) -> Result<(), SendError> {
     let failed = |reason: String| SendError::Failed {
         path: path.to_owned(),
         reason,
@@ -176,7 +181,7 @@ pub(crate) fn send(path: &Path, mode: Mode) -> Result<(), SendError> {
         .set_read_timeout(Some(TIMEOUT))
         .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)))
         .map_err(|e| failed(e.to_string()))?;
-    writeln!(stream, "{}", encode(mode)).map_err(|e| failed(e.to_string()))?;
+    writeln!(stream, "{}", encode(request)).map_err(|e| failed(e.to_string()))?;
     let mut reply = String::new();
     BufReader::new(&stream)
         .read_line(&mut reply)
@@ -193,7 +198,7 @@ pub(crate) fn send(path: &Path, mode: Mode) -> Result<(), SendError> {
 /// (so a bound key never waits on a running session); removed when dropped.
 #[derive(Debug)]
 pub(crate) struct Server {
-    requests: Receiver<Mode>,
+    requests: Receiver<Request>,
     path: PathBuf,
 }
 
@@ -236,21 +241,30 @@ impl Server {
     }
 
     /// The oldest request not yet taken.
-    pub(crate) fn poll(&self) -> Option<Mode> {
+    pub(crate) fn poll(&self) -> Option<Request> {
         self.requests.try_recv().ok()
     }
 
-    /// Drops the requests that arrived while a session ran (a second press of the bound key
-    /// during a session must not start another one afterwards); returns how many.
-    pub(crate) fn discard_pending(&self) -> usize {
-        self.requests.try_iter().count()
+    /// Takes the requests that arrived while a session ran: activations are dropped (a second
+    /// press of the bound key during a session must not start another one afterwards).
+    /// Returns how many were dropped, and whether a reload was among them.
+    pub(crate) fn discard_pending(&self) -> (usize, bool) {
+        let mut dropped = 0;
+        let mut reload = false;
+        for request in self.requests.try_iter() {
+            match request {
+                Request::Run(_) => dropped += 1,
+                Request::Reload => reload = true,
+            }
+        }
+        (dropped, reload)
     }
 }
 
 /// Accepts connections until the daemon's end of the channel is gone. Each connection is
 /// answered on its own thread (at most [`MAX_CLIENTS`]), so a client that connects and sends
 /// nothing delays nobody else.
-fn serve_socket(listener: &UnixListener, sender: &Sender<Mode>) {
+fn serve_socket(listener: &UnixListener, sender: &Sender<Request>) {
     let active = Arc::new(AtomicUsize::new(0));
     let closed = Arc::new(AtomicBool::new(false));
     for stream in listener.incoming() {
@@ -277,8 +291,8 @@ fn serve_socket(listener: &UnixListener, sender: &Sender<Mode>) {
         let spawned = std::thread::Builder::new()
             .name("nomouse-command".to_owned())
             .spawn(move || {
-                if let Some(mode) = answer(&stream)
-                    && sender.send(mode).is_err()
+                if let Some(request) = answer(&stream)
+                    && sender.send(request).is_err()
                 {
                     stop.store(true, Ordering::Relaxed);
                 }
@@ -294,7 +308,7 @@ fn serve_socket(listener: &UnixListener, sender: &Sender<Mode>) {
 
 /// Reads one request (at most [`MAX_REQUEST`] bytes, within [`TIMEOUT`]) and acknowledges it,
 /// or explains why it is invalid.
-fn answer(stream: &UnixStream) -> Option<Mode> {
+fn answer(stream: &UnixStream) -> Option<Request> {
     let setup = stream
         .set_read_timeout(Some(TIMEOUT))
         .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)));
@@ -315,12 +329,12 @@ fn answer(stream: &UnixStream) -> Option<Mode> {
         return None;
     }
     match decode(line.trim()) {
-        Ok(mode) => {
-            // The client only waits for the acknowledgement, not for the mode to finish.
+        Ok(request) => {
+            // The client only waits for the acknowledgement, not for the request to finish.
             if let Err(error) = writeln!(writer, "ok") {
                 tracing::warn!("command socket: {error}");
             }
-            Some(mode)
+            Some(request)
         }
         Err(reason) => {
             tracing::warn!("command socket: {reason}");
@@ -427,7 +441,7 @@ mod tests {
         assert_eq!(request(&path, &long), "error: request too long\n");
         assert_eq!(server.poll(), None);
         assert_eq!(request(&path, b"scroll\n"), "ok\n");
-        assert_eq!(wait_poll(&server), Some(Mode::Scroll));
+        assert_eq!(wait_poll(&server), Some(Request::Run(Mode::Scroll)));
     }
 
     #[test]
@@ -448,7 +462,7 @@ mod tests {
         assert!(path.exists(), "the stale socket file stays behind");
         let server = Server::bind(&path).unwrap();
         assert_eq!(request(&path, b"scroll\n"), "ok\n");
-        assert_eq!(wait_poll(&server), Some(Mode::Scroll));
+        assert_eq!(wait_poll(&server), Some(Request::Run(Mode::Scroll)));
     }
 
     #[test]
@@ -477,15 +491,15 @@ mod tests {
             "the second client waited {:?} behind the silent one",
             started.elapsed()
         );
-        assert_eq!(wait_poll(&server), Some(Mode::Search));
+        assert_eq!(wait_poll(&server), Some(Request::Run(Mode::Search)));
         drop(silent);
     }
 
     /// Polls `server` for up to 2 s.
-    fn wait_poll(server: &Server) -> Option<Mode> {
+    fn wait_poll(server: &Server) -> Option<Request> {
         for _ in 0..200 {
-            if let Some(mode) = server.poll() {
-                return Some(mode);
+            if let Some(request) = server.poll() {
+                return Some(request);
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -494,34 +508,61 @@ mod tests {
 
     #[test]
     fn requests_round_trip() {
-        for mode in [
-            Mode::Once(ActionKind::Click),
-            Mode::Once(ActionKind::RightClick),
-            Mode::Continuous(ActionKind::DoubleClick),
-            Mode::Scroll,
-            Mode::Search,
+        for request in [
+            Request::Run(Mode::Once(ActionKind::Click)),
+            Request::Run(Mode::Once(ActionKind::RightClick)),
+            Request::Run(Mode::Continuous(ActionKind::DoubleClick)),
+            Request::Run(Mode::Scroll),
+            Request::Run(Mode::Search),
+            Request::Reload,
         ] {
-            assert_eq!(decode(&encode(mode)), Ok(mode), "{}", encode(mode));
+            assert_eq!(decode(&encode(request)), Ok(request), "{}", encode(request));
         }
-        assert_eq!(decode("hints"), Ok(Mode::Once(ActionKind::Click)));
-        assert_eq!(decode("hints scroll"), Ok(Mode::Scroll));
+        assert_eq!(
+            decode("hints"),
+            Ok(Request::Run(Mode::Once(ActionKind::Click)))
+        );
+        assert_eq!(decode("hints scroll"), Ok(Request::Run(Mode::Scroll)));
         assert!(decode("explode").is_err());
         assert!(decode("hints nonsense").is_err());
         assert!(decode("scroll now").is_err());
+        assert!(decode("reload now").is_err());
+    }
+
+    #[test]
+    fn pending_activations_are_dropped_but_a_reload_is_kept() {
+        let path = scratch("pending.sock");
+        let server = Server::bind(&path).unwrap();
+        for line in [&b"hints\n"[..], b"reload\n", b"search\n"] {
+            assert_eq!(request(&path, line), "ok\n");
+        }
+        // A request is queued just after its reply: collect for up to 2 s.
+        let (mut dropped, mut reload) = (0, false);
+        for _ in 0..200 {
+            let (more, reloads) = server.discard_pending();
+            dropped += more;
+            reload |= reloads;
+            if dropped == 2 && reload {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!((dropped, reload), (2, true));
+        assert_eq!(server.discard_pending(), (0, false));
     }
 
     #[test]
     fn daemon_and_client_talk() {
         let path = std::env::temp_dir().join(format!("nomouse-ipc-{}.sock", std::process::id()));
         assert!(matches!(
-            send(&path, Mode::Scroll),
+            send(&path, Request::Run(Mode::Scroll)),
             Err(SendError::NoDaemon(_))
         ));
         let server = Server::bind(&path).unwrap();
         assert_eq!(server.poll(), None);
         let client = std::thread::spawn({
             let path = path.clone();
-            move || send(&path, Mode::Continuous(ActionKind::Hover))
+            move || send(&path, Request::Run(Mode::Continuous(ActionKind::Hover)))
         });
         let mut received = None;
         for _ in 0..200 {
@@ -531,7 +572,10 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert_eq!(received, Some(Mode::Continuous(ActionKind::Hover)));
+        assert_eq!(
+            received,
+            Some(Request::Run(Mode::Continuous(ActionKind::Hover)))
+        );
         assert!(client.join().unwrap().is_ok());
         drop(server);
         assert!(!path.exists(), "the socket is removed with the server");

@@ -104,16 +104,6 @@ pub(crate) fn plan(action: &Action, modifiers: &[u8]) -> Vec<Fake> {
     fakes
 }
 
-/// [`plan`] for a scroll while the user holds `pressed` (modifier keycodes): they are let go
-/// of before the wheel and pressed again after it, so the app reads a plain wheel (Shift held
-/// for scroll mode's `G` or dash keys would turn GTK's wheel horizontal, Control into zoom).
-pub(crate) fn plan_scroll_unmodified(action: &Action, pressed: &[u8]) -> Vec<Fake> {
-    let mut fakes: Vec<Fake> = pressed.iter().map(|code| Fake::KeyUp(*code)).collect();
-    fakes.extend(plan(action, &[]));
-    fakes.extend(pressed.iter().rev().map(|code| Fake::KeyDown(*code)));
-    fakes
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,29 +146,6 @@ mod tests {
         let up = plan(&Action::scroll(P, 2, -2), &[]);
         assert_eq!(up.iter().filter(|f| **f == Fake::Press(4)).count(), 2);
         assert_eq!(up.iter().filter(|f| **f == Fake::Press(7)).count(), 2);
-    }
-
-    #[test]
-    fn scroll_lets_go_of_held_modifiers_around_the_wheel() {
-        let fakes = plan_scroll_unmodified(&Action::scroll(P, 0, 2), &[50, 37]);
-        assert_eq!(
-            fakes,
-            [
-                Fake::KeyUp(50),
-                Fake::KeyUp(37),
-                Fake::Motion(P),
-                Fake::Press(5),
-                Fake::Release(5),
-                Fake::Press(5),
-                Fake::Release(5),
-                Fake::KeyDown(37),
-                Fake::KeyDown(50),
-            ]
-        );
-        assert_eq!(
-            plan_scroll_unmodified(&Action::scroll(P, 0, 1), &[]),
-            plan(&Action::scroll(P, 0, 1), &[])
-        );
     }
 
     #[test]

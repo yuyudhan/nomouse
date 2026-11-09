@@ -334,6 +334,49 @@ else
     fail "focus-then-act: the daemon did not scan"
 fi
 
+echo "--- ignore.apps (Wayland app id and XWayland WM_CLASS) and \`nomouse reload\`"
+config="$XDG_CONFIG_HOME/nomouse/config.toml"
+mkdir -p "$XDG_CONFIG_HOME/nomouse"
+reloads() { grep -c 'config reloaded' "$daemon_log" || true; }
+reloads_at_least() { (($(reloads) >= $1)); }
+ignores() { grep -c 'the focused app is ignored' "$daemon_log" || true; }
+ignores_at_least() { (($(ignores) >= $1)); }
+before="$(reloads)"
+# GTK names the app after its program: app id "gtk_app.py" (native), WM_CLASS (XWayland).
+printf '[ignore]\napps = ["gtk_app.py"]\n' >"$config"
+# A reload restarts the platform (Wayland connection, virtual devices): give it time.
+if "$bin" reload && wait_for 15 reloads_at_least $((before + 1)); then
+    for shell in xdg_shell xwayland; do
+        focus "$shell"
+        before_scans="$(scans "$daemon_log")"
+        before_ignores="$(ignores)"
+        "$bin" hints
+        if wait_for 5 ignores_at_least $((before_ignores + 1)) && (($(scans "$daemon_log") == before_scans)); then
+            pass "$shell: \`nomouse hints\` over the ignored GTK app showed nothing"
+        else
+            fail "$shell: ignore.apps: $(($(ignores) - before_ignores)) ignore(s), $(($(scans "$daemon_log") - before_scans)) scan(s)"
+            wtype -k Escape
+        fi
+    done
+else
+    fail "reload: the daemon did not reload after \`nomouse reload\`"
+fi
+before="$(reloads)"
+rm "$config"
+if "$bin" reload && wait_for 15 reloads_at_least $((before + 1)); then
+    focus xdg_shell
+    before="$(scans "$daemon_log")"
+    if "$bin" hints && wait_for 5 scans_at_least "$daemon_log" $((before + 1)); then
+        sleep 0.2
+        wtype -k Escape
+        pass "without the ignore entry the app is labelled again"
+    else
+        fail "after removing the ignore entry: no scan"
+    fi
+else
+    fail "reload: removing the config did not reload"
+fi
+
 # SIGTERM skips destructors, so the socket file stays; a client must treat it as no daemon.
 kill "$daemon_pid" 2>/dev/null || true
 reap "$daemon_pid" 5 || true

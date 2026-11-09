@@ -13,6 +13,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::action::Action;
+use crate::apps::AppIdentity;
 use crate::element::{Element, Rect};
 use crate::hints::Hint;
 use crate::hotkey::{Hotkey, KeyEvent};
@@ -62,6 +63,15 @@ pub trait ElementSource {
     /// [`PlatformError::AccessibilityUnavailable`] when the tree cannot be read,
     /// [`PlatformError::NoFocusedWindow`] for [`Scope::FocusedWindow`] without focus.
     fn elements(&mut self, scope: Scope) -> Result<Vec<Element>, PlatformError>;
+
+    /// Who owns the focused window, for `ignore.apps`; `None` when the platform cannot tell
+    /// (the default).
+    ///
+    /// # Errors
+    /// When the display or compositor connection is lost.
+    fn focused_app(&mut self) -> Result<Option<AppIdentity>, PlatformError> {
+        Ok(None)
+    }
 }
 
 /// Everything one overlay frame draws, for [`Overlay::show_frame`].
