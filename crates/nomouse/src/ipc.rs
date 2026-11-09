@@ -111,6 +111,9 @@ pub(crate) fn encode(request: Request) -> String {
         Request::Run(Mode::Scroll) => "scroll".to_owned(),
         Request::Run(Mode::Search) => "search".to_owned(),
         Request::Reload => "reload".to_owned(),
+        Request::Pause => "pause".to_owned(),
+        Request::Resume => "resume".to_owned(),
+        Request::Quit => "quit".to_owned(),
     }
 }
 
@@ -135,6 +138,9 @@ pub(crate) fn decode(line: &str) -> Result<Request, String> {
         "scroll" => Request::Run(Mode::Scroll),
         "search" => Request::Run(Mode::Search),
         "reload" => Request::Reload,
+        "pause" => Request::Pause,
+        "resume" => Request::Resume,
+        "quit" => Request::Quit,
         other => return Err(format!("unknown request `{other}`")),
     };
     if words.next().is_some() {
@@ -268,17 +274,18 @@ impl Server {
 
     /// Takes the requests that arrived while a session ran: activations are dropped (a second
     /// press of the bound key during a session must not start another one afterwards).
-    /// Returns how many were dropped, and whether a reload was among them.
-    pub(crate) fn discard_pending(&self) -> (usize, bool) {
+    /// Returns how many were dropped, and the other requests (reload, pause, resume, quit) in
+    /// order, for the daemon to carry out now.
+    pub(crate) fn discard_pending(&self) -> (usize, Vec<Request>) {
         let mut dropped = 0;
-        let mut reload = false;
+        let mut kept = Vec::new();
         for request in self.requests.try_iter() {
             match request {
                 Request::Run(_) => dropped += 1,
-                Request::Reload => reload = true,
+                other => kept.push(other),
             }
         }
-        (dropped, reload)
+        (dropped, kept)
     }
 }
 
@@ -550,6 +557,9 @@ mod tests {
             Request::Run(Mode::Scroll),
             Request::Run(Mode::Search),
             Request::Reload,
+            Request::Pause,
+            Request::Resume,
+            Request::Quit,
         ] {
             assert_eq!(decode(&encode(request)), Ok(request), "{}", encode(request));
         }
@@ -562,28 +572,29 @@ mod tests {
         assert!(decode("hints nonsense").is_err());
         assert!(decode("scroll now").is_err());
         assert!(decode("reload now").is_err());
+        assert!(decode("pause now").is_err());
     }
 
     #[test]
-    fn pending_activations_are_dropped_but_a_reload_is_kept() {
+    fn pending_activations_are_dropped_but_other_requests_are_kept_in_order() {
         let path = scratch("pending.sock");
         let server = Server::bind(&path).unwrap();
-        for line in [&b"hints\n"[..], b"reload\n", b"search\n"] {
+        for line in [&b"hints\n"[..], b"reload\n", b"search\n", b"pause\n"] {
             assert_eq!(request(&path, line), "ok\n");
         }
         // A request is queued just after its reply: collect for up to 2 s.
-        let (mut dropped, mut reload) = (0, false);
+        let (mut dropped, mut kept) = (0, Vec::new());
         for _ in 0..200 {
-            let (more, reloads) = server.discard_pending();
+            let (more, others) = server.discard_pending();
             dropped += more;
-            reload |= reloads;
-            if dropped == 2 && reload {
+            kept.extend(others);
+            if dropped == 2 && kept.len() == 2 {
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert_eq!((dropped, reload), (2, true));
-        assert_eq!(server.discard_pending(), (0, false));
+        assert_eq!((dropped, kept), (2, vec![Request::Reload, Request::Pause]));
+        assert_eq!(server.discard_pending(), (0, Vec::new()));
     }
 
     #[test]

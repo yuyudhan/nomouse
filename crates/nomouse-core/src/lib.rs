@@ -14,6 +14,8 @@
 //! - [`setup`]: the guided first run that walks the user through missing permissions.
 //! - [`scroll`]: scroll mode's areas and keys.
 //! - [`apps`]: the focused window's application, for `ignore.apps`.
+//! - [`update`]: the update check (is a newer release out).
+//! - [`menu`]: the status menu (tray icon, menu-bar item) for the daemon's state.
 //! - `contract` (feature `testing`): the backend contract suite and an in-memory fake.
 #![forbid(unsafe_code)]
 
@@ -28,6 +30,7 @@ pub mod filter;
 pub mod glyph;
 pub mod hints;
 pub mod hotkey;
+pub mod menu;
 pub mod platform;
 pub mod reveal;
 pub mod scroll;
@@ -35,6 +38,7 @@ pub mod search;
 pub mod session;
 pub mod settings;
 pub mod setup;
+pub mod update;
 
 pub use action::{Action, ActionKind, MouseButton};
 pub use apps::AppIdentity;

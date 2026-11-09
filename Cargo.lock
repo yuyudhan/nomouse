@@ -903,6 +903,7 @@ dependencies = [
  "kbvm",
  "nomouse-core",
  "rustix",
+ "serde",
  "serde_json",
  "tiny-skia",
  "tracing",

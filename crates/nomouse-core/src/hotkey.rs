@@ -148,6 +148,40 @@ impl Hotkey {
     pub const fn new(modifiers: Modifiers, key: Key) -> Self {
         Self { modifiers, key }
     }
+
+    /// The chord as menus and settings show it: `Ctrl+Shift+Space`, `Ctrl+Alt+/`,
+    /// `Super+F5` (modifiers in the order Ctrl, Alt, Shift, Super).
+    pub fn human(&self) -> String {
+        let m = self.modifiers;
+        let mut text = String::new();
+        for (on, name) in [
+            (m.ctrl, "Ctrl+"),
+            (m.alt, "Alt+"),
+            (m.shift, "Shift+"),
+            (m.meta, "Super+"),
+        ] {
+            if on {
+                text.push_str(name);
+            }
+        }
+        match self.key {
+            Key::Char(c) => text.push(c.to_ascii_uppercase()),
+            Key::F(n) => {
+                text.push('F');
+                text.push_str(&n.to_string());
+            }
+            Key::Space => text.push_str("Space"),
+            Key::Tab => text.push_str("Tab"),
+            Key::Enter => text.push_str("Enter"),
+            Key::Escape => text.push_str("Esc"),
+            Key::Backspace => text.push_str("Backspace"),
+            Key::Semicolon => text.push(';'),
+            Key::Comma => text.push(','),
+            Key::Period => text.push('.'),
+            Key::Slash => text.push('/'),
+        }
+        text
+    }
 }
 
 /// Why a hotkey string failed to parse.
@@ -298,6 +332,16 @@ mod tests {
         assert_eq!(hotkey.to_string(), "ctrl+alt+space");
         assert_eq!("cmd+shift+f12".parse::<Hotkey>().unwrap().key, Key::F(12));
         assert_eq!("super+j".parse::<Hotkey>().unwrap().to_string(), "super+j");
+    }
+
+    #[test]
+    fn human_names_follow_menu_conventions() {
+        let human = |text: &str| text.parse::<Hotkey>().unwrap().human();
+        assert_eq!(human("shift+ctrl+space"), "Ctrl+Shift+Space");
+        assert_eq!(human("ctrl+alt+/"), "Ctrl+Alt+/");
+        assert_eq!(human("cmd+f5"), "Super+F5");
+        assert_eq!(human("alt+escape"), "Alt+Esc");
+        assert_eq!(human("super+shift+j"), "Shift+Super+J");
     }
 
     #[test]

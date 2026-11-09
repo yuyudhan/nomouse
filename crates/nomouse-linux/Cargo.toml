@@ -35,6 +35,7 @@ futures-util = { version = "0.3", default-features = false, features = [
 kbvm = { version = "0.2", default-features = false, optional = true }
 nomouse-core = { workspace = true, features = ["glyph"] }
 rustix = { version = "1", default-features = false, features = ["event", "fs", "std"] }
+serde.workspace = true
 serde_json = { version = "1", optional = true }
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 tracing = "0.1"

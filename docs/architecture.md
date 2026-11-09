@@ -94,6 +94,39 @@ Hint alphabet: `asdfghjk` by default, configurable; `i`, `l`, `o` are rejected a
 - **Windows**: UI Automation (`IUIAutomation::ElementFromHandle` + cached tree walk), a
   `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST` overlay, `SendInput`, `RegisterHotKey`.
 
+## Desktop integration (Linux)
+
+The daemon puts itself on the session bus (`nomouse_linux::service`, zbus on its own executor
+thread; the event loop reads its commands without blocking and pushes state changes):
+
+- **Control interface**: `io.github.yuyudhan.nomouse.Daemon1` at
+  `/io/github/yuyudhan/nomouse/Daemon`, owned as `io.github.yuyudhan.nomouse.Daemon`
+  (`nomouse_linux::control`). Methods `Pause`, `Resume`, `Reload`, `Run(mode)`, `Quit`;
+  properties `Paused`, `Active` (the backend runs), `Warning` (the session problem) and
+  `Version`, with change signals. The settings window and the tests use it. The command socket
+  takes the same `pause`, `resume` and `quit` lines (`nomouse pause|resume|quit`).
+- **Tray icon**: a freedesktop `org.kde.StatusNotifierItem` at `/StatusNotifierItem` with a
+  `com.canonical.dbusmenu` menu at `/MenuBar`, registered with `org.kde.StatusNotifierWatcher`
+  by the connection's unique name, and again whenever a watcher appears (a panel restarting).
+  KDE, Xfce, waybar's tray module and GNOME Shell with the AppIndicator extension (enabled by
+  default on Ubuntu) are such hosts. The menu is `nomouse_core::menu::status_menu`, the same
+  model the macOS menu-bar item draws: the state line, the session warning, Pause/Resume, each
+  mode with its hotkey (X11 only; compositors own them on Wayland), Settings…, Run doctor…,
+  Start at login (an XDG autostart entry, `nomouse_linux::autostart`), Check for updates… (a
+  `curl` of the latest-release redirect, `nomouse_core::update`, answered in the menu and a
+  desktop notification), About and Quit. Ids are stable per action, so a host clicking an item
+  of an older layout still does the right thing; a click on a disabled item does nothing. The
+  icon is the themed `io.github.yuyudhan.nomouse-symbolic` (paused:
+  `io.github.yuyudhan.nomouse-paused-symbolic`).
+- **No tray host** (GNOME without the extension, i3 without a tray): nothing changes for the
+  hotkeys; the launcher entry opens the settings window, and `nomouse doctor` prints why there
+  is no icon and how to get one.
+- **Unsupported session** (GNOME on Wayland, no AT-SPI yet): when the backend cannot start but
+  the bus is up, the daemon keeps running its menu and control interface only
+  (`Active = false`, the reason as the warning, the icon's status `NeedsAttention`), retries
+  every 30 seconds and on every configuration change, and starts the backend as soon as it
+  can. Without the bus it exits with the error, as before.
+
 ## Unsafe policy
 
 The user requirement is `#![forbid(unsafe_code)]` in every crate. macOS and Windows APIs are

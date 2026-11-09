@@ -2,6 +2,7 @@
 //! the app launcher's `launch`, and configuration commands.
 #![forbid(unsafe_code)]
 
+mod desktop;
 mod first_run;
 #[cfg(unix)]
 mod ipc;
@@ -21,6 +22,7 @@ use nomouse_core::config::{self, Config};
 use nomouse_core::settings::{Change, Settings as ConfigFile};
 use nomouse_core::{ActionKind, Alphabet, InputEvent, Platform, generate_labels};
 
+use desktop::Desktop;
 use run::{Mode, Outcome, Settings};
 
 #[cfg(target_os = "linux")]
@@ -102,6 +104,13 @@ enum Command {
     /// Make the running daemon re-read its configuration file now (it also re-reads it on its
     /// own within a second or two of the file changing).
     Reload,
+    /// Make the running daemon release its hotkeys (and ignore `nomouse hints` and the other
+    /// modes) until `nomouse resume`.
+    Pause,
+    /// Make a paused daemon grab its hotkeys again.
+    Resume,
+    /// Stop the running daemon.
+    Quit,
     /// Check the session, accessibility, input and configuration.
     Doctor,
     /// Walk through the permissions nomouse needs: explain each, ask the OS, wait for it.
@@ -221,6 +230,12 @@ pub(crate) enum Request {
     Run(Mode),
     /// Re-read the configuration file.
     Reload,
+    /// Release the hotkeys and ignore activations until resumed.
+    Pause,
+    /// Grab the hotkeys again.
+    Resume,
+    /// Stop the daemon.
+    Quit,
 }
 
 /// Runs `mode`: hands it to the running daemon when there is one (unless `standalone`), so
@@ -247,21 +262,25 @@ fn activate(mode: Mode, standalone: bool) -> Result<String, String> {
     Ok(describe(&outcome))
 }
 
-/// `nomouse reload`: asks the running daemon to re-read its configuration.
-fn reload_daemon() -> Result<String, String> {
+/// `nomouse reload`, `pause`, `resume` and `quit`: hands `request` to the running daemon and
+/// returns `done`.
+fn tell_daemon(request: Request, done: &str) -> Result<String, String> {
     #[cfg(unix)]
     {
         let path = ipc::current_path().map_err(|error| format!("command socket: {error}"))?;
-        match ipc::send(&path, Request::Reload) {
-            Ok(()) => Ok("the daemon is reloading its configuration\n".to_owned()),
-            Err(ipc::SendError::NoDaemon(_)) => Err(
-                "no daemon is running (a daemon reads the configuration when it starts)".to_owned(),
-            ),
+        match ipc::send(&path, request) {
+            Ok(()) => Ok(format!("{done}\n")),
+            Err(ipc::SendError::NoDaemon(_)) => Err(if request == Request::Reload {
+                "no daemon is running (a daemon reads the configuration when it starts)".to_owned()
+            } else {
+                "no daemon is running".to_owned()
+            }),
             Err(error) => Err(error.to_string()),
         }
     }
     #[cfg(not(unix))]
     {
+        let _ = (request, done);
         Err(
             "this system has no command socket; the daemon re-reads the configuration file \
              within two seconds of it changing"
@@ -275,14 +294,16 @@ struct Running {
     config: Config,
     settings: Settings,
     modes: Vec<(nomouse_core::HotkeyId, Mode)>,
-    platform: Box<dyn Platform>,
+    /// `None` when the backend cannot start in this session: the daemon then runs only its
+    /// tray menu and control interface, `problem` says why, and it retries now and then.
+    platform: Option<Box<dyn Platform>>,
+    problem: Option<String>,
+    /// Hotkeys released and mode requests ignored (the tray's Pause).
+    paused: bool,
 }
 
-/// Creates the platform for `config` and registers its hotkeys (a chord that cannot be
-/// registered is logged and skipped).
-fn start(config: Config) -> Result<Running, String> {
-    let settings = settings(&config)?;
-    let mut platform = backend::platform(&config).map_err(|e| e.to_string())?;
+/// Registers `config`'s hotkeys (a chord that cannot be registered is logged and skipped).
+fn register(platform: &mut dyn Platform, config: &Config) -> Vec<(nomouse_core::HotkeyId, Mode)> {
     let action = config.hints.action;
     let bindings = [
         (config.hotkeys.hints, Mode::Once(action)),
@@ -297,35 +318,90 @@ fn start(config: Config) -> Result<Running, String> {
             Err(error) => tracing::warn!("{hotkey}: {error}"),
         }
     }
+    modes
+}
+
+/// Creates the platform for `config` and, unless `paused`, registers its hotkeys.
+fn start(config: Config, paused: bool) -> Result<Running, String> {
+    let settings = settings(&config)?;
+    let mut platform = backend::platform(&config).map_err(|e| e.to_string())?;
+    let modes = if paused {
+        Vec::new()
+    } else {
+        register(platform.as_mut(), &config)
+    };
     Ok(Running {
         config,
         settings,
         modes,
-        platform,
+        platform: Some(platform),
+        problem: None,
+        paused,
     })
 }
 
-/// Re-reads the configuration file and puts a changed configuration in effect. An
-/// unreadable or invalid file, or an unchanged configuration, keeps the running state.
-/// Otherwise the old platform goes first (releasing its hotkeys and overlay) and a new one
-/// starts with the new configuration, or with the old one again when the new one fails to
-/// start.
+/// The state without a backend: only the tray menu and control interface run.
+fn without_backend(config: Config, problem: String, paused: bool) -> Result<Running, String> {
+    Ok(Running {
+        settings: settings(&config)?,
+        config,
+        modes: Vec::new(),
+        platform: None,
+        problem: Some(problem),
+        paused,
+    })
+}
+
+impl Running {
+    /// Releases the hotkeys; mode requests are ignored until [`Self::resume`].
+    fn pause(&mut self) {
+        if let Some(platform) = &mut self.platform {
+            for (id, _) in self.modes.drain(..) {
+                if let Err(error) = platform.unregister(id) {
+                    tracing::warn!("pause: {error}");
+                }
+            }
+        }
+        self.paused = true;
+        tracing::info!("paused");
+    }
+
+    /// Grabs the hotkeys again.
+    fn resume(&mut self) {
+        if let Some(platform) = &mut self.platform
+            && self.paused
+        {
+            self.modes = register(platform.as_mut(), &self.config);
+        }
+        self.paused = false;
+        tracing::info!("resumed with {} hotkey(s)", self.modes.len());
+    }
+}
+
+/// Re-reads the configuration file and puts a changed configuration in effect. An unreadable
+/// or invalid file, or an unchanged configuration with the backend running, keeps the running
+/// state. Otherwise the old platform goes first (releasing
+/// its hotkeys and overlay) and a new one starts with the new configuration, or with the old
+/// one again when the new one fails to start. With `menu_only_ok` (the tray is up) a backend
+/// that cannot start leaves the daemon running its menu only.
 ///
 /// # Errors
-/// When neither configuration can start a platform.
-fn reload(running: Running, file: &mut ConfigFile) -> Result<Running, String> {
+/// When neither configuration can start a platform and the menu cannot run alone.
+fn reload(running: Running, file: &mut ConfigFile, menu_only_ok: bool) -> Result<Running, String> {
     if let Change::Invalid(error) = file.reload() {
         tracing::warn!("config reload: {error}; keeping the running configuration");
         return Ok(running);
     }
     let config = file.config().clone();
-    if config == running.config {
+    if config == running.config && running.platform.is_some() {
         tracing::info!("config reload: unchanged");
         return Ok(running);
     }
     let previous = running.config.clone();
+    let paused = running.paused;
+    let had_backend = running.platform.is_some();
     drop(running);
-    match start(config) {
+    match start(config.clone(), paused) {
         Ok(running) => {
             tracing::info!(
                 "config reloaded: {} hotkey(s) registered",
@@ -333,9 +409,19 @@ fn reload(running: Running, file: &mut ConfigFile) -> Result<Running, String> {
             );
             Ok(running)
         }
+        Err(error) if !had_backend && menu_only_ok => {
+            tracing::debug!("the backend still cannot start: {error}");
+            without_backend(config, error, paused)
+        }
         Err(error) => {
             tracing::warn!("config reload: {error}; restoring the previous configuration");
-            start(previous)
+            match start(previous, paused) {
+                Err(error) if menu_only_ok => {
+                    tracing::warn!("{error}; running only the tray menu");
+                    without_backend(config, error, paused)
+                }
+                other => other,
+            }
         }
     }
 }
@@ -364,7 +450,27 @@ fn daemon() -> Result<String, String> {
     if let Some(problem) = file.problem() {
         return Err(problem.to_owned());
     }
-    let running = start(file.config().clone())?;
+    let config = file.config().clone();
+    let mut desktop = Desktop::start(&config, None);
+    let running = match start(config.clone(), false) {
+        Ok(running) => running,
+        // With the tray (or the settings window) able to say why, the daemon stays up.
+        Err(error) if desktop.is_up() => {
+            tracing::warn!("{error}; running only the tray menu until the session allows more");
+            without_backend(config, error, false)?
+        }
+        Err(error) => return Err(error),
+    };
+    desktop.show(&running.config, running.paused, running.problem.as_deref());
+    if !desktop.tray_shown() {
+        tracing::info!(
+            "no tray icon (`nomouse doctor` says why); settings open from the app launcher"
+        );
+    }
+    let name = running
+        .platform
+        .as_ref()
+        .map_or("tray-only", |platform| platform.name());
     #[cfg(unix)]
     {
         let bound = ipc::current_path().and_then(|socket| match ipc::Server::bind(&socket) {
@@ -376,9 +482,9 @@ fn daemon() -> Result<String, String> {
         });
         let (socket, server) = match bound {
             Ok(bound) => bound,
-            Err(error) if !running.modes.is_empty() => {
+            Err(error) if !running.modes.is_empty() || desktop.is_up() => {
                 tracing::warn!("command socket: {error}");
-                return serve(running, &NoRequests, &mut file);
+                return serve(running, &NoRequests, &mut file, &mut desktop);
             }
             Err(error) => {
                 return Err(format!(
@@ -387,37 +493,38 @@ fn daemon() -> Result<String, String> {
             }
         };
         tracing::info!(
-            "{} daemon ready with {} hotkey(s) and commands on {}",
-            running.platform.name(),
+            "{name} daemon ready with {} hotkey(s) and commands on {}",
             running.modes.len(),
             socket.display()
         );
-        serve(running, &server, &mut file)
+        serve(running, &server, &mut file, &mut desktop)
     }
     #[cfg(not(unix))]
     {
         if running.modes.is_empty() {
             return Err("no hotkey could be registered".to_owned());
         }
-        tracing::info!(
-            "{} daemon ready with {} hotkey(s)",
-            running.platform.name(),
-            running.modes.len()
-        );
-        serve(running, &NoRequests, &mut file)
+        tracing::info!("{name} daemon ready with {} hotkey(s)", running.modes.len());
+        serve(running, &NoRequests, &mut file, &mut desktop)
     }
 }
 
 /// How often the daemon checks the command socket between hotkey events.
 const COMMAND_POLL: Duration = Duration::from_millis(30);
 
+/// How often a daemon without a backend tries to start one again.
+const RETRY_BACKEND: Duration = Duration::from_secs(30);
+
+/// How often the daemon looks for desktop changes made elsewhere (start at login).
+const DESKTOP_REFRESH: Duration = Duration::from_secs(2);
+
 /// Where the daemon's requests (besides its own hotkeys) come from.
 trait Requests {
     /// The oldest request waiting.
     fn next(&self) -> Option<Request>;
-    /// Drops the activations requested while a session ran; returns how many, and whether a
-    /// reload was requested meanwhile.
-    fn discard(&self) -> (usize, bool);
+    /// Drops the activations requested while a session ran; returns how many, and the other
+    /// requests made meanwhile.
+    fn discard(&self) -> (usize, Vec<Request>);
 }
 
 /// No command socket.
@@ -428,8 +535,8 @@ impl Requests for NoRequests {
         None
     }
 
-    fn discard(&self) -> (usize, bool) {
-        (0, false)
+    fn discard(&self) -> (usize, Vec<Request>) {
+        (0, Vec::new())
     }
 }
 
@@ -439,7 +546,7 @@ impl Requests for ipc::Server {
         self.poll()
     }
 
-    fn discard(&self) -> (usize, bool) {
+    fn discard(&self) -> (usize, Vec<Request>) {
         self.discard_pending()
     }
 }
@@ -448,57 +555,109 @@ fn serve(
     mut running: Running,
     requests: &dyn Requests,
     file: &mut ConfigFile,
+    desktop: &mut Desktop,
 ) -> Result<String, String> {
+    let mut retried = Instant::now();
+    let mut refreshed = Instant::now();
+    // Requests made while a session ran, other than activations: carried out after it.
+    let mut pending = std::collections::VecDeque::new();
     loop {
-        let event = running
-            .platform
-            .next_event(COMMAND_POLL)
-            .map_err(|e| e.to_string())?;
+        let event = if let Some(platform) = running.platform.as_mut() {
+            platform
+                .next_event(COMMAND_POLL)
+                .map_err(|e| e.to_string())?
+        } else {
+            std::thread::sleep(COMMAND_POLL);
+            None
+        };
         let started = Instant::now();
-        // The daemon's own hotkeys first, then the command socket, then the file watch.
+        if refreshed.elapsed() >= DESKTOP_REFRESH {
+            refreshed = Instant::now();
+            desktop.refresh();
+        }
+        // The daemon's own hotkeys first, then what waited for a session to end, the command
+        // socket, the tray menu and D-Bus, the file watch, and a daemon without a backend
+        // trying again.
         let request = match event {
             Some(InputEvent::Hotkey(id)) => running
                 .modes
                 .iter()
                 .find(|(known, _)| *known == id)
                 .map(|(_, mode)| Request::Run(*mode)),
-            _ => requests.next(),
+            _ => pending.pop_front().or_else(|| requests.next()),
         }
-        .or_else(|| file_changed(file).then_some(Request::Reload));
+        .or_else(|| desktop.next())
+        .or_else(|| file_changed(file).then_some(Request::Reload))
+        .or_else(|| {
+            (running.platform.is_none() && retried.elapsed() >= RETRY_BACKEND).then(|| {
+                retried = Instant::now();
+                Request::Reload
+            })
+        });
         let mode = match request {
+            Some(Request::Run(_)) if running.paused => {
+                tracing::info!("paused: ignoring a mode request");
+                continue;
+            }
             Some(Request::Run(mode)) => mode,
             Some(Request::Reload) => {
-                running = reload(running, file)?;
+                running = reload(running, file, desktop.is_up())?;
+                desktop.show(&running.config, running.paused, running.problem.as_deref());
                 continue;
+            }
+            Some(Request::Pause) => {
+                running.pause();
+                desktop.show(&running.config, running.paused, running.problem.as_deref());
+                continue;
+            }
+            Some(Request::Resume) => {
+                running.resume();
+                desktop.show(&running.config, running.paused, running.problem.as_deref());
+                continue;
+            }
+            Some(Request::Quit) => {
+                tracing::info!("quitting on request");
+                return Ok(String::new());
             }
             None => continue,
         };
+        if running.platform.is_none() {
+            tracing::info!(
+                "cannot run a mode: {}",
+                running.problem.as_deref().unwrap_or("no backend")
+            );
+            continue;
+        }
+        let Running {
+            platform: Some(platform),
+            settings,
+            ..
+        } = &mut running
+        else {
+            continue;
+        };
         // An activation requested on the command socket while the labels are up (the
-        // compositor binding pressed again) toggles them off; a reload waits for the end.
-        let reload_requested = std::cell::Cell::new(false);
+        // compositor binding pressed again) toggles them off; other requests wait for the end.
+        let waiting = std::cell::RefCell::new(Vec::new());
         let dismissed = || match requests.next() {
             Some(Request::Run(_)) => true,
-            Some(Request::Reload) => {
-                reload_requested.set(true);
+            Some(other) => {
+                waiting.borrow_mut().push(other);
                 false
             }
             None => false,
         };
-        let Running {
-            platform, settings, ..
-        } = &mut running;
         match run::activate(platform.as_mut(), settings, mode, started, &dismissed) {
             Ok(outcome) => tracing::info!("{}", describe(&outcome).trim_end()),
             // A lost display surfaces again from `next_event` and ends the daemon there.
             Err(error) => tracing::warn!("{error}"),
         }
-        let (ignored, reload_pending) = requests.discard();
+        let (ignored, kept) = requests.discard();
         if ignored > 0 {
             tracing::info!("ignored {ignored} request(s) made while the session ran");
         }
-        if reload_pending || reload_requested.get() {
-            running = reload(running, file)?;
-        }
+        pending.extend(waiting.into_inner());
+        pending.extend(kept);
     }
 }
 
@@ -530,6 +689,8 @@ pub(crate) fn doctor_report() -> Result<(String, bool), String> {
         )
     };
     let mut checks = backend::doctor(&config);
+    #[cfg(target_os = "linux")]
+    checks.push(desktop::doctor_line());
     checks.push(("config".to_owned(), status));
     let ignored = if config.ignore.apps.is_empty() {
         "none".to_owned()
@@ -582,7 +743,12 @@ fn run_command(command: Command, standalone: bool) -> Result<String, String> {
         }
         Command::Scroll => activate(Mode::Scroll, standalone),
         Command::Search => activate(Mode::Search, standalone),
-        Command::Reload => reload_daemon(),
+        Command::Reload => {
+            tell_daemon(Request::Reload, "the daemon is reloading its configuration")
+        }
+        Command::Pause => tell_daemon(Request::Pause, "the daemon released its hotkeys"),
+        Command::Resume => tell_daemon(Request::Resume, "the daemon grabs its hotkeys again"),
+        Command::Quit => tell_daemon(Request::Quit, "the daemon is quitting"),
         Command::Doctor => doctor(),
         Command::Setup => first_run::setup_command(),
         #[cfg(target_os = "linux")]

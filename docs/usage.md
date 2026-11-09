@@ -140,6 +140,8 @@ daemon, the mode runs in the command's own process.
 | `nomouse scroll` | scroll mode |
 | `nomouse search` | search mode |
 | `nomouse reload` | make the daemon re-read the config now |
+| `nomouse pause` / `resume` | release the hotkeys (and ignore the mode commands) until resumed, as the tray menu's Pause does |
+| `nomouse quit` | stop the daemon |
 | `nomouse setup` | walk through the permissions nomouse needs, ask the system, wait for them |
 | `nomouse launch [--doctor]` | Linux, what the app launcher runs: start the daemon unless it runs and notify its state and hotkeys; `--doctor` opens `nomouse doctor` in a terminal |
 | `nomouse doctor` | check the session, accessibility, input and config, and print the fix for anything missing |

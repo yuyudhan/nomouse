@@ -13,11 +13,19 @@
 mod a11y;
 #[cfg(target_os = "linux")]
 mod appearance;
+pub mod autostart;
+pub mod control;
 #[cfg(target_os = "linux")]
 mod first_run;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+pub mod preview;
+#[cfg(target_os = "linux")]
+pub mod service;
 pub mod session;
+pub mod shortcuts;
+pub mod update;
 #[cfg(all(target_os = "linux", feature = "wayland"))]
 mod wayland;
 #[cfg(target_os = "linux")]
