@@ -71,12 +71,9 @@ asset_target() {
     esac
 }
 
+# The same rule as nomouse's own config path on Linux and macOS.
 config_dir() {
-    if [ "$(uname -s)" = "Darwin" ]; then
-        echo "${HOME}/Library/Application Support/nomouse"
-    else
-        echo "${XDG_CONFIG_HOME:-${HOME}/.config}/nomouse"
-    fi
+    echo "${XDG_CONFIG_HOME:-${HOME}/.config}/nomouse"
 }
 
 sha256_of() {

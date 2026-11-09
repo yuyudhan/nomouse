@@ -42,6 +42,10 @@ the release's section; add entries under Unreleased as changes land.
 
 ### Changed
 
+- The config file is `$XDG_CONFIG_HOME/nomouse/config.toml` (else
+  `~/.config/nomouse/config.toml`) on macOS as on Linux, instead of
+  `~/Library/Application Support/nomouse/`; move an existing file there. Windows keeps
+  `%APPDATA%\nomouse\config.toml`.
 - Core API: `Action::Click` has a `modifiers` field (`Action::with_modifiers`,
   `Action::modifiers`, `Modifiers::NONE`); `Overlay::show_search` draws the search box (default:
   labels only); `HintSession::search`, `HintSession::query`, `SessionEvent::ModifiersChanged`;

@@ -70,7 +70,8 @@ cargo test -p nomouse-macos --test macos_accessibility
 2. Grant Accessibility to the terminal you run it from (System Settings > Privacy & Security >
    Accessibility), then fully quit and reopen that terminal.
 3. Create the config file: `target/release/nomouse config init` writes the defaults to
-   `~/Library/Application Support/nomouse/config.toml` (`nomouse config path` prints it).
+   `~/.config/nomouse/config.toml` (`$XDG_CONFIG_HOME/nomouse/` when set; `nomouse config path`
+   prints it).
    For the Chromium/Electron steps, add:
 
    ```toml

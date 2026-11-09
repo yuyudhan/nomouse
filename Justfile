@@ -38,6 +38,9 @@ clippy:
 clippy-all:
     for target in {{targets}}; do cargo clippy --workspace --all-targets --all-features --target "$target" -- -D warnings; done
 
+# Lint: clippy with -D warnings for every target triple (same as clippy-all).
+lint: clippy-all
+
 # Fast checks on the host: what the pre-commit hook runs on the staged tree.
 pre-commit: fmt-check guards typos shellcheck clippy
 

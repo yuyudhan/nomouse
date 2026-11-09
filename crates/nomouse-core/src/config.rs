@@ -301,20 +301,26 @@ impl Config {
     }
 }
 
-/// The conventional config file path for this OS, from the environment:
-/// `$XDG_CONFIG_HOME/nomouse/config.toml` or `~/.config/...` on Linux,
-/// `~/Library/Application Support/nomouse/config.toml` on macOS,
-/// `%APPDATA%\nomouse\config.toml` on Windows. `None` when the variables are unset.
+/// The conventional config file path, from the environment: on Linux and macOS
+/// `$XDG_CONFIG_HOME/nomouse/config.toml`, else `~/.config/nomouse/config.toml`; on Windows
+/// `%APPDATA%\nomouse\config.toml`. `None` when the variables are unset.
 pub fn default_path() -> Option<PathBuf> {
+    path_from_env(cfg!(target_os = "windows"), |name| std::env::var_os(name))
+}
+
+/// [`default_path`] over an explicit environment lookup, so every OS's rule is testable on any
+/// host. Empty values count as unset, as the XDG Base Directory specification requires.
+fn path_from_env(
+    windows: bool,
+    lookup: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
     let env = |name| {
-        std::env::var_os(name)
+        lookup(name)
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
     };
-    let base = if cfg!(target_os = "windows") {
+    let base = if windows {
         env("APPDATA")?
-    } else if cfg!(target_os = "macos") {
-        env("HOME")?.join("Library").join("Application Support")
     } else {
         env("XDG_CONFIG_HOME").or_else(|| env("HOME").map(|home| home.join(".config")))?
     };
@@ -419,5 +425,46 @@ mod tests {
     fn load_reports_missing_file() {
         let missing = Path::new("/nonexistent/nomouse/config.toml");
         assert!(matches!(Config::load(missing), Err(ConfigError::Io { .. })));
+    }
+
+    fn lookup<'a>(
+        vars: &'a [(&'a str, &'a str)],
+    ) -> impl Fn(&str) -> Option<std::ffi::OsString> + 'a {
+        move |name| {
+            vars.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.into())
+        }
+    }
+
+    #[test]
+    fn unix_path_prefers_xdg_config_home() {
+        let vars = [("XDG_CONFIG_HOME", "/cfg"), ("HOME", "/home/u")];
+        assert_eq!(
+            path_from_env(false, lookup(&vars)),
+            Some(PathBuf::from("/cfg/nomouse/config.toml"))
+        );
+    }
+
+    #[test]
+    fn unix_path_falls_back_to_dot_config_when_xdg_unset_or_empty() {
+        let expected = Some(PathBuf::from("/home/u/.config/nomouse/config.toml"));
+        assert_eq!(
+            path_from_env(false, lookup(&[("HOME", "/home/u")])),
+            expected
+        );
+        let empty = [("XDG_CONFIG_HOME", ""), ("HOME", "/home/u")];
+        assert_eq!(path_from_env(false, lookup(&empty)), expected);
+        assert_eq!(path_from_env(false, lookup(&[])), None);
+    }
+
+    #[test]
+    fn windows_path_uses_appdata_only() {
+        let vars = [("APPDATA", "/appdata"), ("XDG_CONFIG_HOME", "/cfg")];
+        assert_eq!(
+            path_from_env(true, lookup(&vars)),
+            Some(PathBuf::from("/appdata/nomouse/config.toml"))
+        );
+        assert_eq!(path_from_env(true, lookup(&[("HOME", "/home/u")])), None);
     }
 }
