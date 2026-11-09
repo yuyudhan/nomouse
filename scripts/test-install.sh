@@ -81,10 +81,22 @@ else
     fail "nomouse --version: ${version:-no output}"
 fi
 
-# 3a. The settings window is installed beside it and runs (--version needs no display).
-if version="$(sandbox "${home}/.local/bin/nomouse-settings" --version)" &&
+# 3a. The settings window is installed beside it. With GTK 4 and libadwaita here it runs
+# (--version needs no display); without them (a bare CI runner) the installer must have named
+# the packages to add.
+settings="${home}/.local/bin/nomouse-settings"
+if [ ! -x "$settings" ]; then
+    fail "no settings window at ${settings}"
+elif ldd "$settings" 2>/dev/null | grep -q 'not found'; then
+    if [[ "$out" == *"the settings window needs GTK 4 and libadwaita"* ]] &&
+        [[ "$out" == *"install them with:"* ]]; then
+        pass "without GTK 4 here, install.sh says which packages the settings window needs"
+    else
+        fail "GTK 4 is missing here and install.sh did not say so: ${out}"
+    fi
+elif version="$(sandbox "$settings" --version)" &&
     [ "$version" = "nomouse-settings ${version_installed#nomouse }" ]; then
-    pass "the settings window is installed beside nomouse: ${version}"
+    pass "the settings window is installed beside nomouse and runs: ${version}"
 else
     fail "nomouse-settings --version: ${version:-no output}"
 fi

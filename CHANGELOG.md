@@ -7,6 +7,13 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Fixed
+
+- 0.1.5 was tagged but never published either: the release's install test ran the settings
+  window on a runner without GTK 4, where it cannot start. The test now checks that
+  `install.sh` names the packages to add when GTK 4 or libadwaita is missing, and runs the
+  window only where they are installed. The next release ships everything listed under 0.1.4.
+
 ## [0.1.5] - 2026-11-09
 
 ### Fixed
