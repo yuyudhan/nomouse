@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-09
+
 ### Added
 
 - Linux tray icon: the daemon shows a status icon over the freedesktop StatusNotifierItem
