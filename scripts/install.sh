@@ -32,9 +32,11 @@ set -euo pipefail
 
 repo="yuyudhan/nomouse"
 bundle_id="com.yuyudhan.nomouse"
-# Every request: retry transient failures, give up on a connection that never opens, and abort
-# a transfer that stalls (under 1 KB/s for 30 s) instead of hanging.
-net=(--fail --silent --show-error --location --connect-timeout 15 --retry 3 --retry-delay 2
+# Every request: retry failures, give up on a connection that never opens, and abort a transfer
+# that stalls (under 1 KB/s for 30 s) instead of hanging. --retry alone retries only timeouts and
+# HTTP 408/429/5xx; install_release adds --retry-all-errors where curl has it (7.71+), so a
+# network that cuts connections (`curl: (35) ... unexpected eof while reading`) is retried too.
+net=(--fail --silent --show-error --location --connect-timeout 15 --retry 5 --retry-delay 2
     --speed-limit 1024 --speed-time 30)
 
 say() {
@@ -177,8 +179,9 @@ fetch() {
             url="https://github.com/${repo}/releases/latest/download/${name}"
         fi
         curl "${net[@]}" --output "$dest" "$url" || fail "download failed: ${url}
-  If the repository is private, download through the API with a GitHub token:
-  curl -fsSL ... | GH_TOKEN=\"\$(gh auth token)\" bash"
+  Check the network (a proxy or firewall that cuts connections to github.com or
+  release-assets.githubusercontent.com), then run the installer again; or download the
+  release assets in a browser and install from that folder with --from DIR."
     fi
 }
 
@@ -280,24 +283,40 @@ install_linux() {
     echo
     say "next steps:"
     path_hint "$bin_dir"
-    step "1. nomouse setup     (turns on the accessibility bus, explains anything missing)"
-    case "${XDG_SESSION_TYPE:-}" in
-        wayland)
-            step "2. Wayland: let your compositor start nomouse and bind its modes, e.g. Sway:"
-            step "     exec nomouse daemon"
-            step "     bindsym Ctrl+space exec nomouse hints"
-            step "   Hyprland: exec-once = nomouse daemon / bind = CTRL, space, exec, nomouse hints"
-            if [ -e /dev/uinput ] && [ ! -w /dev/uinput ]; then
-                step "   KDE Plasma also needs write access to /dev/uinput:"
-                step "   https://github.com/${repo}/blob/nightly/docs/install.md#linux-wayland"
-            fi
-            ;;
-        *)
-            step "2. nomouse           (starts the daemon; ctrl+space shows the labels)"
-            step "3. start at login: add \"${bin_dir}/nomouse daemon\" to your desktop's"
-            step "   startup applications"
-            ;;
+    linux_next_steps "$bin_dir"
+}
+
+# The numbered next steps for the Linux desktop this runs in: X11, GNOME on Wayland (which
+# nomouse cannot drive, so the first step is switching to GNOME on Xorg), or another Wayland
+# compositor. Detects GNOME the way nomouse does: a GNOME part in XDG_CURRENT_DESKTOP.
+linux_next_steps() {
+    local bin_dir="$1" gnome=false
+    case ":${XDG_CURRENT_DESKTOP:-}:" in
+        *:[Gg][Nn][Oo][Mm][Ee]:*) gnome=true ;;
     esac
+    if [ "${XDG_SESSION_TYPE:-}" = wayland ] && [ "$gnome" = true ]; then
+        step "1. GNOME on Wayland cannot show nomouse's labels or click (Mutter has no overlay"
+        step "   layer, virtual pointer or app hotkeys). Log out, click the gear on the login"
+        step "   screen, choose \"GNOME on Xorg\" (Ubuntu: \"Ubuntu on Xorg\") and log in; then:"
+        step "2. nomouse setup     (turns on the accessibility bus, explains anything missing)"
+        step "3. nomouse           (starts the daemon; ctrl+space shows the labels)"
+        step "4. start at login: add \"${bin_dir}/nomouse daemon\" to your startup applications"
+    elif [ "${XDG_SESSION_TYPE:-}" = wayland ]; then
+        step "1. nomouse setup     (turns on the accessibility bus, explains anything missing)"
+        step "2. Wayland: let your compositor start nomouse and bind its modes, e.g. Sway:"
+        step "     exec nomouse daemon"
+        step "     bindsym Ctrl+space exec nomouse hints"
+        step "   Hyprland: exec-once = nomouse daemon / bind = CTRL, space, exec, nomouse hints"
+        if [ -e /dev/uinput ] && [ ! -w /dev/uinput ]; then
+            step "   KDE Plasma also needs write access to /dev/uinput:"
+            step "   https://github.com/${repo}/blob/nightly/docs/install.md#linux-wayland"
+        fi
+    else
+        step "1. nomouse setup     (turns on the accessibility bus, explains anything missing)"
+        step "2. nomouse           (starts the daemon; ctrl+space shows the labels)"
+        step "3. start at login: add \"${bin_dir}/nomouse daemon\" to your desktop's"
+        step "   startup applications"
+    fi
     step "check everything at any time with: nomouse doctor"
 }
 
@@ -306,6 +325,9 @@ install_release() {
     target="$(asset_for "$(uname -s)" "$(uname -m)")"
     if [ -z "$from" ]; then
         command -v curl >/dev/null 2>&1 || fail "curl is required"
+        if curl --retry-all-errors --version >/dev/null 2>&1; then
+            net+=(--retry-all-errors)
+        fi
     fi
     work="$(mktemp -d)"
     # shellcheck disable=SC2064 # expand now: the path is fixed for this run

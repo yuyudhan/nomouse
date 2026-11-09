@@ -11,6 +11,17 @@ NOMOUSE_LOG=debug nomouse hints --standalone
 
 ## The install
 
+**`curl: (35) error:0A000126:SSL routines::unexpected eof while reading`**
+The network cut the connection during the TLS handshake, usually to GitHub's download host
+`release-assets.githubusercontent.com`; on some networks this happens to a third of
+connections. Run the one-line install with `--retry 5 --retry-all-errors` as
+[install.md](install.md#the-one-line-install) shows: curl retries the cut connection, and the
+installer (0.1.2 and later) retries its own downloads the same way.
+
+**`curl: option --retry-all-errors: is unknown`**
+Your curl is older than 7.71. Drop `--retry-all-errors` from the command, or install from a
+folder with `install.sh --from`.
+
 **`curl: (22)` or `(56) The requested URL returned error`**
 The download URL could not be reached, often through a proxy. Download the release assets from
 the [releases page](https://github.com/yuyudhan/nomouse/releases) and install from the folder
@@ -77,7 +88,8 @@ Expected: Wayland programs cannot grab global keys. Bind `nomouse hints` in your
 
 **GNOME says nomouse is not supported**
 GNOME's Wayland compositor offers no overlay layer, no virtual pointer and no hotkeys to
-programs. Log in with **GNOME on Xorg** (the gear on the login screen).
+programs. Log in with **GNOME on Xorg** (**Ubuntu on Xorg** on Ubuntu; the gear on the login
+screen). The choice sticks for later logins.
 
 **KDE Plasma: labels appear but clicks do nothing**
 KWin offers no virtual pointer, so nomouse clicks through `/dev/uinput`. Give your user access

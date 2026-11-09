@@ -24,10 +24,14 @@ esac
 
 work="$(mktemp -d)"
 server=""
+flaky=""
 cleanup() {
-    if [ -n "$server" ]; then
-        kill "$server" 2>/dev/null || true
-    fi
+    local pid
+    for pid in "$server" "$flaky"; do
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
     rm -rf "$work"
 }
 trap cleanup EXIT
@@ -125,6 +129,28 @@ if url="$(lib asset_api_url nomouse-x86_64-unknown-linux-gnu.tar.gz "${work}/lar
         https://api.github.com/repos/yuyudhan/nomouse/releases/assets/1 "$url"
 else
     fail "asset_api_url (large release) failed with status $?"
+fi
+
+# The next steps name the fix for the desktop the installer runs in: GNOME on Wayland cannot
+# run nomouse, so it must say to log in with GNOME on Xorg instead of printing Sway bindings.
+steps="$(XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=ubuntu:GNOME lib linux_next_steps /opt/bin 2>&1)" || true
+if [[ "$steps" == *'"Ubuntu on Xorg"'* ]] && [[ "$steps" == *'"GNOME on Xorg"'* ]] &&
+    [[ "$steps" != *Sway* ]]; then
+    pass "GNOME on Wayland: the next steps say to log in with GNOME on Xorg"
+else
+    fail "GNOME on Wayland next steps: ${steps}"
+fi
+steps="$(XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway lib linux_next_steps /opt/bin 2>&1)" || true
+if [[ "$steps" == *"bindsym Ctrl+space exec nomouse hints"* ]] && [[ "$steps" != *Xorg* ]]; then
+    pass "Sway: the next steps bind nomouse hints in the compositor"
+else
+    fail "Sway next steps: ${steps}"
+fi
+steps="$(XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=ubuntu:GNOME lib linux_next_steps /opt/bin 2>&1)" || true
+if [[ "$steps" == *'add "/opt/bin/nomouse daemon"'* ]] && [[ "$steps" != *Xorg* ]]; then
+    pass "GNOME on Xorg: the next steps start the daemon and add it at login"
+else
+    fail "GNOME on Xorg next steps: ${steps}"
 fi
 
 # --- A fake release for this machine ----------------------------------------------------------
@@ -324,6 +350,51 @@ elif absent; then
     pass "a release that does not exist fails before installing"
 else
     fail "missing release: ${out}"
+fi
+
+# --- Installs through a network that cuts connections ----------------------------------------
+
+# Some networks cut a share of connections to GitHub's download host mid-handshake (`curl: (35)
+# ... unexpected eof while reading`). This server hangs up without answering the first two
+# requests for every file; the installer's own retries must get through.
+if curl --retry-all-errors --version >/dev/null 2>&1; then
+    flaky_port=$((port + 1))
+    python3 - "$release" "$flaky_port" >"${work}/flaky.log" 2>&1 <<'EOF' &
+import collections, http.server, os, sys
+root, port = sys.argv[1], int(sys.argv[2])
+seen = collections.Counter()
+class Flaky(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        seen[self.path] += 1
+        path = os.path.join(root, self.path.lstrip("/"))
+        if self.path == "/" or seen[self.path] <= 2 or not os.path.isfile(path):
+            self.close_connection = True
+            return
+        with open(path, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+http.server.HTTPServer(("127.0.0.1", port), Flaky).serve_forever()
+EOF
+    flaky=$!
+    # Up once curl gets past connecting: the server hangs up on "/", curl exits 52, not 7.
+    for _ in $(seq 50); do
+        status=0
+        curl --silent --output /dev/null "http://127.0.0.1:${flaky_port}/" || status=$?
+        [ "$status" -ne 7 ] && break
+        sleep 0.1
+    done
+    if out="$(sandbox NOMOUSE_INSTALL_BASE="http://127.0.0.1:${flaky_port}" bash "$installer" 2>&1)" &&
+        installed; then
+        pass "downloads retry connections the network cuts"
+    else
+        fail "install through a network that cuts connections: ${out}"
+    fi
+    sandbox bash "$installer" --uninstall >/dev/null 2>&1
+else
+    echo "skip - this curl has no --retry-all-errors (7.71+): cut connections are not retried"
 fi
 
 # --- The caller's environment was never used -------------------------------------------------

@@ -7,6 +7,19 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Fixed
+
+- The install failed on networks that cut some connections to GitHub's download host with
+  `curl: (35) error:0A000126:SSL routines::unexpected eof while reading` (seen on Ubuntu 22.04,
+  a third of connections): `--retry` alone never retries that. `install.sh` now retries every
+  download up to five times with `--retry-all-errors` (curl 7.71+, plain `--retry` on older
+  curl), the README and install guide one-liner does the same for the installer itself, and
+  `scripts/test-installer.sh` installs through a server that hangs up on the first two requests
+  for every file.
+- On GNOME Wayland the installer printed Sway and Hyprland bindings; it now says to log in with
+  "GNOME on Xorg" ("Ubuntu on Xorg" on Ubuntu) first, as `nomouse doctor` does. A failed
+  download names the network instead of the old private-repository hint.
+
 ## [0.1.1] - 2026-11-09
 
 ### Fixed

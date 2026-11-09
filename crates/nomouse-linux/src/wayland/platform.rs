@@ -221,7 +221,8 @@ fn check_compositor(compositor: &Compositor) -> Result<String, String> {
     match compositor {
         Compositor::Gnome => Err("GNOME (Mutter) implements no wlr-layer-shell, virtual \
                                   pointer or client hotkeys, so nomouse cannot draw labels or \
-                                  click on GNOME Wayland; choose \"GNOME on Xorg\" at the login \
+                                  click on GNOME Wayland; log out and choose \"GNOME on Xorg\" \
+                                  (Ubuntu: \"Ubuntu on Xorg\") under the gear on the login \
                                   screen"
             .to_owned()),
         other => Ok(format!(
