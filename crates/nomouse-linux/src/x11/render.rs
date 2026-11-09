@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use nomouse_core::config::OverlayConfig;
+use nomouse_core::config::{Appearance, OverlayConfig};
 use nomouse_core::glyph::LabelFont;
 use nomouse_core::search::search_box_anchor;
 use nomouse_core::{Frame, PlatformError, Rect};
@@ -41,13 +41,17 @@ pub(crate) struct Style {
 }
 
 impl Style {
-    /// The style of a validated `[overlay]` section; sizes are points at 96 dpi.
+    /// The style of a validated `[overlay]` section under the system `appearance` (which only
+    /// `theme = "auto"` looks at); sizes are points at 96 dpi.
     ///
     /// # Errors
     /// [`PlatformError::Backend`] for an invalid colour.
-    pub(crate) fn from_config(config: &OverlayConfig) -> Result<Self, PlatformError> {
+    pub(crate) fn from_config(
+        config: &OverlayConfig,
+        appearance: Appearance,
+    ) -> Result<Self, PlatformError> {
         let [background, foreground, typed, border] = config
-            .colours()
+            .colours(appearance)
             .map_err(|e| PlatformError::Backend(e.to_string()))?;
         let points = f32::from(u16::try_from(config.font_size).unwrap_or(13));
         let percent = f32::from(u16::try_from(config.opacity.min(100)).unwrap_or(100));
@@ -147,6 +151,11 @@ impl Renderer {
             LabelFont::from_file(&path).map_err(|e| PlatformError::Backend(e.to_string()))?;
         tracing::debug!("label font {}", path.display());
         Ok(Self { font, style })
+    }
+
+    /// Draws with `style` from now on (the system appearance changed under `theme = "auto"`).
+    pub(crate) const fn set_style(&mut self, style: Style) {
+        self.style = style;
     }
 
     /// Renders `text` (shown uppercase) for an element at `anchor`, with the first `typed`
@@ -302,7 +311,7 @@ mod tests {
     use super::*;
 
     fn style() -> Style {
-        Style::from_config(&OverlayConfig::default()).unwrap()
+        Style::from_config(&OverlayConfig::default(), Appearance::Light).unwrap()
     }
 
     #[test]

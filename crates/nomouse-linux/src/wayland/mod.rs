@@ -249,6 +249,11 @@ impl Wayland {
         bounding(self.outputs())
     }
 
+    /// Draws labels with `style` from now on.
+    pub(crate) const fn set_style(&mut self, style: crate::x11::render::Style) {
+        self.renderer.set_style(style);
+    }
+
     fn dispatch(&mut self) -> Result<(), PlatformError> {
         self.queue.dispatch_pending(&mut self.state).map_err(lost)?;
         self.queue.flush().map_err(lost)

@@ -27,6 +27,10 @@ the release's section; add entries under Unreleased as changes land.
   where the hotkeys and commands show no labels; `nomouse doctor` lists them.
 - The daemon re-reads `config.toml` when it changes, or at once on `nomouse reload`; an
   invalid file is logged and the running settings stay.
+- `overlay.theme`: `original` (the yellow labels, default), `light`, `dark`, or `auto`, which
+  follows the desktop's light/dark preference (the XDG portal `color-scheme` on Linux, read
+  before each activation). `background`, `foreground`, `typed_foreground` and `border` now
+  override the theme's colour only when set.
 - Hint mode: a hotkey labels every clickable element of the focused window from the
   accessibility tree; typing a label clicks it (left, right, double, middle, move, semantic
   click), with a continuous mode that keeps hinting after each click.

@@ -1,7 +1,7 @@
 //! Property tests: every valid configuration survives a TOML round trip, out-of-range values are
 //! rejected, and fuzzy search accepts exactly the queries that are subsequences of the name.
 
-use nomouse_core::config::{Config, HintsConfig, OverlayConfig, ScrollConfig};
+use nomouse_core::config::{Config, HintsConfig, OverlayConfig, ScrollConfig, Theme};
 use nomouse_core::search::fuzzy_score;
 use nomouse_core::{ActionKind, ConfigError, KeyBindings, Scope};
 use proptest::prelude::*;
@@ -30,7 +30,13 @@ prop_compose! {
         dash_step in 1u32..=100,
         font_size in 6u32..=72,
         opacity in 10u32..=100,
-        colours in [colour(), colour(), colour(), colour()],
+        theme in prop::sample::select(vec![Theme::Original, Theme::Light, Theme::Dark, Theme::Auto]),
+        colours in [
+            prop::option::of(colour()),
+            prop::option::of(colour()),
+            prop::option::of(colour()),
+            prop::option::of(colour()),
+        ],
     ) -> Config {
         let [background, foreground, typed_foreground, border] = colours;
         Config {
@@ -39,6 +45,7 @@ prop_compose! {
             overlay: OverlayConfig {
                 font_size,
                 opacity,
+                theme,
                 background,
                 foreground,
                 typed_foreground,

@@ -283,6 +283,11 @@ impl X11 {
         self.screen
     }
 
+    /// Draws labels with `style` from now on.
+    pub(crate) const fn set_style(&mut self, style: render::Style) {
+        self.renderer.set_style(style);
+    }
+
     /// The monitors (`RandR`), or the whole screen without `RandR`.
     pub(crate) fn monitors(&self) -> Vec<Rect> {
         monitors_of(&self.conn, self.root, self.screen)

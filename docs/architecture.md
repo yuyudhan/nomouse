@@ -158,10 +158,11 @@ dash_step = 15               # wheel steps per Shift-h/j/k/l press, 1..=100
 [overlay]
 font_size = 13               # points, 6..=72
 opacity = 95                 # percent, 10..=100
-background = "#ffd75f"
-foreground = "#1c1c1c"
-typed_foreground = "#8a8a8a" # already-typed characters
-border = "#1c1c1c"
+theme = "original"           # original (yellow), light, dark, or auto (system appearance)
+# background = "#ffd75f"     # unset colours come from the theme; a set one overrides it
+# foreground = "#1c1c1c"
+# typed_foreground = "#8a8a8a" # already-typed characters
+# border = "#1c1c1c"
 
 [ignore]
 apps = []                    # apps where activation shows nothing: macOS bundle id, Wayland
@@ -182,6 +183,11 @@ platform is dropped first, releasing its hotkeys and overlay, and a new one star
 new configuration (or the previous one again if the new one cannot start).
 `ElementSource::focused_app` names the focused window's app (`AppIdentity`) for
 `ignore.apps`; an ignored activation scans nothing and shows nothing.
+`overlay.theme = "auto"` resolves to `light` or `dark` through `OverlayConfig::colours(appearance)`.
+On Linux the appearance is the XDG desktop portal's `org.freedesktop.appearance color-scheme`
+(1 is dark; anything else, or no portal within 250 ms, is light), read with `ReadOne` (or the
+older `Read`) before each activation's scan, so a switch applies to the next labels; macOS and
+Windows use the light colours for now.
 
 ## Logging
 

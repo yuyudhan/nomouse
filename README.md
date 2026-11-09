@@ -129,10 +129,9 @@ dash_step = 15
 [overlay]
 font_size = 13
 opacity = 95
-background = "#ffd75f"
-foreground = "#1c1c1c"
-typed_foreground = "#8a8a8a"
-border = "#1c1c1c"
+theme = "original"          # original (yellow), light, dark, or auto (the system appearance)
+# background = "#ffd75f"    # each colour overrides the theme's when set:
+# foreground = "#1c1c1c"    # background, foreground, typed_foreground, border
 
 [ignore]
 apps = ["org.wezfurlong.wezterm", "kitty"]   # no labels in these apps: bundle id, Wayland

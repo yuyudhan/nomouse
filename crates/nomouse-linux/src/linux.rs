@@ -7,7 +7,10 @@ use nomouse_core::{
     HotkeySource, InputEvent, InputInjector, MouseButton, Overlay, Platform, PlatformError, Scope,
 };
 
+use nomouse_core::config::Appearance;
+
 use crate::a11y::{AtspiSource, ScanLimits, bus};
+use crate::appearance::Themed;
 use crate::session::DisplayServer;
 use crate::x11::render::{Renderer, Style, find_font};
 use crate::x11::{self, X11};
@@ -27,6 +30,7 @@ pub struct LinuxPlatform {
     x: X11,
     source: Option<AtspiSource>,
     semantic_click: bool,
+    themed: Themed,
 }
 
 impl LinuxPlatform {
@@ -42,6 +46,10 @@ impl LinuxPlatform {
 
 impl ElementSource for LinuxPlatform {
     fn elements(&mut self, scope: Scope) -> Result<Vec<Element>, PlatformError> {
+        // Each activation starts with a scan: the moment to follow the system appearance.
+        if let Some(style) = self.themed.changed() {
+            self.x.set_style(style);
+        }
         let pid = self.x.active_pid();
         let screen = self.x.screen();
         let result = self
@@ -135,24 +143,26 @@ pub fn platform(config: &Config) -> Result<Box<dyn Platform>, PlatformError> {
     let session = DisplayServer::current();
     #[cfg(feature = "wayland")]
     if let DisplayServer::Wayland(_) = session {
-        let renderer = Renderer::new(Style::from_config(&config.overlay)?)?;
-        let wayland = crate::wayland::Wayland::connect(renderer)?;
+        let (themed, style) = Themed::new(&config.overlay)?;
+        let wayland = crate::wayland::Wayland::connect(Renderer::new(style)?)?;
         let source = accessibility();
         return Ok(Box::new(crate::wayland::platform::WaylandPlatform::new(
             wayland,
             crate::wayland::compositor::Compositor::current(),
             source,
             config.hints.semantic_click,
+            themed,
         )));
     }
     session.require_x11()?;
-    let renderer = Renderer::new(Style::from_config(&config.overlay)?)?;
-    let x = X11::connect(renderer)?;
+    let (themed, style) = Themed::new(&config.overlay)?;
+    let x = X11::connect(Renderer::new(style)?)?;
     let source = accessibility();
     Ok(Box::new(LinuxPlatform {
         x,
         source,
         semantic_click: config.hints.semantic_click,
+        themed,
     }))
 }
 
@@ -246,7 +256,7 @@ fn check_toolkits() -> Result<String, String> {
 }
 
 fn check_font(config: &Config) -> Result<String, String> {
-    Style::from_config(&config.overlay).map_err(|e| e.to_string())?;
+    Style::from_config(&config.overlay, Appearance::Light).map_err(|e| e.to_string())?;
     find_font()
         .map(|path| path.display().to_string())
         .ok_or_else(|| "no TrueType font under /usr/share/fonts".to_owned())

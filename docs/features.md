@@ -117,7 +117,7 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | Id | Feature | macOS | Linux | Pri | Status (mac / X11 / Wayland / Windows) |
 | --- | --- | --- | --- | --- | --- |
 | NM-LOOK-01 | Label colours, border, opacity, font size | `[overlay]` | `[overlay]` | P0 | done (all) |
-| NM-LOOK-02 | Named themes (`light`, `dark`, `original`) and `auto` following the system appearance | `NSApp.effectiveAppearance` | `org.freedesktop.appearance color-scheme` portal setting | P1 | missing |
+| NM-LOOK-02 | Named themes (`light`, `dark`, `original`) and `auto` following the system appearance | `NSApp.effectiveAppearance` | `org.freedesktop.appearance color-scheme` portal setting | P1 | partial: `overlay.theme` and explicit-colour overrides in the core; Linux `auto` reads the portal (`ReadOne`, else `Read`) before each activation; macOS and Windows `auto` use the light colours until their appearance is read |
 | NM-LOOK-03 | Search box showing the query | overlay | overlay | P0 | done (all) |
 | NM-LOOK-04 | Sound feedback on click and on a rejected key (off by default) | `NSSound` | `canberra`-free: a bundled WAV through PipeWire/PulseAudio | P2 | missing |
 
@@ -165,9 +165,9 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | Priority | Features | Done | Partial | Missing |
 | --- | --- | --- | --- | --- |
 | P0 | 29 | 26 | 2 | 1 |
-| P1 | 25 | 5 | 14 | 6 |
+| P1 | 25 | 5 | 15 | 5 |
 | P2 | 17 | 0 | 3 | 14 |
-| **All** | **71** | **31** | **19** | **21** |
+| **All** | **71** | **31** | **20** | **20** |
 
 A feature counts as done when it is done on macOS and Linux X11 (Wayland limits are listed per
 row). The three open P0 items are all macOS distribution and onboarding: the signed and

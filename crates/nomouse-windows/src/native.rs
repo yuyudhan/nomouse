@@ -211,7 +211,7 @@ pub fn doctor(config: &Config) -> Vec<(String, Result<String, String>)> {
         "Overlay colours".to_owned(),
         config
             .overlay
-            .colours()
+            .colours(nomouse_core::config::Appearance::Light)
             .map(|_| "valid".to_owned())
             .map_err(|error| format!("{error}; use #rrggbb")),
     ));

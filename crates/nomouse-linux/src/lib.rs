@@ -12,6 +12,8 @@
 #[cfg(target_os = "linux")]
 mod a11y;
 #[cfg(target_os = "linux")]
+mod appearance;
+#[cfg(target_os = "linux")]
 mod linux;
 pub mod session;
 #[cfg(all(target_os = "linux", feature = "wayland"))]

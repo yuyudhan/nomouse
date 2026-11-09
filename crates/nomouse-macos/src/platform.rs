@@ -87,9 +87,11 @@ impl MacPlatform {
         AxElement::system_wide()
             .set_messaging_timeout(AX_TIMEOUT)
             .ok();
+        // `theme = "auto"` takes the light colours here: NSApp.effectiveAppearance is not read
+        // yet.
         let colours = config
             .overlay
-            .colours()
+            .colours(nomouse_core::config::Appearance::Light)
             .map_err(|error| PlatformError::Backend(error.to_string()))?;
         Ok(Self {
             app,

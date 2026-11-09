@@ -377,6 +377,51 @@ else
     fail "reload: removing the config did not reload"
 fi
 
+echo "--- overlay.theme = \"auto\" follows the appearance portal (a fake one) without a restart"
+portal_state="$tmp/color-scheme"
+echo 1 >"$portal_state"
+python3 "$root/scripts/e2e/fake_portal.py" "$portal_state" &
+pids+=($!)
+portal_up() {
+    dbus-send --session --dest=org.freedesktop.portal.Desktop --print-reply /org/freedesktop/portal/desktop \
+        org.freedesktop.portal.Settings.Read string:org.freedesktop.appearance string:color-scheme >/dev/null 2>&1
+}
+# label_kind <name>: shows the labels over the GTK app and prints label_colour.py's verdict on
+# the screenshot with labels against the one after Escape (the same window, focused).
+label_kind() {
+    local before_scans
+    focus xdg_shell
+    before_scans="$(scans "$daemon_log")"
+    "$bin" hints
+    if wait_for 5 scans_at_least "$daemon_log" $((before_scans + 1)); then
+        sleep 0.4
+        grim "$tmp/theme-$1.png"
+        wtype -k Escape
+        sleep 0.3
+        steady_screenshot "$tmp/theme-$1-after.png"
+        python3 "$root/scripts/e2e/label_colour.py" "$tmp/theme-$1-after.png" "$tmp/theme-$1.png"
+    else
+        echo "no scan"
+    fi
+}
+before="$(reloads)"
+printf '[overlay]\ntheme = "auto"\n' >"$config"
+if wait_for 10 portal_up && "$bin" reload && wait_for 15 reloads_at_least $((before + 1)); then
+    kind="$(label_kind dark)"
+    if [[ "$kind" == dark* ]]; then pass "portal prefers dark: dark labels ($kind)"; else fail "portal prefers dark: $kind"; fi
+    echo 2 >"$portal_state"
+    kind="$(label_kind light)"
+    if [[ "$kind" == light* ]]; then pass "portal switched to light, no reload: light labels ($kind)"; else fail "portal switched to light: $kind"; fi
+    echo "1 old" >"$portal_state"
+    kind="$(label_kind old)"
+    if [[ "$kind" == dark* ]]; then pass "a portal without ReadOne (Read only) still gives dark labels ($kind)"; else fail "old portal, dark: $kind"; fi
+else
+    fail "theme: the fake portal or the reload did not come up"
+fi
+before="$(reloads)"
+rm "$config"
+if ! { "$bin" reload && wait_for 15 reloads_at_least $((before + 1)); }; then fail "theme: removing the config did not reload"; fi
+
 # SIGTERM skips destructors, so the socket file stays; a client must treat it as no daemon.
 kill "$daemon_pid" 2>/dev/null || true
 reap "$daemon_pid" 5 || true
