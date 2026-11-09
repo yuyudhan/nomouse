@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-09
+
 ### Fixed
 
 - The install failed on networks that cut some connections to GitHub's download host with
