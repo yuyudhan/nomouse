@@ -200,6 +200,12 @@ jobs:
                   merge-multiple: true
             - name: Installers, Homebrew formula and SHA256SUMS
               run: scripts/release/finish.sh "${{ needs.version.outputs.version }}" dist
+            # The installed nomouse-settings must start (`--version`), which needs the GTK 4 and
+            # libadwaita runtime libraries a desktop has and the runner image lacks.
+            - name: Install GTK 4 and libadwaita (runtime only)
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends libgtk-4-1 libadwaita-1-0
             - name: Test install.sh against the built Linux archive
               run: scripts/test-install.sh dist
             - name: List assets
