@@ -5,7 +5,7 @@
 | Crate | Role | Unsafe |
 |-------|------|--------|
 | `nomouse-core` | element model, hint labels, label filter, actions, hotkeys, config, platform traits, hint session | forbidden |
-| `nomouse-linux` | AT-SPI elements; X11 overlay, XTest input and XGrabKey hotkeys (Wayland: M4) | forbidden |
+| `nomouse-linux` | AT-SPI elements; X11 overlay, XTest input and XGrabKey hotkeys; Wayland (wlroots) layer-shell overlay and virtual-pointer/uinput input | forbidden |
 | `nomouse-macos` | macOS backend built on `nomouse-sys-macos` | forbidden |
 | `nomouse-sys-macos` | safe wrappers over AXUIElement, CGEvent, AppKit | allowed, audited |
 | `nomouse-windows` | Windows backend built on `nomouse-sys-windows` | forbidden |
@@ -107,3 +107,89 @@ two crates, and on any other crate root without `#![forbid(unsafe_code)]`. Linux
 | Firefox, Thunderbird | yes | yes | yes | |
 | Java (Swing/JavaFX) | with the ATK bridge | with the Java Access Bridge | with the Access Bridge | bridge must be enabled |
 | Terminals, games, custom-drawn UIs | no tree | no tree | no tree | optional separate fallback, later |
+
+Decisions behind this layout are recorded in [docs/adr/](adr/).
+
+## Configuration
+
+One TOML file, read at daemon start (and by every one-shot command):
+
+| OS | Path |
+|----|------|
+| Linux, macOS | `$XDG_CONFIG_HOME/nomouse/config.toml`, else `~/.config/nomouse/config.toml` |
+| Windows | `%APPDATA%\nomouse\config.toml` |
+
+`--config <path>` overrides it. A missing file means all defaults; a present file is parsed
+with `deny_unknown_fields` (typos are errors, not silently ignored), then validated
+(`Config::validate`: alphabet, duplicate chords, numeric ranges, colours). `nomouse config
+init` writes the defaults, `show` prints the effective config, `check` validates, `path`
+prints the path. The schema, with every default:
+
+```toml
+[hints]
+alphabet = "asdfghjk"        # label characters, most preferred first; i, l, o rejected
+scope = "focused-window"     # or "screen": every visible window on every monitor
+action = "click"             # click | right-click | double-click | hover | drag | scroll
+semantic_click = false       # AXPress / AT-SPI action / UIA Invoke instead of a pointer click
+
+[hotkeys]                    # modifiers: ctrl, alt (Option), shift, meta (Command / Super)
+hints = "ctrl+space"
+continuous = "ctrl+shift+space"
+scroll = "ctrl+alt+space"
+search = "ctrl+alt+/"
+
+[scroll]
+step = 3                     # wheel steps per key press, 1..=50; d/u scroll five times this
+
+[overlay]
+font_size = 13               # points, 6..=72
+opacity = 95                 # percent, 10..=100
+background = "#ffd75f"
+foreground = "#1c1c1c"
+typed_foreground = "#8a8a8a" # already-typed characters
+border = "#1c1c1c"
+
+[macos]
+enhanced_ui_apps = []        # bundle ids that get AXEnhancedUserInterface (Chromium browsers)
+```
+
+New keys land in `nomouse-core/src/config.rs` with a default, a validation rule when the type
+alone does not constrain them, a unit test, and an entry here and in the README.
+
+## Logging
+
+`tracing` to stderr, level from `NOMOUSE_LOG` (`error`, `warn` (default), `info`, `debug`,
+`trace`), ANSI colours only on a terminal. The daemon run by launchd, systemd or XDG autostart
+inherits stderr into that service manager's log (`log show`, `journalctl --user`). Rule for new
+log lines: element names and typed keys only at `debug` or below, because they can be private.
+
+## Permissions and onboarding
+
+`nomouse doctor` is the single source of truth: every check is `(name, Ok(detail) |
+Err(problem and fix))`, printed as `[ok  ]`/`[FAIL]` lines after `platform:`, and the command
+exits non-zero when any check fails. When the daemon cannot start, the backend's
+`PlatformError::AccessibilityUnavailable` or `PermissionDenied` carries the same fix text.
+
+- **macOS**: Accessibility trust (`AXIsProcessTrustedWithOptions`, prompting once), whether
+  synthetic input is allowed, Input Monitoring state (informational). The grant is tied to the
+  code signature, so a stable signed `nomouse.app` is a prerequisite for a smooth first run
+  (NM-DIST-02); the guided first run (NM-APP-10) opens the Accessibility pane
+  (`x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility`), waits for
+  the grant by polling trust, then restarts itself.
+- **Linux**: display server and compositor, the AT-SPI bus, the `org.a11y.Status.IsEnabled`
+  switch (the daemon turns it on), the compositor's Wayland globals, `/dev/uinput` access when
+  needed. Fixes that need root (the uinput udev rule) are printed, never run.
+
+## Packaging
+
+| Target | Artifact | State |
+|--------|----------|-------|
+| macOS | universal binary tarball + `install.sh` | done |
+| macOS | `nomouse.app` (LSUIElement agent, bundle id to be decided), Developer ID signed with hardened runtime, notarized and stapled, in a `.dmg` | planned (needs the owner's certificate) |
+| macOS | Homebrew cask in `yuyudhan/homebrew-tap` pointing at the `.dmg` (the formula stays for the CLI) | planned |
+| Linux | x86_64/aarch64 tarballs + `install.sh`, `.deb` (cargo-deb) | done |
+| Linux | `.rpm` (cargo-generate-rpm), AUR `nomouse-bin`, AppImage; each ships the uinput udev rule and an XDG autostart entry | planned |
+| Windows | zip + `install.ps1` | done |
+
+All artifacts come from `.github/workflows/release.yml` on a tag; nothing is built or signed on a
+developer machine.
