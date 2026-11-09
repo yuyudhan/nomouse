@@ -183,7 +183,7 @@ impl GeneralPage {
         self.update_row.set_subtitle("Checking…");
         let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let result = gio::spawn_blocking(|| nomouse_linux::update::check(VERSION))
+            let result = gio::spawn_blocking(|| nomouse_core::update::check(VERSION))
                 .await
                 .unwrap_or_else(|_| Err("the update check stopped".to_owned()));
             let Some(page) = weak.upgrade() else {

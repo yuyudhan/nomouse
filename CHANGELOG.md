@@ -7,6 +7,13 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Fixed
+
+- 0.1.4 was tagged but never published: the Linux settings window still called the update
+  check where it used to live, so the Linux release builds failed. 0.1.5 ships everything
+  listed under 0.1.4. The release workflow's build steps now fail on a failed build instead of
+  passing an empty path on to the smoke test.
+
 ## [0.1.4] - 2026-11-09
 
 ### Added

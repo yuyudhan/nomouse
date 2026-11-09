@@ -67,7 +67,11 @@ jobs:
                   tool: cargo-deb
             - name: Build
               id: build
-              run: echo "binary=$(scripts/release/build.sh ${{ matrix.target }})" >>"$GITHUB_OUTPUT"
+              # An assignment first, so a failed build fails this step (an `echo` around the
+              # command substitution would hide its exit status).
+              run: |
+                  binary="$(scripts/release/build.sh ${{ matrix.target }})"
+                  echo "binary=${binary}" >>"$GITHUB_OUTPUT"
             - name: Smoke test
               run: |
                   "${{ steps.build.outputs.binary }}" --version
@@ -162,7 +166,11 @@ jobs:
                   key: release-windows
             - name: Build
               id: build
-              run: echo "binary=$(scripts/release/build.sh x86_64-pc-windows-msvc)" >>"$GITHUB_OUTPUT"
+              # An assignment first, so a failed build fails this step (an `echo` around the
+              # command substitution would hide its exit status).
+              run: |
+                  binary="$(scripts/release/build.sh x86_64-pc-windows-msvc)"
+                  echo "binary=${binary}" >>"$GITHUB_OUTPUT"
             - name: Smoke test
               run: |
                   "${{ steps.build.outputs.binary }}" --version
