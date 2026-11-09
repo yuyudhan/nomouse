@@ -199,13 +199,27 @@ pub(crate) struct Server {
 
 impl Server {
     /// Listens on `path`. Call only while holding the single-instance lock: a leftover socket
-    /// from a crashed daemon is replaced.
+    /// from a crashed daemon, or a symlink (the link only, never its target), is replaced;
+    /// anything else at `path` is refused and left in place.
     ///
     /// # Errors
-    /// When the socket cannot be bound.
+    /// When something other than a socket or symlink is at `path`, or binding fails.
     pub(crate) fn bind(path: &Path) -> std::io::Result<Self> {
-        match std::fs::remove_file(path) {
-            Ok(()) => {}
+        use std::os::unix::fs::FileTypeExt;
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) if meta.file_type().is_socket() || meta.file_type().is_symlink() => {
+                std::fs::remove_file(path)?;
+            }
+            Ok(_) => {
+                return Err(std::io::Error::new(
+                    ErrorKind::AlreadyExists,
+                    format!(
+                        "{} exists and is not a socket; refusing to replace it (remove it \
+                         yourself if it is stale)",
+                        path.display()
+                    ),
+                ));
+            }
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
@@ -414,6 +428,41 @@ mod tests {
         assert_eq!(server.poll(), None);
         assert_eq!(request(&path, b"scroll\n"), "ok\n");
         assert_eq!(wait_poll(&server), Some(Mode::Scroll));
+    }
+
+    #[test]
+    fn bind_refuses_a_regular_file_and_leaves_it() {
+        let path = scratch("file.sock");
+        std::fs::write(&path, b"keep me").unwrap();
+        let error = Server::bind(&path).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::AlreadyExists);
+        assert!(error.to_string().contains("not a socket"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"keep me");
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn bind_replaces_a_stale_socket() {
+        let path = scratch("stale.sock");
+        drop(UnixListener::bind(&path).unwrap());
+        assert!(path.exists(), "the stale socket file stays behind");
+        let server = Server::bind(&path).unwrap();
+        assert_eq!(request(&path, b"scroll\n"), "ok\n");
+        assert_eq!(wait_poll(&server), Some(Mode::Scroll));
+    }
+
+    #[test]
+    fn bind_removes_a_symlink_but_not_its_target() {
+        let target = scratch("target");
+        std::fs::write(&target, b"target").unwrap();
+        let path = scratch("link.sock");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        let server = Server::bind(&path).unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+        assert!(std::os::unix::fs::FileTypeExt::is_socket(&meta.file_type()));
+        assert_eq!(std::fs::read(&target).unwrap(), b"target");
+        drop(server);
+        std::fs::remove_file(&target).unwrap();
     }
 
     #[test]
