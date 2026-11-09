@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Completes a release asset directory: adds install.sh and install.ps1 with their .sha256,
-# renders the Homebrew formula, writes SHA256SUMS over every asset and checks it.
+# renders the Homebrew formula (and the cask when the disk image is there), writes SHA256SUMS
+# over every asset and checks it.
 #
 # Usage: scripts/release/finish.sh VERSION DIST [--allow-missing]
 #   --allow-missing is passed to homebrew.sh for single-OS dry runs.
@@ -18,6 +19,9 @@ cp "${root}/scripts/install.sh" "${root}/scripts/install.ps1" "$dist/"
 "${root}/scripts/release/checksum.sh" "${dist}/install.sh" "${dist}/install.ps1"
 "${root}/scripts/release/homebrew.sh" "$version" "$dist" ${3:+"$3"}
 "${root}/scripts/release/checksum.sh" "${dist}/nomouse.rb"
+if [ -f "${dist}/nomouse-app.rb" ]; then
+    "${root}/scripts/release/checksum.sh" "${dist}/nomouse-app.rb"
+fi
 
 (
     cd "$dist"

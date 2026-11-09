@@ -97,9 +97,18 @@ jobs:
                   lipo -create -output target/universal-apple-darwin/nomouse "$arm" "$intel"
                   lipo -info target/universal-apple-darwin/nomouse
                   echo "binary=target/universal-apple-darwin/nomouse" >>"$GITHUB_OUTPUT"
-            # Unsigned and not notarized: the installers use curl, which sets no quarantine
-            # flag, so Gatekeeper does not block the binary. Signing needs the owner's Developer
-            # ID certificate as a secret - see CONTRIBUTING.md#releases.
+            # Developer ID signing and notarization when the repository has the secrets (see
+            # CONTRIBUTING.md#releases); without them nomouse.app and the disk image are ad-hoc
+            # signed, which the curl installers do not mind (curl sets no quarantine flag).
+            - name: Signing
+              env:
+                  MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+                  MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+                  MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+                  NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+                  NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+                  NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+              run: scripts/release/signing.sh
             - name: Smoke test
               run: |
                   "${{ steps.build.outputs.binary }}" --version
@@ -108,9 +117,19 @@ jobs:
               run: |
                   scripts/release/package.sh universal-apple-darwin "${{ steps.build.outputs.binary }}" dist
                   scripts/release/app.sh "${{ steps.build.outputs.binary }}" dist
+                  scripts/release/dmg.sh dist/nomouse.app dist
                   rm -rf dist/nomouse.app
-            - name: Test nomouse.app
-              run: scripts/test-app.sh --bin "${{ steps.build.outputs.binary }}"
+            - name: Gatekeeper accepts the disk image
+              if: env.NOMOUSE_NOTARY_KEY_ID != ''
+              run: spctl --assess --type open --context context:primary-signature --verbose dist/nomouse-universal-apple-darwin.dmg
+            # The bundle checks build ad-hoc copies, so they never spend a notarization.
+            - name: Test nomouse.app, the disk image and the cask
+              env:
+                  NOMOUSE_SIGN_IDENTITY: "-"
+                  NOMOUSE_NOTARY_KEY_ID: ""
+              run: |
+                  command -v 7zz || brew install sevenzip
+                  scripts/test-app.sh --bin "${{ steps.build.outputs.binary }}"
             - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
               with:
                   name: assets-universal-apple-darwin

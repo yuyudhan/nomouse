@@ -15,6 +15,10 @@
 #   NOMOUSE_SIGN_IDENTITY     codesign identity; "-" (the default) signs ad hoc. A Developer ID
 #                             identity also gets the hardened runtime and a secure timestamp,
 #                             as notarization requires.
+#   NOMOUSE_NOTARY_KEY, NOMOUSE_NOTARY_KEY_ID, NOMOUSE_NOTARY_ISSUER
+#                             when all three are set (Developer ID signing only) the bundle is
+#                             notarized and stapled by scripts/release/notarize.sh before it
+#                             is zipped.
 #
 # macOS keys the Accessibility grant to the signature's designated requirement. An ad-hoc
 # signature's requirement is its code hash, so the grant survives rebuilding the same binary
@@ -56,6 +60,9 @@ if [ "$identity" != "-" ]; then
 fi
 "${sign[@]}" "$app"
 codesign --verify --deep --strict "$app"
+if [ -n "${NOMOUSE_NOTARY_KEY_ID:-}" ]; then
+    "${root}/scripts/release/notarize.sh" "$app"
+fi
 
 archive="nomouse-universal-apple-darwin.app.zip"
 rm -f "${outdir}/${archive}"

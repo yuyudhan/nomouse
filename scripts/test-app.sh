@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Tests scripts/release/app.sh: builds nomouse.app twice from one binary and checks the bundle,
-# its signature and the release zip.
+# Tests scripts/release/app.sh, dmg.sh and the cask homebrew.sh renders: builds nomouse.app
+# twice from one binary and checks the bundle, its signature, the release zip, the disk image
+# and the cask.
 #
 # Usage: scripts/test-app.sh [--bin <nomouse binary>]
 #   --bin  bundle this binary instead of a fresh `cargo build --release`
@@ -9,7 +10,10 @@
 # icon is an .icns; `codesign --verify --deep --strict` passes and the signing identifier is the
 # bundle id; both builds have the same designated requirement, so an Accessibility grant to the
 # first still applies to the rebuild; the zip holds the bundle and matches its .sha256; the
-# bundled binary reports the version. macOS only; elsewhere it prints SKIP.
+# bundled binary reports the version; the disk image verifies, matches its .sha256 and holds a
+# verifying nomouse.app next to a link to /Applications (read with 7-Zip's `7zz`, so nothing is
+# mounted); the cask names the version, the image's checksum and URL and the bundle id, and is
+# valid Ruby. macOS only; elsewhere it prints SKIP.
 set -euo pipefail
 
 bin=""
@@ -56,6 +60,8 @@ check() {
 
 "$root/scripts/release/app.sh" "$bin" "$tmp/first" 2>"$tmp/first.log"
 "$root/scripts/release/app.sh" "$bin" "$tmp/second" 2>"$tmp/second.log"
+"$root/scripts/release/dmg.sh" "$tmp/first/nomouse.app" "$tmp/first" 2>"$tmp/dmg.log"
+"$root/scripts/release/homebrew.sh" "$version" "$tmp/first" --allow-missing 2>"$tmp/homebrew.log"
 app="$tmp/first/nomouse.app"
 plist="$app/Contents/Info.plist"
 
@@ -93,6 +99,38 @@ unzipped_verifies() {
 check "the bundle unzipped from the zip still verifies" unzipped_verifies
 reports_version() { "$app/Contents/MacOS/nomouse" --version | grep -q "$version"; }
 check "the bundled binary reports $version" reports_version
+
+dmg="$tmp/first/nomouse-universal-apple-darwin.dmg"
+dmg_ok() {
+    hdiutil verify -quiet "$dmg" &&
+        (cd "$tmp/first" && shasum -a 256 --check --quiet nomouse-universal-apple-darwin.dmg.sha256)
+}
+check "the disk image verifies and matches its checksum" dmg_ok
+volume="$tmp/volume/nomouse $version"
+extracted() {
+    if ! command -v 7zz >/dev/null; then
+        echo "  7zz is not installed (brew install sevenzip)"
+        return 1
+    fi
+    7zz x -y -o"$tmp/volume" "$dmg" >/dev/null
+}
+check "the disk image unpacks (volume 'nomouse $version')" extracted
+check "the bundle in the disk image verifies" codesign --verify --deep --strict "$volume/nomouse.app"
+# 7-Zip rebases absolute links when it extracts them, so the link is read from the image.
+applications_link() {
+    local entry="nomouse $version/Applications"
+    7zz l -slt "$dmg" "$entry" | grep -qx 'Mode = lrwxr-xr-x' &&
+        [[ "$(7zz x -so "$dmg" "$entry" 2>/dev/null)" == /Applications ]]
+}
+check "the disk image links /Applications" applications_link
+
+cask="$tmp/first/nomouse-app.rb"
+cask_has() { grep -qF "$1" "$cask"; }
+check "the cask names version $version" cask_has "version \"$version\""
+check "the cask has the image's checksum" cask_has "sha256 \"$(cut -d ' ' -f 1 <"$dmg.sha256")\""
+check "the cask downloads the release's disk image" cask_has "/releases/download/v#{version}/nomouse-universal-apple-darwin.dmg"
+check "the cask quits $bundle_id before uninstalling" cask_has "uninstall quit: \"$bundle_id\""
+check "the cask is valid Ruby" ruby -c "$cask"
 
 echo "--- $passed passed, $failed failed"
 ((failed == 0))

@@ -197,8 +197,9 @@ turns it on). Windows: nothing to ask.
 |--------|----------|-------|
 | macOS | universal binary tarball + `install.sh` | done |
 | macOS | `nomouse.app` (LSUIElement agent, bundle id `com.yuyudhan.nomouse`, icon, version from `Cargo.toml`), ad-hoc signed, zipped: `scripts/release/app.sh` | done |
-| macOS | `nomouse.app` Developer ID signed with hardened runtime, notarized and stapled, in a `.dmg` | planned (needs the owner's certificate) |
-| macOS | Homebrew cask in `yuyudhan/homebrew-tap` pointing at the `.dmg` (the formula stays for the CLI) | planned |
+| macOS | `nomouse.app` in a `.dmg` with an `/Applications` link (`scripts/release/dmg.sh`, written by `hdiutil makehybrid`, so nothing is mounted) | done (ad-hoc signed) |
+| macOS | Developer ID signed with hardened runtime, notarized and stapled (`signing.sh`, `notarize.sh` in `release.yml`) | wired; waits for the owner's certificate and App Store Connect key as secrets |
+| macOS | Homebrew cask `nomouse-app.rb` rendered with every release, for `Casks/nomouse.rb` in `yuyudhan/homebrew-tap` (the formula stays for the CLI) | rendered; published once a release has the `.dmg` |
 | Linux | x86_64/aarch64 tarballs + `install.sh`, `.deb` (cargo-deb) | done |
 | Linux | `.rpm` (cargo-generate-rpm), AUR `nomouse-bin`, AppImage; each ships the uinput udev rule and an XDG autostart entry | planned |
 | Windows | zip + `install.ps1` | done |

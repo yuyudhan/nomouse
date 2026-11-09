@@ -39,6 +39,11 @@ the release's section; add entries under Unreleased as changes land.
 - `nomouse.app` (`scripts/release/app.sh`, `just app`): the macOS binary in an ad-hoc signed
   agent bundle (no Dock icon, bundle id `com.yuyudhan.nomouse`, icon), released as
   `nomouse-universal-apple-darwin.app.zip`; `scripts/test-app.sh` checks it.
+- `nomouse-universal-apple-darwin.dmg` (`scripts/release/dmg.sh`, built without mounting) and
+  the Homebrew cask `nomouse-app.rb` for it. With the owner's Developer ID certificate and App
+  Store Connect key as repository secrets (`scripts/release/signing.sh`), the release signs
+  `nomouse.app` with the hardened runtime and notarizes and staples the app and the disk image
+  (`scripts/release/notarize.sh`); without them both stay ad-hoc signed.
 - Guided first run (`nomouse setup`, and the daemon's start when Accessibility is missing):
   explains each permission, asks macOS for it and opens the Accessibility pane, waits for the
   switch, then restarts the daemon. Without a terminal (`nomouse.app`) it uses dialogs. On

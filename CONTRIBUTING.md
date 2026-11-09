@@ -78,9 +78,9 @@ The tag push runs `.github/workflows/release.yml`:
 | Job | Builds |
 |-----|--------|
 | Linux (ubuntu-22.04, glibc 2.35) | `nomouse-x86_64-unknown-linux-gnu.tar.gz`, `nomouse-aarch64-unknown-linux-gnu.tar.gz` (cross-linked with gcc-aarch64-linux-gnu), `nomouse_amd64.deb`, `nomouse_arm64.deb` (cargo-deb) |
-| macOS | arm64 and x86_64 joined with `lipo` into `nomouse-universal-apple-darwin.tar.gz`, and `nomouse-universal-apple-darwin.app.zip`: the same binary in `nomouse.app` (`scripts/release/app.sh`, ad-hoc signed) |
+| macOS | arm64 and x86_64 joined with `lipo` into `nomouse-universal-apple-darwin.tar.gz`; the same binary in `nomouse.app` (`scripts/release/app.sh`) as `nomouse-universal-apple-darwin.app.zip` and in the disk image `nomouse-universal-apple-darwin.dmg` (`scripts/release/dmg.sh`); `scripts/test-app.sh` checks the bundle, the image and the cask |
 | Windows | `nomouse-x86_64-pc-windows-msvc.zip` |
-| Assemble | `install.sh`, `install.ps1`, `nomouse.rb` (Homebrew formula from `packaging/homebrew/`), a `.sha256` per asset and `SHA256SUMS`; tests `install.sh` against the built archive, then creates the GitHub release with the changelog section as notes |
+| Assemble | `install.sh`, `install.ps1`, `nomouse.rb` (Homebrew formula from `packaging/homebrew/`), `nomouse-app.rb` (the cask, when the disk image is there), a `.sha256` per asset and `SHA256SUMS`; tests `install.sh` against the built archive, then creates the GitHub release with the changelog section as notes |
 
 Asset names carry no version, so `releases/latest/download/<asset>` always resolves. Each build
 job smoke-tests `nomouse --version` against the workspace version, and a tag that does not match
@@ -91,20 +91,37 @@ and packs every asset and uploads them as the `release-X.Y.Z` workflow artifact,
 no release. `just release-dry-run` does the Linux half locally (needs `cargo-deb`, and for
 aarch64 either `aarch64-linux-gnu-gcc` or `cargo-zigbuild` with zig).
 
-Homebrew: `nomouse.rb` is attached to every release; publishing it means copying it to a tap
-repository (`yuyudhan/homebrew-tap`, `Formula/nomouse.rb`).
+Homebrew: `nomouse.rb` (the formula, the bare command line) and `nomouse-app.rb` (the cask,
+`nomouse.app` from the disk image) are attached to every release; publishing them means copying
+them to the tap repository `yuyudhan/homebrew-tap` as `Formula/nomouse.rb` and
+`Casks/nomouse.rb`. Homebrew reads casks only from a tap, so check one there: `brew style
+--cask` and `brew audit --cask --strict` on `<tap>/nomouse`, then `brew install --cask` and
+`brew uninstall --cask`.
 
-### macOS signing and notarization (not done yet)
+### macOS signing and notarization
 
-The macOS binary and `nomouse.app` carry ad-hoc signatures only. That is enough for the
-installer: curl sets no quarantine flag, so Gatekeeper does not stop it. A download through a
-browser is quarantined and blocked, and macOS ties Accessibility and Input Monitoring grants to
-the code signature: an ad-hoc signature's designated requirement is its code hash, so the grant
-survives rebuilding the same binary (`scripts/test-app.sh` checks that) but not an update.
-Signing needs the owner's
-Apple Developer Program membership and, as repository secrets, a Developer ID Application
-certificate (`.p12` and password) plus an App Store Connect API key for notarization. The
-macOS job would then import the certificate into a temporary keychain, run
-`codesign --force --options runtime --timestamp --sign "Developer ID Application: ..."` on the
-universal binary, zip it, `xcrun notarytool submit --wait` it, and package as now (a bare binary
-cannot be stapled; Gatekeeper checks the ticket online).
+Without signing secrets the macOS binary, `nomouse.app` and the disk image carry ad-hoc
+signatures only. That is enough for the installer: curl sets no quarantine flag, so Gatekeeper
+does not stop it. A download through a browser is quarantined and blocked, and macOS ties the
+Accessibility grant to the code signature: an ad-hoc signature's designated requirement is its
+code hash, so the grant survives rebuilding the same binary (`scripts/test-app.sh` checks that)
+but not an update.
+
+Developer ID signing needs the owner's Apple Developer Program membership and these repository
+secrets:
+
+| Secret | Value |
+|--------|-------|
+| `MACOS_CERTIFICATE` | base64 of the "Developer ID Application" certificate with its private key (`.p12`) |
+| `MACOS_CERTIFICATE_PASSWORD` | the `.p12` password |
+| `MACOS_SIGN_IDENTITY` | the identity, `Developer ID Application: <name> (<team id>)` |
+| `NOTARY_KEY` | base64 of an App Store Connect API key (`AuthKey_<id>.p8`, Developer role) |
+| `NOTARY_KEY_ID`, `NOTARY_ISSUER` | that key's id and the team's issuer id |
+
+With them the macOS job (`scripts/release/signing.sh`) imports the certificate into a temporary
+keychain; `app.sh` signs `nomouse.app` with the hardened runtime and a secure timestamp, then
+`scripts/release/notarize.sh` notarizes and staples it before it is zipped; `dmg.sh` signs,
+notarizes and staples the disk image; and the job fails unless
+`spctl --assess --type open --context context:primary-signature` accepts the image. A manual
+run (`gh workflow run release.yml --ref nightly`) exercises all of it without a release. The
+bare binary in the tarball stays ad-hoc signed (a bare binary cannot be stapled).

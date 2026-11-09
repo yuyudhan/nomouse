@@ -152,8 +152,8 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | Id | Feature | macOS | Linux | Pri | Status |
 | --- | --- | --- | --- | --- | --- |
 | NM-DIST-01 | Release archives with checksums and a no-sudo installer | universal binary | x86_64, aarch64 tarballs | P0 | done |
-| NM-DIST-02 | Signed and notarized `nomouse.app` (stable Accessibility grant across updates) in a `.dmg` | `codesign --options runtime`, `notarytool`, `stapler` | n/a | P0 | partial (`scripts/release/app.sh` builds an ad-hoc signed `nomouse.app`; Developer ID signing, notarization and the `.dmg` need the owner's certificate) |
-| NM-DIST-03 | Homebrew: cask for the `.app` | `yuyudhan/homebrew-tap` | n/a | P0 | partial (a formula for the bare binary) |
+| NM-DIST-02 | Signed and notarized `nomouse.app` (stable Accessibility grant across updates) in a `.dmg` | `codesign --options runtime`, `notarytool`, `stapler` | n/a | P0 | partial (`scripts/release/app.sh` and `dmg.sh` build an ad-hoc signed `nomouse.app` and `.dmg`; Developer ID signing, notarization and stapling are wired into `release.yml` and wait for the owner's certificate and API key as secrets) |
+| NM-DIST-03 | Homebrew: cask for the `.app` | `yuyudhan/homebrew-tap` | n/a | P0 | partial (the release renders the cask `nomouse-app.rb` next to the formula; `brew style` is clean; installing waits for a published `.dmg`) |
 | NM-DIST-04 | `.deb` | n/a | cargo-deb | P0 | done |
 | NM-DIST-05 | `.rpm` | n/a | cargo-generate-rpm | P1 | missing |
 | NM-DIST-06 | AUR `nomouse-bin` | n/a | PKGBUILD from the release tarball | P1 | missing |
