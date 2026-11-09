@@ -9,6 +9,13 @@ the release's section; add entries under Unreleased as changes land.
 
 ### Added
 
+- Focus-then-act: a highlight starts on the first label; Tab, ↓ and Ctrl-N move it forward,
+  Shift-Tab, ↑ and Ctrl-P back, and Return acts on it (holding any modifier pressed with
+  Return). The highlighted label is drawn in inverted colours on Linux.
+- `hints.keys = "homerow"`: Homerow's bindings; a typed label highlights, Return clicks,
+  Return twice double clicks, Shift-Return right clicks, Cmd-Return cmd-clicks.
+- Pressing the activation hotkey again (or running `nomouse hints` again on Wayland) while the
+  labels are shown dismisses them.
 - Hint mode: a hotkey labels every clickable element of the focused window from the
   accessibility tree; typing a label clicks it (left, right, double, middle, move, semantic
   click), with a continuous mode that keeps hinting after each click.

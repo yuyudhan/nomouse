@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use nomouse_core::config::Config;
 use nomouse_core::search::search_box_anchor;
 use nomouse_core::{
-    Action, Element, ElementId, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource, InputEvent,
-    InputInjector, MouseButton, Overlay, Platform, PlatformError, Point, Rect, Scope,
+    Action, Element, ElementId, ElementSource, Frame, Hint, Hotkey, HotkeyId, HotkeySource,
+    InputEvent, InputInjector, MouseButton, Overlay, Platform, PlatformError, Point, Rect, Scope,
 };
 use nomouse_sys_macos::app::{self, App};
 use nomouse_sys_macos::ax::{AxElement, is_process_trusted};
@@ -19,7 +19,7 @@ use nomouse_sys_macos::{Button, Label, LabelStyle, ModifierFlags, TapEvent};
 
 use crate::ax_tree::{LiveTree, RootSet, not_trusted, roots};
 use crate::geometry::{lerp, screen_rect, to_panel, union, wheel_deltas};
-use crate::keys::{chord, key_press, modifier_flags};
+use crate::keys::{chord, held, key_press, modifier_flags};
 use crate::roles::{PRESS, SHOW_MENU};
 use crate::style::label_style;
 use crate::walk::{Limits, walk};
@@ -227,13 +227,8 @@ impl Overlay for MacPlatform {
         Ok(())
     }
 
-    fn show_search(
-        &mut self,
-        hints: &[Hint],
-        typed: &str,
-        query: &str,
-    ) -> Result<(), PlatformError> {
-        self.present(hints, typed, Some(query));
+    fn show_frame(&mut self, frame: &Frame<'_>) -> Result<(), PlatformError> {
+        self.present(frame.hints, frame.typed, frame.query);
         Ok(())
     }
 
@@ -357,10 +352,12 @@ impl HotkeySource for MacPlatform {
                 match event {
                     TapEvent::Hotkey(id) => return Ok(Some(InputEvent::Hotkey(HotkeyId(id)))),
                     TapEvent::Key {
-                        keycode, character, ..
+                        keycode,
+                        character,
+                        modifiers,
                     } => {
                         if let Some(key) = key_press(keycode, character) {
-                            return Ok(Some(InputEvent::Key(key)));
+                            return Ok(Some(InputEvent::Key(key.with(held(modifiers)))));
                         }
                     }
                 }

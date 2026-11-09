@@ -8,6 +8,7 @@ use crate::action::ActionKind;
 use crate::hints::{Alphabet, AlphabetError, DEFAULT_ALPHABET};
 use crate::hotkey::{Hotkey, Key, Modifiers};
 use crate::platform::Scope;
+use crate::session::KeyBindings;
 
 /// The whole configuration file.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -48,6 +49,10 @@ pub struct HintsConfig {
     /// Click through the accessibility action (AT-SPI `do_action`, UIA `Invoke`, `AXPress`)
     /// when the element offers one, instead of a synthetic pointer click.
     pub semantic_click: bool,
+    /// Which keys act on a hint: `nomouse` (a typed label acts at once) or `homerow` (a typed
+    /// label highlights; Return clicks, Return twice double clicks, Shift-Return right clicks,
+    /// Cmd-Return cmd-clicks).
+    pub keys: KeyBindings,
 }
 
 impl Default for HintsConfig {
@@ -57,6 +62,7 @@ impl Default for HintsConfig {
             scope: Scope::FocusedWindow,
             action: ActionKind::Click,
             semantic_click: false,
+            keys: KeyBindings::Nomouse,
         }
     }
 }
@@ -342,6 +348,7 @@ mod tests {
         assert!(text.contains("hints = \"ctrl+space\""));
         assert!(text.contains("continuous = \"ctrl+shift+space\""));
         assert!(text.contains("semantic_click = false"));
+        assert!(text.contains("keys = \"nomouse\""));
         assert_eq!(Config::from_toml(&text).unwrap(), Config::default());
     }
 
@@ -355,6 +362,16 @@ mod tests {
         assert_eq!(config.hints.scope, Scope::Screen);
         assert_eq!(config.scroll.step, 5);
         assert_eq!(config.overlay, OverlayConfig::default());
+    }
+
+    #[test]
+    fn homerow_key_bindings() {
+        let config = Config::from_toml("[hints]\nkeys = \"homerow\"\n").unwrap();
+        assert_eq!(config.hints.keys, KeyBindings::Homerow);
+        assert!(matches!(
+            Config::from_toml("[hints]\nkeys = \"vim\"\n"),
+            Err(ConfigError::Parse(_))
+        ));
     }
 
     #[test]

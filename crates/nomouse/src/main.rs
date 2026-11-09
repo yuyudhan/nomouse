@@ -167,6 +167,7 @@ fn settings(config: &Config) -> Result<Settings, String> {
         alphabet: config.alphabet().map_err(|e| e.to_string())?,
         scope: config.hints.scope,
         scroll_step: i32::try_from(config.scroll.step).unwrap_or(3),
+        keys: config.hints.keys,
     })
 }
 
@@ -196,8 +197,9 @@ fn activate(mode: Mode, standalone: bool) -> Result<String, String> {
     let config = load_or_default()?;
     let settings = settings(&config)?;
     let mut platform = backend::platform(&config).map_err(|e| e.to_string())?;
-    let outcome =
-        run::activate(platform.as_mut(), &settings, mode, started).map_err(|e| e.to_string())?;
+    // A one-shot run registers no hotkey and has no command socket: Escape or an action ends it.
+    let outcome = run::activate(platform.as_mut(), &settings, mode, started, &|| false)
+        .map_err(|e| e.to_string())?;
     Ok(describe(outcome))
 }
 
@@ -323,7 +325,10 @@ fn serve(
         let Some(mode) = mode else {
             continue;
         };
-        match run::activate(platform, settings, mode, started) {
+        // A request on the command socket while the labels are up (the compositor binding
+        // pressed again) toggles them off.
+        let dismissed = || requests.next().is_some();
+        match run::activate(platform, settings, mode, started, &dismissed) {
             Ok(outcome) => tracing::info!("{}", describe(outcome).trim_end()),
             // A lost display surfaces again from `next_event` and ends the daemon there.
             Err(error) => tracing::warn!("{error}"),

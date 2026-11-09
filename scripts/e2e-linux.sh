@@ -241,6 +241,46 @@ else
     fail "ctrl+click: no labels"
 fi
 
+echo "--- focus-then-act: Tab twice, then Return, clicks the third label's button"
+focus "$gtk_win"
+log="$tmp/focus.log"
+if run_hints "$log" hints; then
+    # Hints are logged in label order; the highlight starts on the first.
+    third="$(grep -E 'hint [a-z]+ = ' "$log" | sed -n 3p | sed -E 's/.*"(.*)"$/\1/')"
+    xdotool key --delay 30 Tab Tab Return
+    reap "$hints_pid" || true
+    if [[ -n "$third" ]] && wait_for 3 title_is "$gtk_win" "left: $third #*"; then pass "Tab Tab Return clicked the third label ($third)"; else fail "focus-then-act: third '$third', title '$(title "$gtk_win")'"; fi
+else
+    fail "focus-then-act: no labels"
+fi
+
+echo "--- Homerow bindings: a label highlights, Return clicks, Shift-Return right clicks"
+mkdir -p "$XDG_CONFIG_HOME/nomouse"
+printf '[hints]\nkeys = "homerow"\n' >"$XDG_CONFIG_HOME/nomouse/config.toml"
+focus "$gtk_win"
+log="$tmp/homerow.log"
+if run_hints "$log" hints; then
+    xdotool type --delay 20 "$(label_for "$log" "Button 8")"
+    sleep 0.2
+    still_open=$(kill -0 "$hints_pid" 2>/dev/null && echo 1 || echo 0)
+    xdotool key Return
+    reap "$hints_pid" || true
+    if ((still_open)) && wait_for 3 title_is "$gtk_win" "left: Button 8 #*"; then pass "homerow: the label waited for Return, which clicked"; else fail "homerow Return: open after label=$still_open, title '$(title "$gtk_win")'"; fi
+else
+    fail "homerow Return: no labels"
+fi
+focus "$gtk_win"
+log="$tmp/homerow-right.log"
+if run_hints "$log" hints; then
+    xdotool type --delay 20 "$(label_for "$log" "Button 3")"
+    xdotool key shift+Return
+    reap "$hints_pid" || true
+    if wait_for 3 title_is "$gtk_win" "right: Button 3 #*"; then pass "homerow: Shift-Return right clicked"; else fail "homerow Shift-Return: title '$(title "$gtk_win")'"; fi
+else
+    fail "homerow Shift-Return: no labels"
+fi
+rm "$XDG_CONFIG_HOME/nomouse/config.toml"
+
 echo "--- search mode: type a name, Enter clicks the best match"
 focus "$gtk_win"
 log="$tmp/search.log"
@@ -347,6 +387,26 @@ if timeout 5 "$bin" hints && wait_for 5 scans_at_least "$daemon_log" $((before_s
     if wait_for 3 title_is "$gtk_win" "left: Button 4 #*"; then pass "command socket: the daemon ran the session and the click landed"; else fail "command socket click: '$(title "$gtk_win")'"; fi
 else
     fail "command socket: the daemon did not scan after \`nomouse hints\`"
+fi
+
+echo "--- toggle: the hotkey (and \`nomouse hints\`) pressed again dismisses the labels"
+focus "$gtk_win"
+before_title="$(title "$gtk_win")"
+before_scans="$(scans "$daemon_log")"
+xdotool key ctrl+space
+if wait_for 5 scans_at_least "$daemon_log" $((before_scans + 1)) && wait_for 5 overlay_viewable; then
+    xdotool key ctrl+space
+    if wait_for 3 no_overlay_viewable && [[ "$(title "$gtk_win")" == "$before_title" ]]; then pass "hotkey twice: no overlay left, nothing clicked"; else fail "hotkey twice: overlay still viewable or title changed to '$(title "$gtk_win")'"; fi
+else
+    fail "hotkey toggle: no labels after the first press"
+fi
+focus "$gtk_win"
+before_scans="$(scans "$daemon_log")"
+if timeout 5 "$bin" hints && wait_for 5 scans_at_least "$daemon_log" $((before_scans + 1)) && wait_for 5 overlay_viewable; then
+    timeout 5 "$bin" hints || true
+    if wait_for 3 no_overlay_viewable; then pass "\`nomouse hints\` twice: no overlay left"; else fail "\`nomouse hints\` twice: overlay still viewable"; fi
+else
+    fail "socket toggle: no labels after the first \`nomouse hints\`"
 fi
 
 if ((chromium)); then

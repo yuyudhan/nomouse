@@ -521,7 +521,12 @@ fn search_overlay_draws_the_query_box() {
     let Some(mut backend) = make(app()) else {
         return;
     };
-    backend.show_search(&[], "", "save").unwrap();
+    backend
+        .show_frame(&nomouse_core::Frame {
+            query: Some("save"),
+            ..nomouse_core::Frame::default()
+        })
+        .unwrap();
     assert!(backend.system.grabbed);
     let bitmap = backend.system.bitmaps.last().unwrap().clone();
     assert!(bitmap.pixels.iter().any(|pixel| *pixel != 0));
@@ -564,7 +569,9 @@ fn hotkeys_register_and_deliver() {
     });
     assert_eq!(
         backend.next_event(Duration::ZERO).unwrap(),
-        Some(InputEvent::Key(nomouse_core::KeyPress::Char('s')))
+        Some(InputEvent::Key(
+            nomouse_core::KeyPress::Char('s').with(nomouse_core::Modifiers::SHIFT)
+        ))
     );
     assert_eq!(backend.next_event(Duration::ZERO).unwrap(), None);
 

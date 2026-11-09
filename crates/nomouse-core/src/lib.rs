@@ -30,9 +30,9 @@ pub use config::{Config, ConfigError};
 pub use element::{Element, ElementId, Point, Rect, Role};
 pub use filter::{FilterState, LabelFilter};
 pub use hints::{Alphabet, AlphabetError, Hint, assign_hints, generate_labels};
-pub use hotkey::{Hotkey, HotkeyError, Key, KeyPress, Modifiers};
+pub use hotkey::{Hotkey, HotkeyError, Key, KeyEvent, KeyPress, Modifiers};
 pub use platform::{
-    ElementSource, HotkeyId, HotkeySource, InputEvent, InputInjector, Overlay, Platform,
+    ElementSource, Frame, HotkeyId, HotkeySource, InputEvent, InputInjector, Overlay, Platform,
     PlatformError, Scope,
 };
-pub use session::{HintSession, SessionEvent};
+pub use session::{HintSession, KeyBindings, SessionEvent};

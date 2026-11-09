@@ -60,6 +60,17 @@ pub const fn modifier_flags(modifiers: Modifiers) -> ModifierFlags {
     }
 }
 
+/// The nomouse modifiers of macOS flags seen on a key press: the inverse of
+/// [`modifier_flags`].
+pub const fn held(flags: ModifierFlags) -> Modifiers {
+    Modifiers {
+        ctrl: flags.control,
+        alt: flags.option,
+        shift: flags.shift,
+        meta: flags.command,
+    }
+}
+
 /// The event-tap chord for a hotkey, or `None` when its key does not exist on macOS.
 pub fn chord(hotkey: Hotkey) -> Option<Chord> {
     Some(Chord {

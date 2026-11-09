@@ -27,9 +27,38 @@ impl Modifiers {
         meta: false,
     };
 
+    /// Shift only.
+    pub const SHIFT: Self = Self {
+        shift: true,
+        ..Self::NONE
+    };
+
+    /// Control only.
+    pub const CTRL: Self = Self {
+        ctrl: true,
+        ..Self::NONE
+    };
+
+    /// Super / Command only.
+    pub const META: Self = Self {
+        meta: true,
+        ..Self::NONE
+    };
+
     /// Whether no modifier is held.
     pub const fn is_empty(self) -> bool {
         !(self.ctrl || self.alt || self.shift || self.meta)
+    }
+
+    /// The modifiers held in either `self` or `other`.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self {
+            ctrl: self.ctrl || other.ctrl,
+            alt: self.alt || other.alt,
+            shift: self.shift || other.shift,
+            meta: self.meta || other.meta,
+        }
     }
 }
 
@@ -205,10 +234,11 @@ impl fmt::Display for Hotkey {
     }
 }
 
-/// A key press delivered while the overlay holds the keyboard.
+/// A key delivered while the overlay holds the keyboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyPress {
-    /// A printable character, as typed (backends lowercase letters).
+    /// A printable character, as typed (backends lowercase letters; Shift is reported in
+    /// [`KeyEvent::modifiers`]).
     Char(char),
     /// Backspace: undo the last typed character.
     Backspace,
@@ -226,6 +256,34 @@ pub enum KeyPress {
     Left,
     /// Arrow right.
     Right,
+}
+
+impl KeyPress {
+    /// This key pressed with `modifiers` held.
+    pub const fn with(self, modifiers: Modifiers) -> KeyEvent {
+        KeyEvent {
+            key: self,
+            modifiers,
+        }
+    }
+}
+
+/// A key press with the modifiers held at the time, as the overlay receives it.
+///
+/// Shift+Tab is `Tab` with `shift`, Ctrl+N is `Char('n')` with `ctrl`, `G` is `Char('g')` with
+/// `shift`. Caps Lock is not a modifier: it changes nothing here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct KeyEvent {
+    /// The key.
+    pub key: KeyPress,
+    /// The modifiers held.
+    pub modifiers: Modifiers,
+}
+
+impl From<KeyPress> for KeyEvent {
+    fn from(key: KeyPress) -> Self {
+        key.with(Modifiers::NONE)
+    }
 }
 
 #[cfg(test)]

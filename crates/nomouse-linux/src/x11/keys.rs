@@ -8,6 +8,8 @@ use nomouse_core::{Key, KeyPress, Modifiers};
 pub(crate) mod sym {
     pub(crate) const SPACE: u32 = 0x20;
     pub(crate) const TAB: u32 = 0xff09;
+    /// What Shift+Tab produces on most layouts.
+    pub(crate) const ISO_LEFT_TAB: u32 = 0xfe20;
     pub(crate) const RETURN: u32 = 0xff0d;
     pub(crate) const KP_ENTER: u32 = 0xff8d;
     pub(crate) const ESCAPE: u32 = 0xff1b;
@@ -100,7 +102,7 @@ pub(crate) fn key_press(keysym: u32) -> Option<KeyPress> {
         sym::ESCAPE => KeyPress::Escape,
         sym::BACKSPACE => KeyPress::Backspace,
         sym::RETURN | sym::KP_ENTER => KeyPress::Enter,
-        sym::TAB => KeyPress::Tab,
+        sym::TAB | sym::ISO_LEFT_TAB => KeyPress::Tab,
         sym::UP => KeyPress::Up,
         sym::DOWN => KeyPress::Down,
         sym::LEFT => KeyPress::Left,
@@ -108,6 +110,16 @@ pub(crate) fn key_press(keysym: u32) -> Option<KeyPress> {
         other => KeyPress::Char(keysym_char(other)?.to_lowercase().next()?),
     };
     Some(press)
+}
+
+/// The modifiers held in an event `state` (Caps Lock and Num Lock are not modifiers here).
+pub(crate) const fn modifiers(state: u16) -> Modifiers {
+    Modifiers {
+        ctrl: state & mask::CONTROL != 0,
+        alt: state & mask::MOD1 != 0,
+        shift: state & mask::SHIFT != 0,
+        meta: state & mask::MOD4 != 0,
+    }
 }
 
 /// The server's keycode → keysym table (`GetKeyboardMapping`).
@@ -243,6 +255,23 @@ mod tests {
         assert_eq!(key_press(sym::KP_ENTER), Some(KeyPress::Enter));
         assert_eq!(key_press(0x0100_0444), Some(KeyPress::Char('ф')));
         assert_eq!(key_press(sym::SHIFT_L), None);
+        assert_eq!(key_press(sym::ISO_LEFT_TAB), Some(KeyPress::Tab));
+    }
+
+    #[test]
+    fn event_state_gives_held_modifiers_but_not_locks() {
+        let state = mask::SHIFT | mask::CONTROL | mask::LOCK | 0x10;
+        assert_eq!(
+            modifiers(state),
+            Modifiers {
+                ctrl: true,
+                shift: true,
+                ..Modifiers::NONE
+            }
+        );
+        let alt_super = modifiers(mask::MOD1 | mask::MOD4);
+        assert!(alt_super.alt && alt_super.meta && !alt_super.ctrl);
+        assert_eq!(modifiers(mask::LOCK), Modifiers::NONE);
     }
 
     #[test]

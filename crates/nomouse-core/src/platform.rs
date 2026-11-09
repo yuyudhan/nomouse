@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::action::Action;
 use crate::element::Element;
 use crate::hints::Hint;
-use crate::hotkey::{Hotkey, KeyPress};
+use crate::hotkey::{Hotkey, KeyEvent};
 
 /// Which part of the screen to collect elements from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -64,6 +64,20 @@ pub trait ElementSource {
     fn elements(&mut self, scope: Scope) -> Result<Vec<Element>, PlatformError>;
 }
 
+/// Everything one overlay frame draws, for [`Overlay::show_frame`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Frame<'a> {
+    /// The hints still matching `typed`.
+    pub hints: &'a [Hint],
+    /// The label prefix typed so far: backends highlight it and may dim the rest.
+    pub typed: &'a str,
+    /// Search-by-text: the query typed so far, drawn in a search box (even when empty or
+    /// when nothing matches); `None` outside search mode.
+    pub query: Option<&'a str>,
+    /// The label of the highlighted hint (focus-then-act), drawn in inverted colours.
+    pub focused: Option<&'a str>,
+}
+
 /// Draws hint labels above all windows and captures the keyboard while shown.
 pub trait Overlay {
     /// Shows `hints` (replacing any shown before) and grabs the keyboard, so key presses arrive
@@ -76,22 +90,16 @@ pub trait Overlay {
     /// Fails when the overlay window or the keyboard grab cannot be created.
     fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError>;
 
-    /// Search-by-text: shows `hints` and `typed` like [`Overlay::show`], plus a search box
-    /// with the `query` typed so far (drawn even when `query` is empty or nothing matches), and
-    /// grabs the keyboard.
+    /// Shows a whole [`Frame`]: its hints and typed prefix like [`Overlay::show`], plus the
+    /// search box and the highlighted hint, and grabs the keyboard.
     ///
-    /// The default shows only the labels; the Linux, macOS and Windows backends draw the box.
+    /// The default shows only the labels; the Linux, macOS and Windows backends draw the
+    /// search box, and the Linux backends the highlight.
     ///
     /// # Errors
     /// Fails when the overlay window or the keyboard grab cannot be created.
-    fn show_search(
-        &mut self,
-        hints: &[Hint],
-        typed: &str,
-        query: &str,
-    ) -> Result<(), PlatformError> {
-        let _ = query;
-        self.show(hints, typed)
+    fn show_frame(&mut self, frame: &Frame<'_>) -> Result<(), PlatformError> {
+        self.show(frame.hints, frame.typed)
     }
 
     /// Hides the overlay and releases the keyboard. Calling it while hidden is a no-op.
@@ -117,10 +125,11 @@ pub struct HotkeyId(pub u32);
 /// An input event for the event loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputEvent {
-    /// A registered global hotkey was pressed.
+    /// A registered global hotkey was pressed (also while the [`Overlay`] holds the keyboard,
+    /// where pressing an activation hotkey again dismisses the labels).
     Hotkey(HotkeyId),
     /// A key was pressed while the [`Overlay`] held the keyboard.
-    Key(KeyPress),
+    Key(KeyEvent),
 }
 
 /// Registers global hotkeys and delivers input events.

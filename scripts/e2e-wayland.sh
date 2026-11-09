@@ -279,6 +279,40 @@ else
 fi
 grep -oE 'labels shown [0-9]+ ms' "$daemon_log" | sed 's/^/  daemon: /' || true
 
+echo "--- toggle: the Sway binding pressed again dismisses the labels"
+focus xdg_shell
+sleep 0.3
+grim "$tmp/before-toggle.png"
+title_before="$(title xdg_shell)"
+before="$(scans "$daemon_log")"
+wtype -M ctrl -k space -m ctrl
+if wait_for 5 scans_at_least "$daemon_log" $((before + 1)); then
+    sleep 0.3
+    wtype -M ctrl -k space -m ctrl
+    if wait_for 5 grep -q 'cancelled' "$daemon_log"; then
+        sleep 0.3
+        grim "$tmp/after-toggle.png"
+        if cmp -s "$tmp/before-toggle.png" "$tmp/after-toggle.png" && [[ "$(title xdg_shell)" == "$title_before" ]]; then pass "binding twice: no overlay left, nothing clicked"; else fail "binding twice: the screen or title changed ('$(title xdg_shell)')"; fi
+    else
+        fail "binding twice: the session did not end"
+    fi
+else
+    fail "toggle: the binding did not reach the daemon"
+fi
+
+echo "--- focus-then-act: Tab twice, then Return, clicks the third label's button"
+focus xdg_shell
+before="$(scans "$daemon_log")"
+if "$bin" hints && wait_for 5 scans_at_least "$daemon_log" $((before + 1)); then
+    sleep 0.2
+    # The last scan's hints in label order: the third line names the third label's element.
+    third="$(awk '/scan [0-9]+:/ { n = 0 } /hint [a-z]+ = / { n++; if (n == 3) line = $0 } END { print line }' "$daemon_log" | sed -E 's/.*"(.*)"$/\1/')"
+    wtype -k Tab -k Tab -k Return
+    if [[ -n "$third" ]] && wait_for 3 title_is xdg_shell "left: $third #*"; then pass "Tab Tab Return clicked the third label ($third)"; else fail "focus-then-act: third '$third', title '$(title xdg_shell)'"; fi
+else
+    fail "focus-then-act: the daemon did not scan"
+fi
+
 # SIGTERM skips destructors, so the socket file stays; a client must treat it as no daemon.
 kill "$daemon_pid" 2>/dev/null || true
 reap "$daemon_pid" 5 || true

@@ -22,11 +22,14 @@ Defined in `crates/nomouse-core/src/platform.rs`, split by responsibility:
 
 - `ElementSource::elements(scope)`: a snapshot of the accessibility tree for the focused window or
   the whole screen, as `Element { id, role, name, bounds, enabled }`.
-- `Overlay::show(hints, typed)` / `hide()`: draws labels above all windows and grabs the keyboard
-  while shown, so typed keys reach nomouse, not the app.
+- `Overlay::show(hints, typed)` / `show_frame(frame)` / `hide()`: draws labels above all windows
+  and grabs the keyboard while shown, so typed keys reach nomouse, not the app. A `Frame` adds
+  the search query box and the highlighted label.
 - `InputInjector::perform(action)`: click (any button, any count), hover, drag, scroll.
 - `HotkeySource::register(hotkey)` / `unregister(id)` / `next_event(timeout)`: global hotkeys and
-  the key presses captured while the overlay is up, as `InputEvent`.
+  the key presses captured while the overlay is up (`KeyEvent`: the key plus the modifiers
+  held), as `InputEvent`. A registered hotkey pressed while the overlay is up still arrives as
+  `InputEvent::Hotkey`.
 - `Platform: all four + name()`.
 
 Every method is blocking and runs on the event-loop thread; errors are `PlatformError`, whose
@@ -40,10 +43,14 @@ Every method is blocking and runs on the event-loop thread; errors are `Platform
 3. `HintSession::new` drops non-clickable elements, sorts the rest into reading order (top to
    bottom, left to right, then id) and assigns labels: the leaves of a breadth-first expansion of
    the alphabet, so labels are as short as possible, shortest first, and prefix-free.
-4. `Overlay::show` draws `session.visible()`. Each `InputEvent::Key` goes to `session.key`,
-   which narrows the labels (`LabelFilter`), rejects keys that match nothing, or yields
-   `SessionEvent::Perform(action)`. Drag takes two picks; scroll picks a target then enters scroll
-   mode. Escape cancels.
+4. `Overlay::show_frame` draws `session.visible()` with the highlighted hint
+   (`session.focused()`). Each `InputEvent::Key` goes to `session.key`, which narrows the
+   labels (`LabelFilter`), moves the highlight (Tab/↓/Ctrl-N, Shift-Tab/↑/Ctrl-P), rejects keys
+   that match nothing, or yields `SessionEvent::Perform(action)` (a complete label, or Return on
+   the highlight; with `hints.keys = "homerow"` a label only highlights, and Return yields
+   `Armed` until the double-press time passes or a second Return makes it a double click). Drag
+   takes two picks; scroll picks a target then enters scroll mode. Escape cancels, and so does
+   an activation hotkey or a command-socket request arriving while the labels are up (toggle).
 5. `Overlay::hide`, then `InputInjector::perform(action)`.
 
 Hint alphabet: `asdfghjk` by default, configurable; `i`, `l`, `o` are rejected as ambiguous.
@@ -131,6 +138,8 @@ alphabet = "asdfghjk"        # label characters, most preferred first; i, l, o r
 scope = "focused-window"     # or "screen": every visible window on every monitor
 action = "click"             # click | right-click | double-click | hover | drag | scroll
 semantic_click = false       # AXPress / AT-SPI action / UIA Invoke instead of a pointer click
+keys = "nomouse"             # nomouse: a label acts at once | homerow: a label highlights,
+                             # Return clicks, twice double clicks, Shift-Return right clicks
 
 [hotkeys]                    # modifiers: ctrl, alt (Option), shift, meta (Command / Super)
 hints = "ctrl+space"

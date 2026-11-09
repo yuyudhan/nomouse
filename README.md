@@ -77,13 +77,20 @@ While labels are shown:
 | Key | Effect |
 |-----|--------|
 | label letters | narrow the labels; a complete label acts on its element |
+| Tab, ↓, Ctrl-N / Shift-Tab, ↑, Ctrl-P | move the highlight to the next / previous label |
+| Return | act on the highlighted label (it starts on the first); modifiers held with Return are held for the click |
 | `1` `2` `3` `4` | hold Shift / Ctrl / Alt / Command (Super) for the next click; `4` then a label is cmd+click |
 | Backspace | remove the last typed letter |
-| Escape | cancel |
+| Escape, or the mode's hotkey again | cancel |
 
-In search mode, Enter clicks the best match, Tab freezes the query so letters pick a label, and
-Backspace with no label typed returns to the query. In scroll mode, `j` `k` `h` `l` (or the
-arrows) scroll, `d` and `u` scroll five times as far, Escape or Enter ends it.
+With `hints.keys = "homerow"` a complete label highlights its element instead of acting: then
+Return clicks, Return twice double clicks, Shift-Return right clicks and Cmd-Return (Super)
+cmd-clicks, as in Homerow.
+
+In search mode, Enter clicks the highlighted match (the best one unless moved), Tab freezes the
+query so letters pick a label, and Backspace with no label typed returns to the query. In scroll
+mode, `j` `k` `h` `l` (or the arrows) scroll, `d` and `u` scroll five times as far, Escape or
+Enter ends it.
 
 Every mode is also a command (`nomouse hints`, `continuous`, `scroll`, `search`), with
 `--action right-click|double-click|hover|drag|scroll` for one-off actions. On Wayland the
@@ -101,6 +108,7 @@ alphabet = "asdfghjk"        # label letters, most preferred first
 scope = "focused-window"     # or "screen" for every window on every monitor
 action = "click"             # click, right-click, double-click, hover, drag, scroll
 semantic_click = false       # press via the accessibility API; the pointer stays put
+keys = "nomouse"             # or "homerow": a label highlights, Return clicks
 
 [hotkeys]                    # modifiers: ctrl, alt (Option), shift, meta (Command / Super)
 hints = "ctrl+space"

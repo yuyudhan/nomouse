@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use nomouse_core::{
-    Action, Config, Element, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource, InputEvent,
-    InputInjector, MouseButton, Overlay, Platform, PlatformError, Scope,
+    Action, Config, Element, ElementSource, Frame, Hint, Hotkey, HotkeyId, HotkeySource,
+    InputEvent, InputInjector, MouseButton, Overlay, Platform, PlatformError, Scope,
 };
 
 use crate::a11y::{AtspiSource, ScanLimits, bus};
@@ -50,16 +50,15 @@ impl ElementSource for LinuxPlatform {
 
 impl Overlay for LinuxPlatform {
     fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError> {
-        self.x.show(hints, typed, None)
+        self.x.show(&Frame {
+            hints,
+            typed,
+            ..Frame::default()
+        })
     }
 
-    fn show_search(
-        &mut self,
-        hints: &[Hint],
-        typed: &str,
-        query: &str,
-    ) -> Result<(), PlatformError> {
-        self.x.show(hints, typed, Some(query))
+    fn show_frame(&mut self, frame: &Frame<'_>) -> Result<(), PlatformError> {
+        self.x.show(frame)
     }
 
     fn hide(&mut self) -> Result<(), PlatformError> {

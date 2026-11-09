@@ -57,8 +57,8 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-HINT-07 | Menu bar items and menu bar extras (status items) get labels | `AXMenuBar`, `AXExtrasMenuBar` | panel apps via AT-SPI where exposed | P1 | done / partial (depends on the panel) / partial / done (taskbar, tray) |
 | NM-HINT-08 | Open menus and popups get labels | AX menus | AT-SPI popups | P0 | done (all) |
 | NM-HINT-09 | Continuous mode (Homerow "click chain"): re-label after every click until Escape | core loop | core loop | P1 | done (all) |
-| NM-HINT-10 | Activation hotkey pressed again while shown dismisses (toggle) | event tap | key grab / socket | P1 | missing |
-| NM-HINT-11 | Focus-then-act: Tab/↓/Ctrl-N and Shift-Tab/↑/Ctrl-P move a highlight across labels; Return acts on it | core | core | P1 | missing |
+| NM-HINT-10 | Activation hotkey pressed again while shown dismisses (toggle) | event tap | key grab / socket | P1 | partial (core, X11 hotkey and Wayland socket done and e2e-tested; macOS and Windows deliver the hotkey but are untested) / done / done / partial |
+| NM-HINT-11 | Focus-then-act: Tab/↓/Ctrl-N and Shift-Tab/↑/Ctrl-P move a highlight across labels; Return acts on it | core | core | P1 | partial (keys work everywhere; the highlight is drawn on Linux only) / done / done / partial |
 | NM-HINT-12 | Tutor: `?` shows the focused element's role, name and searchable properties | AX attributes | AT-SPI attributes | P2 | missing |
 | NM-HINT-13 | Mission Control: label window thumbnails while Mission Control is open; optional auto-activate | Dock AX tree | n/a | P2 | missing |
 | NM-HINT-14 | Browser modes: fast (visible viewport) and exhaustive (whole document) | `AXEnhancedUserInterface`, `AXManualAccessibility` | Chromium `--force-renderer-accessibility` | P1 | partial (opt-in list `macos.enhanced_ui_apps`; no fast/exhaustive switch) |
@@ -70,12 +70,12 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-ACT-01 | Left click | `CGEvent` | XTest / virtual pointer / uinput | P0 | done (all) |
 | NM-ACT-02 | Right click | `CGEvent` | same | P0 | done (all) |
 | NM-ACT-03 | Double click | `CGEvent` with click state 2 | same | P0 | done (all) |
-| NM-ACT-04 | Modifier click (shift, ctrl, alt, cmd/super), e.g. cmd+click to open a link in a new tab | flags on the event | XTest key events / virtual keyboard | P0 | done (digits `1`-`4`); Homerow's Shift-Return and Cmd-Return bindings missing (NM-ACT-09) |
+| NM-ACT-04 | Modifier click (shift, ctrl, alt, cmd/super), e.g. cmd+click to open a link in a new tab | flags on the event | XTest key events / virtual keyboard | P0 | done (digits `1`-`4`, and modifiers held with Return) |
 | NM-ACT-05 | Hover (move the pointer only) | `CGEvent` move | pointer motion | P1 | done (all) |
 | NM-ACT-06 | Drag: pick start, pick end | down, moves, up | same | P1 | done (all) |
 | NM-ACT-07 | Semantic click without moving the pointer | `AXPress`, `AXShowMenu` | AT-SPI `do_action` | P1 | done (all; `hints.semantic_click`) |
 | NM-ACT-08 | Middle click | `CGEvent` other button | button 2 | P2 | partial (backends inject `MouseButton::Middle`; no `ActionKind` binds it) |
-| NM-ACT-09 | Homerow key bindings as an option: Return click, Return twice double click, Shift-Return right click, Cmd-Return cmd click | core | core | P1 | missing |
+| NM-ACT-09 | Homerow key bindings as an option: Return click, Return twice double click, Shift-Return right click, Cmd-Return cmd click | core | core | P1 | partial (`hints.keys = "homerow"`; macOS e2e pending; Windows reports Shift only, so no Cmd-Return) / done / done / partial |
 | NM-ACT-10 | Focus a text field and leave the keyboard there (no chain click into inputs) | `AXFocused` | AT-SPI `grab_focus` | P1 | partial (clicking focuses; continuous mode does not stop at inputs) |
 
 ### Search (SRCH)
@@ -165,9 +165,9 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | Priority | Features | Done | Partial | Missing |
 | --- | --- | --- | --- | --- |
 | P0 | 29 | 26 | 2 | 1 |
-| P1 | 25 | 4 | 4 | 17 |
+| P1 | 25 | 4 | 7 | 14 |
 | P2 | 17 | 0 | 3 | 14 |
-| **All** | **71** | **30** | **9** | **32** |
+| **All** | **71** | **30** | **12** | **29** |
 
 A feature counts as done when it is done on macOS and Linux X11 (Wayland limits are listed per
 row). The three open P0 items are all macOS distribution and onboarding: the signed and

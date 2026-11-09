@@ -9,9 +9,8 @@ use std::collections::BTreeMap;
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
-use nomouse_core::search::search_box_anchor;
 use nomouse_core::{
-    Action, Hint, Hotkey, HotkeyId, InputEvent, Modifiers, PlatformError, Point, Rect,
+    Action, Frame, Hotkey, HotkeyId, InputEvent, Modifiers, PlatformError, Point, Rect,
 };
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::errors::{ConnectionError, ReplyError};
@@ -415,22 +414,25 @@ impl X11 {
         Ok(())
     }
 
+    /// A hotkey (also while the keyboard is grabbed, so pressing it again toggles the labels
+    /// off), else, while grabbed, the key press with its modifiers.
     fn translate(&self, event: &Event) -> Option<InputEvent> {
         let Event::KeyPress(press) = event else {
             return None;
         };
         let state = u16::from(press.state);
-        if self.grabbed {
-            let keysym = self.keymap.keysym(press.detail, state);
-            return keys::key_press(keysym).map(InputEvent::Key);
+        let hotkey = self.hotkeys.iter().find(|(_, grab)| {
+            grab.keycodes.contains(&press.detail)
+                && keys::chord_matches(state, grab.mask, self.numlock)
+        });
+        if let Some((id, _)) = hotkey {
+            return Some(InputEvent::Hotkey(*id));
         }
-        self.hotkeys
-            .iter()
-            .find(|(_, grab)| {
-                grab.keycodes.contains(&press.detail)
-                    && keys::chord_matches(state, grab.mask, self.numlock)
-            })
-            .map(|(id, _)| InputEvent::Hotkey(*id))
+        if !self.grabbed {
+            return None;
+        }
+        let keysym = self.keymap.keysym(press.detail, state);
+        keys::key_press(keysym).map(|key| InputEvent::Key(key.with(keys::modifiers(state))))
     }
 
     fn handle(&mut self, event: &Event) -> Result<Option<InputEvent>, PlatformError> {
@@ -602,49 +604,14 @@ impl X11 {
         ))
     }
 
-    /// Shows `hints` on the monitors they lie on and grabs the keyboard. With a `query`
-    /// (search-by-text) a search box `/query` is drawn near the top centre of the monitor of
-    /// the best match (the first hint), or of the first monitor when nothing matches.
+    /// Shows `frame` (its hints on the monitors they lie on, the highlight and the search box;
+    /// see [`Renderer::frame`]) and grabs the keyboard.
     ///
     /// # Errors
     /// When windows cannot be created or the keyboard cannot be grabbed.
-    pub(crate) fn show(
-        &mut self,
-        hints: &[Hint],
-        typed: &str,
-        query: Option<&str>,
-    ) -> Result<(), PlatformError> {
+    pub(crate) fn show(&mut self, frame: &Frame<'_>) -> Result<(), PlatformError> {
         let monitors = self.monitors();
-        let typed = typed.chars().count();
-        let mut per_monitor: Vec<Vec<Label>> = vec![Vec::new(); monitors.len()];
-        let mut first_monitor = None;
-        for hint in hints {
-            let bounds = hint.element.bounds;
-            let index = monitors
-                .iter()
-                .position(|m| m.contains(bounds.center()))
-                .or_else(|| monitors.iter().position(|m| m.intersects(&bounds)))
-                .unwrap_or(0);
-            first_monitor.get_or_insert(index);
-            if let Some(label) = self
-                .renderer
-                .label(&hint.label, typed, bounds, monitors[index])
-            {
-                per_monitor[index].push(label);
-            }
-        }
-        if let Some(query) = query {
-            let index = first_monitor.unwrap_or(0);
-            let area = monitors[index];
-            let text = format!("/{query}");
-            let anchor = search_box_anchor(area);
-            if let Some(label) = self
-                .renderer
-                .label(&text, text.chars().count(), anchor, area)
-            {
-                per_monitor[index].push(label);
-            }
-        }
+        let per_monitor = self.renderer.frame(frame, &monitors);
         let mut used = Vec::new();
         for (area, labels) in monitors.iter().zip(per_monitor) {
             if labels.is_empty() {

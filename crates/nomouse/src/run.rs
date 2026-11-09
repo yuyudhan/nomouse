@@ -3,15 +3,19 @@
 use std::time::{Duration, Instant};
 
 use nomouse_core::{
-    Action, ActionKind, Alphabet, Hint, HintSession, InputEvent, KeyPress, Platform, PlatformError,
-    Point, Scope, SessionEvent,
+    Action, ActionKind, Alphabet, Frame, Hint, HintSession, InputEvent, KeyBindings, KeyPress,
+    Platform, PlatformError, Point, Scope, SessionEvent,
 };
 
 /// How long continuous mode waits after a click before re-scanning, so the app can update.
 pub(crate) const SETTLE: Duration = Duration::from_millis(50);
 
-/// How often the session loop wakes up while waiting for keys.
-const POLL: Duration = Duration::from_millis(250);
+/// How often the session loop wakes up while waiting for keys (and checks for a dismissal
+/// request from the command socket).
+const POLL: Duration = Duration::from_millis(50);
+
+/// Homerow bindings: how long after Return a second Return makes a double click.
+const DOUBLE_PRESS: Duration = Duration::from_millis(300);
 
 /// What one activation does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,23 +39,27 @@ impl Mode {
         }
     }
 
-    fn session(self, alphabet: &Alphabet, elements: Vec<nomouse_core::Element>) -> HintSession {
-        match self {
+    fn session(self, settings: &Settings, elements: Vec<nomouse_core::Element>) -> HintSession {
+        let alphabet = &settings.alphabet;
+        let session = match self {
             Self::Search => HintSession::search(alphabet, elements, self.kind()),
             Self::Once(_) | Self::Continuous(_) | Self::Scroll => {
                 HintSession::new(alphabet, elements, self.kind())
             }
-        }
+        };
+        session.with_bindings(settings.keys)
     }
 }
 
-/// Draws the session: its matching labels, plus the query box in search mode.
+/// Draws the session: its matching labels and highlight, plus the query box in search mode.
 fn draw(platform: &mut dyn Platform, session: &HintSession) -> Result<(), PlatformError> {
     let hints: Vec<Hint> = session.visible();
-    match session.query() {
-        Some(query) => platform.show_search(&hints, session.typed(), query),
-        None => platform.show(&hints, session.typed()),
-    }
+    platform.show_frame(&Frame {
+        hints: &hints,
+        typed: session.typed(),
+        query: session.query(),
+        focused: session.focused().map(|hint| hint.label.as_str()),
+    })
 }
 
 /// Settings the driver needs from the configuration.
@@ -63,6 +71,33 @@ pub(crate) struct Settings {
     pub(crate) scope: Scope,
     /// Wheel steps per scroll key press.
     pub(crate) scroll_step: i32,
+    /// Which keys act on a hint.
+    pub(crate) keys: KeyBindings,
+}
+
+/// What waiting for the next key produced.
+enum Wait {
+    /// A key while the overlay holds the keyboard.
+    Key(nomouse_core::KeyEvent),
+    /// An activation hotkey or a command-socket request came in: the labels toggle off.
+    Dismissed,
+    /// Nothing within the timeout.
+    Timeout,
+}
+
+/// Waits up to `timeout` for a key; a hotkey, or `dismissed()` turning true meanwhile, ends
+/// the activation (pressing the activation hotkey again toggles the labels off).
+fn wait(
+    platform: &mut dyn Platform,
+    timeout: Duration,
+    dismissed: &dyn Fn() -> bool,
+) -> Result<Wait, PlatformError> {
+    Ok(match platform.next_event(timeout)? {
+        Some(InputEvent::Key(key)) => Wait::Key(key),
+        Some(InputEvent::Hotkey(_)) => Wait::Dismissed,
+        None if dismissed() => Wait::Dismissed,
+        None => Wait::Timeout,
+    })
 }
 
 /// How an activation ended.
@@ -104,16 +139,23 @@ pub(crate) fn scroll_delta(key: KeyPress, step: i32) -> Option<(i32, i32)> {
     }
 }
 
-fn scroll_mode(platform: &mut dyn Platform, at: Point, step: i32) -> Result<usize, PlatformError> {
+fn scroll_mode(
+    platform: &mut dyn Platform,
+    at: Point,
+    step: i32,
+    dismissed: &dyn Fn() -> bool,
+) -> Result<usize, PlatformError> {
     platform.perform(&Action::hover(at))?;
     // Showing no labels keeps the keyboard grabbed for the scroll keys.
     platform.show(&[], "")?;
     let mut scrolls = 0;
     loop {
-        let Some(InputEvent::Key(key)) = platform.next_event(POLL)? else {
-            continue;
+        let key = match wait(platform, POLL, dismissed)? {
+            Wait::Key(key) => key,
+            Wait::Dismissed => return Ok(scrolls),
+            Wait::Timeout => continue,
         };
-        match scroll_delta(key, step) {
+        match scroll_delta(key.key, step) {
             None => return Ok(scrolls),
             Some((0, 0)) => {}
             Some((dx, dy)) => {
@@ -124,8 +166,18 @@ fn scroll_mode(platform: &mut dyn Platform, at: Point, step: i32) -> Result<usiz
     }
 }
 
+/// The outcome of an activation that ends without a new action after `performed` ones.
+const fn ended(performed: usize) -> Outcome {
+    if performed > 0 {
+        Outcome::Performed(performed)
+    } else {
+        Outcome::Cancelled
+    }
+}
+
 /// Runs one activation in `mode`. `started` is when the trigger arrived, for the
-/// hotkey-to-labels timing logged at info level.
+/// hotkey-to-labels timing logged at info level. `dismissed` reports a request to toggle the
+/// labels off that arrives outside the platform's events (the daemon's command socket).
 ///
 /// # Errors
 /// Platform errors from scanning, drawing or acting; the overlay is hidden either way.
@@ -134,6 +186,7 @@ pub(crate) fn activate(
     settings: &Settings,
     mode: Mode,
     started: Instant,
+    dismissed: &dyn Fn() -> bool,
 ) -> Result<Outcome, PlatformError> {
     let guard = Shown { platform };
     let platform = &mut *guard.platform;
@@ -141,7 +194,7 @@ pub(crate) fn activate(
     let mut scans = 0_usize;
     loop {
         let elements = platform.elements(settings.scope)?;
-        let mut session = mode.session(&settings.alphabet, elements);
+        let mut session = mode.session(settings, elements);
         if session.is_empty() {
             return Ok(if performed > 0 {
                 Outcome::Performed(performed)
@@ -169,27 +222,33 @@ pub(crate) fn activate(
             );
         }
         let action = loop {
-            let Some(InputEvent::Key(key)) = platform.next_event(POLL)? else {
-                continue;
+            let key = match wait(platform, POLL, dismissed)? {
+                Wait::Key(key) => key,
+                Wait::Dismissed => return Ok(ended(performed)),
+                Wait::Timeout => continue,
             };
             match session.key(key) {
                 SessionEvent::Rejected => {}
-                SessionEvent::Narrowed | SessionEvent::DragStarted(_) => draw(platform, &session)?,
+                SessionEvent::Narrowed
+                | SessionEvent::Highlighted
+                | SessionEvent::DragStarted(_) => draw(platform, &session)?,
                 SessionEvent::ModifiersChanged(modifiers) => {
                     tracing::debug!("next click holds {modifiers:?}");
                 }
-                SessionEvent::Cancelled => {
-                    return Ok(if performed > 0 {
-                        Outcome::Performed(performed)
-                    } else {
-                        Outcome::Cancelled
-                    });
-                }
+                SessionEvent::Cancelled => return Ok(ended(performed)),
                 SessionEvent::ScrollTarget(at) => {
                     platform.hide()?;
-                    let scrolls = scroll_mode(platform, at, settings.scroll_step)?;
+                    let scrolls = scroll_mode(platform, at, settings.scroll_step, dismissed)?;
                     return Ok(Outcome::Performed(performed + scrolls));
                 }
+                SessionEvent::Armed(single) => match wait(platform, DOUBLE_PRESS, dismissed)? {
+                    Wait::Key(key) => match session.key(key) {
+                        SessionEvent::Perform(action) => break action,
+                        _ => return Ok(ended(performed)),
+                    },
+                    Wait::Dismissed => return Ok(ended(performed)),
+                    Wait::Timeout => break session.expire().unwrap_or(single),
+                },
                 SessionEvent::Perform(action) => break action,
             }
         };
@@ -209,7 +268,7 @@ mod tests {
 
     use nomouse_core::{
         Element, ElementId, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource, InputInjector,
-        Overlay, Rect, Role,
+        Modifiers, Overlay, Rect, Role,
     };
 
     use super::*;
@@ -217,12 +276,14 @@ mod tests {
     #[derive(Default)]
     struct Fake {
         elements: Vec<Element>,
-        keys: VecDeque<KeyPress>,
+        /// The script: `None` is a poll that times out.
+        keys: VecDeque<Option<InputEvent>>,
         performed: Vec<Action>,
         scans: usize,
         shown: Vec<(usize, String)>,
         visible: bool,
         queries: Vec<String>,
+        focused: Vec<Option<String>>,
     }
 
     impl ElementSource for Fake {
@@ -239,14 +300,12 @@ mod tests {
             Ok(())
         }
 
-        fn show_search(
-            &mut self,
-            hints: &[Hint],
-            typed: &str,
-            query: &str,
-        ) -> Result<(), PlatformError> {
-            self.queries.push(query.to_owned());
-            self.show(hints, typed)
+        fn show_frame(&mut self, frame: &Frame<'_>) -> Result<(), PlatformError> {
+            if let Some(query) = frame.query {
+                self.queries.push(query.to_owned());
+            }
+            self.focused.push(frame.focused.map(str::to_owned));
+            self.show(frame.hints, frame.typed)
         }
 
         fn hide(&mut self) -> Result<(), PlatformError> {
@@ -274,7 +333,6 @@ mod tests {
         fn next_event(&mut self, _timeout: Duration) -> Result<Option<InputEvent>, PlatformError> {
             self.keys
                 .pop_front()
-                .map(|key| Some(InputEvent::Key(key)))
                 .ok_or_else(|| PlatformError::Backend("script exhausted".to_owned()))
         }
     }
@@ -295,14 +353,23 @@ mod tests {
                 enabled: true,
             })
             .collect();
+        // `!` Escape, `<` Backspace, `=` Enter, `>` Tab, `^` Shift-Tab, `+` Shift-Enter,
+        // `@` an activation hotkey, `_` a poll that times out; anything else types itself.
         let keys = keys
             .chars()
-            .map(|c| match c {
-                '!' => KeyPress::Escape,
-                '<' => KeyPress::Backspace,
-                '=' => KeyPress::Enter,
-                '>' => KeyPress::Tab,
-                other => KeyPress::Char(other),
+            .map(|c| {
+                let key = match c {
+                    '@' => return Some(InputEvent::Hotkey(HotkeyId(1))),
+                    '_' => return None,
+                    '!' => KeyPress::Escape.into(),
+                    '<' => KeyPress::Backspace.into(),
+                    '=' => KeyPress::Enter.into(),
+                    '>' => KeyPress::Tab.into(),
+                    '^' => KeyPress::Tab.with(Modifiers::SHIFT),
+                    '+' => KeyPress::Enter.with(Modifiers::SHIFT),
+                    other => KeyPress::Char(other).into(),
+                };
+                Some(InputEvent::Key(key))
             })
             .collect();
         Fake {
@@ -317,11 +384,99 @@ mod tests {
             alphabet: Alphabet::default(),
             scope: Scope::FocusedWindow,
             scroll_step: 3,
+            keys: KeyBindings::Nomouse,
         }
     }
 
     fn run(platform: &mut Fake, mode: Mode) -> Result<Outcome, PlatformError> {
-        activate(platform, &settings(), mode, Instant::now())
+        activate(platform, &settings(), mode, Instant::now(), &|| false)
+    }
+
+    fn homerow(platform: &mut Fake) -> Result<Outcome, PlatformError> {
+        let homerow = Settings {
+            keys: KeyBindings::Homerow,
+            ..settings()
+        };
+        activate(
+            platform,
+            &homerow,
+            Mode::Once(ActionKind::Click),
+            Instant::now(),
+            &|| false,
+        )
+    }
+
+    #[test]
+    fn tab_twice_then_return_clicks_the_third_label_and_draws_the_highlight() {
+        let mut p = fake(4, ">>=");
+        assert_eq!(
+            run(&mut p, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Performed(1))
+        );
+        assert_eq!(p.performed, vec![Action::click(Point::new(205, 5))]);
+        let focused: Vec<Option<&str>> = p.focused.iter().map(Option::as_deref).collect();
+        assert_eq!(focused, vec![Some("a"), Some("s"), Some("d")]);
+        let mut back = fake(3, "^=");
+        run(&mut back, Mode::Once(ActionKind::Click)).unwrap();
+        assert_eq!(back.performed, vec![Action::click(Point::new(205, 5))]);
+    }
+
+    #[test]
+    fn activation_hotkey_while_shown_dismisses() {
+        let mut p = fake(3, "a@");
+        let mut once = fake(30, "a@");
+        assert_eq!(
+            run(&mut once, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Cancelled)
+        );
+        assert!(!once.visible);
+        assert_eq!(once.performed, Vec::new());
+        // Continuous mode keeps the clicks made before the toggle.
+        assert_eq!(
+            run(&mut p, Mode::Continuous(ActionKind::Click)),
+            Ok(Outcome::Performed(1))
+        );
+        assert!(!p.visible);
+        let mut scrolling = fake(2, "aj@");
+        assert_eq!(run(&mut scrolling, Mode::Scroll), Ok(Outcome::Performed(1)));
+        assert!(!scrolling.visible);
+    }
+
+    #[test]
+    fn a_socket_request_while_shown_dismisses() {
+        let mut p = fake(3, "_");
+        let outcome = activate(
+            &mut p,
+            &settings(),
+            Mode::Once(ActionKind::Click),
+            Instant::now(),
+            &|| true,
+        );
+        assert_eq!(outcome, Ok(Outcome::Cancelled));
+        assert!(!p.visible);
+    }
+
+    #[test]
+    fn homerow_return_clicks_once_the_double_press_time_passes() {
+        let mut p = fake(3, "s=_");
+        assert_eq!(homerow(&mut p), Ok(Outcome::Performed(1)));
+        assert_eq!(p.performed, vec![Action::click(Point::new(105, 5))]);
+    }
+
+    #[test]
+    fn homerow_return_twice_double_clicks_and_shift_return_right_clicks() {
+        let mut p = fake(3, "s==");
+        assert_eq!(homerow(&mut p), Ok(Outcome::Performed(1)));
+        assert_eq!(p.performed, vec![Action::double_click(Point::new(105, 5))]);
+        let mut right = fake(3, "d+");
+        assert_eq!(homerow(&mut right), Ok(Outcome::Performed(1)));
+        assert_eq!(
+            right.performed,
+            vec![Action::right_click(Point::new(205, 5))]
+        );
+        let mut escaped = fake(3, "s=!");
+        assert_eq!(homerow(&mut escaped), Ok(Outcome::Cancelled));
+        assert_eq!(escaped.performed, Vec::new());
     }
 
     fn named(names: &[&str], keys: &str) -> Fake {
@@ -430,7 +585,7 @@ mod tests {
             ..settings()
         };
         assert_eq!(
-            activate(&mut p, &step, Mode::Scroll, Instant::now()),
+            activate(&mut p, &step, Mode::Scroll, Instant::now(), &|| false),
             Ok(Outcome::Performed(4))
         );
         let at = Point::new(5, 5);

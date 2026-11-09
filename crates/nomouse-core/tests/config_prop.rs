@@ -3,7 +3,7 @@
 
 use nomouse_core::config::{Config, HintsConfig, OverlayConfig, ScrollConfig};
 use nomouse_core::search::fuzzy_score;
-use nomouse_core::{ActionKind, ConfigError, Scope};
+use nomouse_core::{ActionKind, ConfigError, KeyBindings, Scope};
 use proptest::prelude::*;
 
 fn alphabet() -> impl Strategy<Value = String> {
@@ -25,6 +25,7 @@ prop_compose! {
         scope in prop::sample::select(vec![Scope::FocusedWindow, Scope::Screen]),
         action in prop::sample::select(ActionKind::ALL.to_vec()),
         semantic_click in any::<bool>(),
+        keys in prop::sample::select(vec![KeyBindings::Nomouse, KeyBindings::Homerow]),
         step in 1u32..=50,
         font_size in 6u32..=72,
         opacity in 10u32..=100,
@@ -32,7 +33,7 @@ prop_compose! {
     ) -> Config {
         let [background, foreground, typed_foreground, border] = colours;
         Config {
-            hints: HintsConfig { alphabet, scope, action, semantic_click },
+            hints: HintsConfig { alphabet, scope, action, semantic_click, keys },
             scroll: ScrollConfig { step },
             overlay: OverlayConfig {
                 font_size,

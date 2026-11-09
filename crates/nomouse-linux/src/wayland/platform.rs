@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use nomouse_core::{
-    Action, Element, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource, InputEvent,
+    Action, Element, ElementSource, Frame, Hint, Hotkey, HotkeyId, HotkeySource, InputEvent,
     InputInjector, MouseButton, Overlay, Platform, PlatformError, Scope,
 };
 
@@ -128,16 +128,15 @@ impl ElementSource for WaylandPlatform {
 
 impl Overlay for WaylandPlatform {
     fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError> {
-        self.wayland.show(hints, typed, None)
+        self.wayland.show(&Frame {
+            hints,
+            typed,
+            ..Frame::default()
+        })
     }
 
-    fn show_search(
-        &mut self,
-        hints: &[Hint],
-        typed: &str,
-        query: &str,
-    ) -> Result<(), PlatformError> {
-        self.wayland.show(hints, typed, Some(query))
+    fn show_frame(&mut self, frame: &Frame<'_>) -> Result<(), PlatformError> {
+        self.wayland.show(frame)
     }
 
     fn hide(&mut self) -> Result<(), PlatformError> {
