@@ -65,8 +65,9 @@ cargo test -p nomouse-macos --test macos_accessibility
 ```
 
 `just e2e-macos` (`scripts/e2e-macos.sh`) drives the real binary against a Swift fixture app
-and checks clicks, right click, double click, drag, scroll, search and the daemon through
-Accessibility; see [docs/testing.md](../../docs/testing.md#end-to-end-on-macos).
+and checks clicks, right click, double click, drag, scroll mode, search, focus-then-act, the
+Homerow keys, continuous mode, the `auto` theme, `ignore.apps` with `nomouse reload` and the
+daemon through Accessibility; see [docs/testing.md](../../docs/testing.md#end-to-end-on-macos).
 
 ## Manual test checklist
 

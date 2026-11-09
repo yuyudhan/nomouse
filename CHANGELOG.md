@@ -13,7 +13,7 @@ the release's section; add entries under Unreleased as changes land.
   carry both files and the Homebrew formula declares it.
 - Focus-then-act: a highlight starts on the first label; Tab, ↓ and Ctrl-N move it forward,
   Shift-Tab, ↑ and Ctrl-P back, and Return acts on it (holding any modifier pressed with
-  Return). The highlighted label is drawn in inverted colours on Linux.
+  Return). The highlighted label is drawn in inverted colours on Linux and macOS.
 - `hints.keys = "homerow"`: Homerow's bindings; a typed label highlights, Return clicks,
   Return twice double clicks, Shift-Return right clicks, Cmd-Return cmd-clicks.
 - Pressing the activation hotkey again (or running `nomouse hints` again on Wayland) while the
@@ -21,18 +21,21 @@ the release's section; add entries under Unreleased as changes land.
 - Search ignores spaces (in the query and the text), a query of only `*` or `;` labels every
   element, and matching covers an element's description (tooltips), value (text field
   contents, slider positions; never password fields) and role (`button`, `check box`), names
-  first. Linux reads descriptions and values over AT-SPI.
-- Scroll mode starts on the largest scrollable area and outlines it; areas are numbered, and
-  Tab, Shift-Tab or a digit switch between them. `gg` and `G` go to the top and bottom, and
-  Shift with `h` `j` `k` `l` scrolls faster (`scroll.dash_step`, default 15 wheel steps).
-- `ignore.apps`: apps (by macOS bundle id, Wayland app id, X11 `WM_CLASS` or process name)
-  where the hotkeys and commands show no labels; `nomouse doctor` lists them.
+  first. Linux reads descriptions and values over AT-SPI, macOS reads `AXDescription`,
+  `AXHelp` (tooltips) and the `AXValue` of text fields, combo boxes and sliders.
+- Scroll mode starts on the largest scrollable area and outlines it (Linux and macOS); areas
+  are numbered, and Tab, Shift-Tab or a digit switch between them. `gg` and `G` go to the top
+  and bottom, and Shift with `h` `j` `k` `l` scrolls faster (`scroll.dash_step`, default 15
+  wheel steps).
+- `ignore.apps`: apps (by macOS bundle id or executable name, Wayland app id, X11 `WM_CLASS`
+  or process name) where the hotkeys and commands show no labels; `nomouse doctor` lists them.
 - The daemon re-reads `config.toml` when it changes, or at once on `nomouse reload`; an
   invalid file is logged and the running settings stay.
 - `overlay.theme`: `original` (the yellow labels, default), `light`, `dark`, or `auto`, which
-  follows the desktop's light/dark preference (the XDG portal `color-scheme` on Linux, read
-  before each activation). `background`, `foreground`, `typed_foreground` and `border` now
-  override the theme's colour only when set.
+  follows the desktop's light/dark preference (the XDG portal `color-scheme` on Linux, the
+  app's effective appearance on macOS, Dark Aqua or not; read before each activation).
+  `background`, `foreground`, `typed_foreground` and `border` now override the theme's colour
+  only when set.
 - Continuous mode ends after a left click on a text field, so the keyboard stays there for
   typing. On Linux, editable text objects (GTK 3 entries) now count as text fields.
 - Hint mode: a hotkey labels every clickable element of the focused window from the
@@ -60,8 +63,11 @@ the release's section; add entries under Unreleased as changes land.
 - `scripts/e2e-wayland.sh`: end-to-end test on a private headless Sway with native and
   XWayland GTK windows.
 - `scripts/e2e-macos.sh` (`just e2e-macos`): end-to-end test on the Mac desktop against a Swift
-  fixture app, asserting clicks, right click, double click, drag, scroll, search and the daemon
-  through Accessibility.
+  fixture app, asserting through Accessibility clicks, right click, double click, drag, scroll
+  mode (largest list first, `j`, `G`, `gg`, Shift-`j`, Tab to a second list), search by name
+  and by tooltip, focus-then-act, the Homerow bindings, continuous mode ending at a text field,
+  the `auto` theme, the daemon (hotkey click, socket, toggle), `ignore.apps` with
+  `nomouse reload`, and Dvorak.
 - `nomouse.app` (`scripts/release/app.sh`, `just app`): the macOS binary in an ad-hoc signed
   agent bundle (no Dock icon, bundle id `com.yuyudhan.nomouse`, icon), released as
   `nomouse-universal-apple-darwin.app.zip`; `scripts/test-app.sh` checks it.
@@ -102,3 +108,8 @@ the release's section; add entries under Unreleased as changes land.
 - macOS: after a scan that took longer than about a second (a cold or busy app), the first key
   typed went to the app instead of nomouse, because macOS had switched the event tap off. The
   tap is now replaced before nomouse waits for keys whenever macOS disabled it.
+- macOS: `G` and Shift-`h` `j` `k` `l` in scroll mode did not scroll vertically: the wheel
+  events carried the Shift key still held, which macOS turns into horizontal scrolling. Wheel
+  events now carry no modifiers.
+- macOS: the labels faded out for a moment after a pick instead of vanishing (AppKit's panel
+  animation); they now disappear before the click lands.

@@ -23,6 +23,11 @@ pub struct NodeInfo<N> {
     pub subrole: Option<String>,
     /// The accessible name (title, description or value).
     pub name: String,
+    /// Description and help (tooltip) text the name does not already hold; search matches it.
+    pub description: String,
+    /// A text field's contents or a slider's position (empty elsewhere and for secure text
+    /// fields); search matches it.
+    pub value: String,
     /// `AXEnabled`; elements that do not report it count as enabled.
     pub enabled: bool,
     /// The frame in global top-left coordinates, when the element reports one.
@@ -95,6 +100,10 @@ pub struct Found<N> {
     pub role: Role,
     /// Accessible name.
     pub name: String,
+    /// Description and help text.
+    pub description: String,
+    /// Current value.
+    pub value: String,
     /// Frame in global top-left coordinates (empty when the element reports none).
     pub bounds: Rect,
     /// Whether the element is enabled.
@@ -200,6 +209,8 @@ pub fn walk<T: AxTree>(
                 node: pending.node,
                 role,
                 name: info.name,
+                description: info.description,
+                value: info.value,
                 bounds: info.frame.unwrap_or_default(),
                 enabled: info.enabled,
                 pressable: info.pressable,
@@ -253,6 +264,60 @@ fn intersection(a: Rect, b: Rect) -> Rect {
         to_length(right - left),
         to_length(bottom - top),
     )
+}
+
+/// The raw text attributes of one node.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RawTexts<'a> {
+    /// `AXTitle`.
+    pub title: Option<&'a str>,
+    /// `AXDescription`.
+    pub description: Option<&'a str>,
+    /// `AXHelp` (tooltips).
+    pub help: Option<&'a str>,
+}
+
+/// The name and description of a node: the name is the title, else the description; the
+/// description holds whatever of the description and help text the name does not.
+pub fn texts(raw: RawTexts<'_>) -> (String, String) {
+    fn present(text: Option<&str>) -> Option<&str> {
+        text.map(str::trim).filter(|text| !text.is_empty())
+    }
+    let title = present(raw.title);
+    let description = present(raw.description);
+    let name = title.or(description).unwrap_or_default();
+    let mut extra: Vec<&str> = Vec::new();
+    for text in [description, present(raw.help)].into_iter().flatten() {
+        if text != name && !extra.contains(&text) {
+            extra.push(text);
+        }
+    }
+    (name.to_owned(), extra.join(" "))
+}
+
+/// What kind of value a node has for search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueKind {
+    /// None is read (secure text fields among them: their contents never leave the app).
+    None,
+    /// A single-line text field's or combo box's text.
+    Text,
+    /// A slider's or stepper's number.
+    Number,
+}
+
+impl ValueKind {
+    /// The value kind of an element with `AXRole` `role` and `AXSubrole` `subrole`.
+    pub fn of(role: &str, subrole: Option<&str>) -> Self {
+        if subrole == Some("AXSecureTextField") {
+            return Self::None;
+        }
+        match role {
+            "AXTextField" | "AXComboBox" => Self::Text,
+            "AXSlider" | "AXIncrementor" => Self::Number,
+            _ => Self::None,
+        }
+    }
 }
 
 /// Child lists an element may report, as read from the attributes of the same names.
@@ -326,6 +391,8 @@ mod tests {
                     role: role.to_owned(),
                     subrole: None,
                     name: format!("n{id}"),
+                    description: String::new(),
+                    value: String::new(),
                     enabled: true,
                     frame: Some(frame),
                     pressable: false,
@@ -541,5 +608,49 @@ mod tests {
             Rect::new(5, 5, 5, 5)
         );
         assert!(intersection(Rect::new(0, 0, 10, 10), Rect::new(20, 20, 5, 5)).is_empty());
+    }
+
+    #[test]
+    fn names_descriptions_and_tooltips() {
+        let raw = |title, description, help| RawTexts {
+            title,
+            description,
+            help,
+        };
+        // A tooltip-only button: no name, the tooltip is its description.
+        assert_eq!(
+            texts(raw(None, None, Some("Keep a copy"))),
+            (String::new(), "Keep a copy".to_owned())
+        );
+        assert_eq!(
+            texts(raw(
+                Some("Save"),
+                Some("Saves the file"),
+                Some("Saves the file")
+            )),
+            ("Save".to_owned(), "Saves the file".to_owned())
+        );
+        // The description becomes the name when there is no title, and is not repeated.
+        assert_eq!(
+            texts(raw(Some(" "), Some("Close"), Some("Close the window"))),
+            ("Close".to_owned(), "Close the window".to_owned())
+        );
+        assert_eq!(texts(RawTexts::default()), (String::new(), String::new()));
+    }
+
+    #[test]
+    fn values_are_read_from_fields_and_sliders_but_never_secure_fields() {
+        assert_eq!(ValueKind::of("AXTextField", None), ValueKind::Text);
+        assert_eq!(
+            ValueKind::of("AXTextField", Some("AXSearchField")),
+            ValueKind::Text
+        );
+        assert_eq!(
+            ValueKind::of("AXTextField", Some("AXSecureTextField")),
+            ValueKind::None
+        );
+        assert_eq!(ValueKind::of("AXSlider", None), ValueKind::Number);
+        assert_eq!(ValueKind::of("AXTextArea", None), ValueKind::None);
+        assert_eq!(ValueKind::of("AXButton", None), ValueKind::None);
     }
 }

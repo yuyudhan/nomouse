@@ -57,8 +57,8 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-HINT-07 | Menu bar items and menu bar extras (status items) get labels | `AXMenuBar`, `AXExtrasMenuBar` | panel apps via AT-SPI where exposed | P1 | done / partial (depends on the panel) / partial / done (taskbar, tray) |
 | NM-HINT-08 | Open menus and popups get labels | AX menus | AT-SPI popups | P0 | done (all) |
 | NM-HINT-09 | Continuous mode (Homerow "click chain"): re-label after every click until Escape | core loop | core loop | P1 | done (all) |
-| NM-HINT-10 | Activation hotkey pressed again while shown dismisses (toggle) | event tap | key grab / socket | P1 | partial (core, X11 hotkey and Wayland socket done and e2e-tested; macOS and Windows deliver the hotkey but are untested) / done / done / partial |
-| NM-HINT-11 | Focus-then-act: Tab/↓/Ctrl-N and Shift-Tab/↑/Ctrl-P move a highlight across labels; Return acts on it | core | core | P1 | partial (keys work everywhere; the highlight is drawn on Linux only) / done / done / partial |
+| NM-HINT-10 | Activation hotkey pressed again while shown dismisses (toggle) | event tap | key grab / socket | P1 | done (hotkey and `nomouse hints` toggle, e2e-tested) / done / done / partial (Windows delivers the hotkey but is untested) |
+| NM-HINT-11 | Focus-then-act: Tab/↓/Ctrl-N and Shift-Tab/↑/Ctrl-P move a highlight across labels; Return acts on it | core | core | P1 | done / done / done / partial (keys work; no highlight drawn) |
 | NM-HINT-12 | Tutor: `?` shows the focused element's role, name and searchable properties | AX attributes | AT-SPI attributes | P2 | missing |
 | NM-HINT-13 | Mission Control: label window thumbnails while Mission Control is open; optional auto-activate | Dock AX tree | n/a | P2 | missing |
 | NM-HINT-14 | Browser modes: fast (visible viewport) and exhaustive (whole document) | `AXEnhancedUserInterface`, `AXManualAccessibility` | Chromium `--force-renderer-accessibility` | P1 | partial (opt-in list `macos.enhanced_ui_apps`; no fast/exhaustive switch) |
@@ -75,8 +75,8 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-ACT-06 | Drag: pick start, pick end | down, moves, up | same | P1 | done (all) |
 | NM-ACT-07 | Semantic click without moving the pointer | `AXPress`, `AXShowMenu` | AT-SPI `do_action` | P1 | done (all; `hints.semantic_click`) |
 | NM-ACT-08 | Middle click | `CGEvent` other button | button 2 | P2 | partial (backends inject `MouseButton::Middle`; no `ActionKind` binds it) |
-| NM-ACT-09 | Homerow key bindings as an option: Return click, Return twice double click, Shift-Return right click, Cmd-Return cmd click | core | core | P1 | partial (`hints.keys = "homerow"`; macOS e2e pending; Windows reports Shift only, so no Cmd-Return) / done / done / partial |
-| NM-ACT-10 | Focus a text field and leave the keyboard there (no chain click into inputs) | `AXFocused` | AT-SPI `grab_focus` | P1 | partial (core: continuous mode ends after a left click on a text field, on every backend; macOS e2e pending) / done / done / done |
+| NM-ACT-09 | Homerow key bindings as an option: Return click, Return twice double click, Shift-Return right click, Cmd-Return cmd click | core | core | P1 | done / done / done / partial (Windows reports Shift only, so no Cmd-Return) |
+| NM-ACT-10 | Focus a text field and leave the keyboard there (no chain click into inputs) | `AXFocused` | AT-SPI `grab_focus` | P1 | done (continuous mode ends after a left click on a text field, on every backend) / done / done / done |
 
 ### Search (SRCH)
 
@@ -86,7 +86,7 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-SRCH-02 | Fuzzy, case-insensitive ranking (word starts, substrings, then subsequences) | core | core | P0 | done (all) |
 | NM-SRCH-03 | Enter clicks the best match; Tab freezes the query to pick by label | core | core | P0 | done (all) |
 | NM-SRCH-04 | Spaces ignored in queries; `*` and `;` match every element | core | core | P1 | done (all) |
-| NM-SRCH-05 | Search over roles, descriptions and values, not only names | AX description/value/help | AT-SPI description, Text and Value interfaces | P1 | partial (roles everywhere; the macOS walk reads no AXDescription, AXHelp or AXValue yet) / done / done / partial (roles only) |
+| NM-SRCH-05 | Search over roles, descriptions and values, not only names | AX description/value/help | AT-SPI description, Text and Value interfaces | P1 | done (`AXDescription`, `AXHelp`, `AXValue` of fields and sliders, never secure fields) / done / done / partial (roles only) |
 | NM-SRCH-06 | Search and hint mode in one activation (type letters to search, hold Shift to type a label) | core | core | P2 | missing |
 
 ### Scroll (SCRL)
@@ -95,11 +95,11 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | --- | --- | --- | --- | --- | --- |
 | NM-SCRL-01 | Scroll mode labels scrollable areas (digits) and scrolls with `h`/`j`/`k`/`l`; without one, pick an element to scroll | `AXScrollArea` + wheel `CGEvent` | AT-SPI scroll panes + wheel buttons / discrete axis | P0 | done (all) |
 | NM-SCRL-02 | Page scroll `d`/`u` (and Space) | wheel × 5 | same | P0 | done (all) |
-| NM-SCRL-03 | `gg` top, `G` bottom | many wheel steps or `AXScrollToVisible` on first/last child | 500 wheel steps (core `scroll::EDGE_STEPS`; X11 waits up to 1 s for a held Shift to be released, since wheel events carry it) | P1 | partial (core; not verified on macOS) / done / done / partial (core; not verified) |
-| NM-SCRL-04 | Dash scroll: Shift-`hjkl` at a separate, configurable speed | wheel | wheel; `scroll.dash_step` | P1 | partial (core; not verified on macOS) / done / done / partial (core; not verified) |
-| NM-SCRL-05 | Tab/Shift-Tab cycle scroll areas; digits `0`-`9` jump to one; the largest is preselected | core | core `ScrollSession` | P1 | partial (core; not verified on macOS) / done / done / partial (core; not verified) |
+| NM-SCRL-03 | `gg` top, `G` bottom | many wheel steps or `AXScrollToVisible` on first/last child | 500 wheel steps (core `scroll::EDGE_STEPS`; X11 waits up to 1 s for a held Shift to be released, since wheel events carry it) | P1 | done (wheel events carry no modifiers, so a held Shift does not turn them horizontal) / done / done / partial (core; not verified) |
+| NM-SCRL-04 | Dash scroll: Shift-`hjkl` at a separate, configurable speed | wheel | wheel; `scroll.dash_step` | P1 | done / done / done / partial (core; not verified) |
+| NM-SCRL-05 | Tab/Shift-Tab cycle scroll areas; digits `0`-`9` jump to one; the largest is preselected | core | core `ScrollSession` | P1 | done / done / done / partial (core; not verified) |
 | NM-SCRL-06 | Smooth (pixel) scrolling instead of wheel notches | `kCGScrollEventUnitPixel` | `AXIS_VALUE120` / virtual pointer axis | P2 | missing |
-| NM-SCRL-07 | Highlight border around the active scroll area | overlay | `Frame::area`, outlined by the shared renderer | P1 | partial (the macOS overlay draws no outline yet) / done / done / missing |
+| NM-SCRL-07 | Highlight border around the active scroll area | overlay | `Frame::area`, outlined by the shared renderer | P1 | done (a border layer on each screen's panel) / done / done / missing |
 
 ### Hotkeys and keys (KEY)
 
@@ -117,7 +117,7 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | Id | Feature | macOS | Linux | Pri | Status (mac / X11 / Wayland / Windows) |
 | --- | --- | --- | --- | --- | --- |
 | NM-LOOK-01 | Label colours, border, opacity, font size | `[overlay]` | `[overlay]` | P0 | done (all) |
-| NM-LOOK-02 | Named themes (`light`, `dark`, `original`) and `auto` following the system appearance | `NSApp.effectiveAppearance` | `org.freedesktop.appearance color-scheme` portal setting | P1 | partial: `overlay.theme` and explicit-colour overrides in the core; Linux `auto` reads the portal (`ReadOne`, else `Read`) before each activation; macOS and Windows `auto` use the light colours until their appearance is read |
+| NM-LOOK-02 | Named themes (`light`, `dark`, `original`) and `auto` following the system appearance | `NSApp.effectiveAppearance` | `org.freedesktop.appearance color-scheme` portal setting | P1 | done (`auto` reads the effective appearance before each activation) / done (the portal, `ReadOne` else `Read`, before each activation) / done / partial (`auto` uses the light colours) |
 | NM-LOOK-03 | Search box showing the query | overlay | overlay | P0 | done (all) |
 | NM-LOOK-04 | Sound feedback on click and on a rejected key (off by default) | `NSSound` | `canberra`-free: a bundled WAV through PipeWire/PulseAudio | P2 | missing |
 
@@ -129,9 +129,9 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-APP-02 | `nomouse doctor`: platform backend, permissions, display server, compositor abilities, config validity | AX trust, synthetic input, Input Monitoring | display server, AT-SPI bus and switch, compositor globals, uinput | P0 | done (all) |
 | NM-APP-03 | Config in `~/.config/nomouse/config.toml` (`$XDG_CONFIG_HOME` honoured) with defaults for every key, validated, `config init|path|show|check` | XDG path | XDG path | P0 | done (Windows: `%APPDATA%`) |
 | NM-APP-04 | Logging: `NOMOUSE_LOG=info|debug` to stderr | `tracing` | `tracing` | P0 | done (all) |
-| NM-APP-05 | Ignored apps: no activation in listed apps (bundle id / app id / process name) | frontmost bundle id | `WM_CLASS` and `/proc/<pid>/comm` (X11); compositor app id, `WM_CLASS` (Sway, Hyprland) | P1 | partial (bundle id read; not verified on macOS) / done / done (Sway, Hyprland) / missing |
+| NM-APP-05 | Ignored apps: no activation in listed apps (bundle id / app id / process name) | frontmost bundle id or executable name | `WM_CLASS` and `/proc/<pid>/comm` (X11); compositor app id, `WM_CLASS` (Sway, Hyprland) | P1 | done / done / done (Sway, Hyprland) / missing |
 | NM-APP-06 | Per-app settings overrides (alphabet, action, scope, semantic click) | bundle id | app id | P2 | partial (only `macos.enhanced_ui_apps`) |
-| NM-APP-07 | Config reload without restarting the daemon (file watch or `nomouse reload`) | mtime watch / socket | mtime watch / socket | P1 | partial (shared code; not run on macOS) / done / done / partial (file watch only, not run) |
+| NM-APP-07 | Config reload without restarting the daemon (file watch or `nomouse reload`) | mtime watch / socket | mtime watch / socket | P1 | done / done / done / partial (file watch only, not run) |
 | NM-APP-08 | Menu bar / tray icon: enabled state, open config, doctor, quit | `NSStatusItem` | StatusNotifierItem (KDE, GNOME with the AppIndicator extension) | P1 | missing |
 | NM-APP-09 | Launch at login | `SMAppService` (needs the `.app`) | XDG autostart `.desktop`, systemd user unit | P1 | missing |
 | NM-APP-10 | First-run onboarding: explain and request each permission, then verify with a live probe | AX prompt + System Settings deep link | enable `org.a11y.Status.IsEnabled`, explain Qt/Chromium flags and uinput | P0 | partial (`nomouse setup` and the daemon's start walk through missing permissions; macOS: dialogs or terminal, Settings pane, waits for trust, restarts itself. Linux: `nomouse setup` turns the AT-SPI switch on, not yet run on Linux; the uinput rule is not printed yet) |
@@ -165,9 +165,9 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | Priority | Features | Done | Partial | Missing |
 | --- | --- | --- | --- | --- |
 | P0 | 29 | 26 | 3 | 0 |
-| P1 | 25 | 7 | 13 | 5 |
+| P1 | 25 | 19 | 1 | 5 |
 | P2 | 17 | 0 | 3 | 14 |
-| **All** | **71** | **33** | **19** | **19** |
+| **All** | **71** | **45** | **7** | **19** |
 
 A feature counts as done when it is done on macOS and Linux X11 (Wayland limits are listed per
 row). The three open P0 items are all macOS distribution and onboarding: the signed and

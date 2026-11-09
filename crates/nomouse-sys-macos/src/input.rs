@@ -131,12 +131,16 @@ pub fn post_mouse(
 /// `vertical` scrolls content up (the wheel turned away from the user), positive `horizontal`
 /// scrolls content left, as Quartz defines them.
 ///
+/// The event carries no modifier flags, so a key still held (Shift for `G` or a dash scroll)
+/// does not turn it into a horizontal scroll.
+///
 /// # Errors
 /// [`EventCreationFailed`] when Quartz cannot create the event.
 pub fn post_scroll(vertical: i32, horizontal: i32) -> Result<(), EventCreationFailed> {
     let event =
         CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Line, 2, vertical, horizontal, 0)
             .ok_or(EventCreationFailed)?;
+    CGEvent::set_flags(Some(&event), event_flags(ModifierFlags::default()));
     post(&event);
     Ok(())
 }

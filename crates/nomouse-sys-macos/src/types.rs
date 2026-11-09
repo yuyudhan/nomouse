@@ -118,4 +118,24 @@ pub struct Label {
     pub text: String,
     /// How many leading characters were already typed (drawn in `typed_foreground`).
     pub typed: usize,
+    /// The highlighted label (focus-then-act): drawn with background and text colours
+    /// swapped.
+    pub focused: bool,
+}
+
+/// A rectangle outlined on the panel of screen `screen`, such as scroll mode's active area:
+/// (`x`, `y`) is its bottom-left corner in that panel's view coordinates (origin bottom-left,
+/// y up, points).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Outline {
+    /// Index of the screen whose panel draws the outline.
+    pub screen: usize,
+    /// Left edge.
+    pub x: f64,
+    /// Bottom edge.
+    pub y: f64,
+    /// Width.
+    pub width: f64,
+    /// Height.
+    pub height: f64,
 }

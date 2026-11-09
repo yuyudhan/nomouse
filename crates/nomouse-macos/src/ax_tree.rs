@@ -10,10 +10,12 @@ use nomouse_sys_macos::ax::{AxElement, AxValue};
 
 use crate::geometry::ax_rect;
 use crate::roles::PRESS;
-use crate::walk::{AxTree, ChildLists, NodeInfo, ReadError, Root, pick_children};
+use crate::walk::{
+    AxTree, ChildLists, NodeInfo, RawTexts, ReadError, Root, ValueKind, pick_children, texts,
+};
 
 /// Scalar attributes read in one batch per node; indices below follow this order.
-const SCALARS: [&str; 7] = [
+const SCALARS: [&str; 8] = [
     "AXRole",
     "AXSubrole",
     "AXTitle",
@@ -21,6 +23,7 @@ const SCALARS: [&str; 7] = [
     "AXEnabled",
     "AXPosition",
     "AXSize",
+    "AXHelp",
 ];
 
 /// Roles that are clickable only when they list `AXPress`, so their actions are read.
@@ -56,6 +59,13 @@ pub(crate) fn not_trusted() -> PlatformError {
 fn string(value: Option<&AxValue>) -> Option<String> {
     match value {
         Some(AxValue::String(text)) if !text.is_empty() => Some(text.clone()),
+        _ => None,
+    }
+}
+
+fn string_ref(value: Option<&AxValue>) -> Option<&str> {
+    match value {
+        Some(AxValue::String(text)) => Some(text.as_str()),
         _ => None,
     }
 }
@@ -96,9 +106,23 @@ impl AxTree for LiveTree {
         let get = |index: usize| values.get(index).and_then(Option::as_ref);
         let role = string(get(0)).unwrap_or_default();
         let subrole = string(get(1));
-        let name = string(get(2))
-            .or_else(|| string(get(3)))
-            .unwrap_or_default();
+        let (name, description) = texts(RawTexts {
+            title: string_ref(get(2)),
+            description: string_ref(get(3)),
+            help: string_ref(get(7)),
+        });
+        // Read apart from the batch, and only for fields and sliders: a document's value
+        // is its whole text.
+        let value = match ValueKind::of(&role, subrole.as_deref()) {
+            ValueKind::None => String::new(),
+            ValueKind::Text => {
+                string(node.attribute("AXValue").ok().flatten().as_ref()).unwrap_or_default()
+            }
+            ValueKind::Number => match node.attribute("AXValue").ok().flatten() {
+                Some(AxValue::Number(number)) => number.to_string(),
+                _ => String::new(),
+            },
+        };
         let enabled = !matches!(get(4), Some(AxValue::Bool(false)));
         let frame = frame(get(5), get(6));
         let pressable = if MAYBE_PRESSABLE.contains(&role.as_str()) {
@@ -141,6 +165,8 @@ impl AxTree for LiveTree {
             role,
             subrole,
             name,
+            description,
+            value,
             enabled,
             frame,
             pressable,

@@ -165,9 +165,10 @@ theme = "original"           # original (yellow), light, dark, or auto (system a
 # border = "#1c1c1c"
 
 [ignore]
-apps = []                    # apps where activation shows nothing: macOS bundle id, Wayland
-                             # app id, X11 WM_CLASS instance or class, or process name
-                             # (ignoring case; a truncated 15-byte comm matches); no blanks
+apps = []                    # apps where activation shows nothing: macOS bundle id or
+                             # executable name, Wayland app id, X11 WM_CLASS instance or
+                             # class, or process name (ignoring case; a truncated 15-byte comm
+                             # matches); no blanks
 
 [macos]
 enhanced_ui_apps = []        # bundle ids that get AXEnhancedUserInterface (Chromium browsers)
@@ -186,8 +187,9 @@ new configuration (or the previous one again if the new one cannot start).
 `overlay.theme = "auto"` resolves to `light` or `dark` through `OverlayConfig::colours(appearance)`.
 On Linux the appearance is the XDG desktop portal's `org.freedesktop.appearance color-scheme`
 (1 is dark; anything else, or no portal within 250 ms, is light), read with `ReadOne` (or the
-older `Read`) before each activation's scan, so a switch applies to the next labels; macOS and
-Windows use the light colours for now.
+older `Read`) before each activation's scan, so a switch applies to the next labels. On macOS
+it is `NSApp.effectiveAppearance` (Dark Aqua or not, which follows System Settings, its Auto
+schedule included), read the same way before each scan. Windows uses the light colours for now.
 
 ## Logging
 

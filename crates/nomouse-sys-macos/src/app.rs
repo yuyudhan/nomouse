@@ -4,11 +4,12 @@ use objc2::rc::Retained;
 use objc2::runtime::NSObjectProtocol;
 use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSApplicationActivationPolicy, NSEventMask,
-    NSRunningApplication, NSScreen, NSWorkspace,
+    NSAlert, NSAlertFirstButtonReturn, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
+    NSApplication, NSApplicationActivationPolicy, NSEventMask, NSRunningApplication, NSScreen,
+    NSWorkspace,
 };
 use objc2_core_foundation::{CFRunLoop, kCFRunLoopDefaultMode};
-use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSProcessInfo, NSString};
+use objc2_foundation::{NSArray, NSDate, NSDefaultRunLoopMode, NSProcessInfo, NSString};
 
 use crate::types::ScreenFrame;
 
@@ -97,6 +98,19 @@ impl App {
             .collect()
     }
 
+    /// Whether the app's effective appearance is dark (Dark Aqua, or its high-contrast
+    /// variant): it follows System Settings > Appearance, including its Auto schedule, as the
+    /// run loop delivers the change.
+    pub fn prefers_dark(&self) -> bool {
+        // SAFETY: both names are immutable NSString constants exported by AppKit.
+        let (light, dark) = unsafe { (NSAppearanceNameAqua, NSAppearanceNameDarkAqua) };
+        let names = NSArray::from_slice(&[light, dark]);
+        self.app
+            .effectiveAppearance()
+            .bestMatchFromAppearancesWithNames(&names)
+            .is_some_and(|best| best.isEqualToString(dark))
+    }
+
     /// Shows a modal alert with `title`, `message` and `buttons` (the first is the default and
     /// answers Return), in front of other apps, and returns the index of the button clicked.
     pub fn alert(&self, title: &str, message: &str, buttons: &[&str]) -> usize {
@@ -129,6 +143,15 @@ pub fn bundle_id(pid: i32) -> Option<String> {
     NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
         .and_then(|app| app.bundleIdentifier())
         .map(|id| id.to_string())
+}
+
+/// The executable's file name (such as `Terminal`) of the running application `pid`.
+pub fn process_name(pid: i32) -> Option<String> {
+    NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+        .and_then(|app| app.executableURL())
+        .and_then(|url| url.lastPathComponent())
+        .map(|name| name.to_string())
+        .filter(|name| !name.is_empty())
 }
 
 /// A running application, as `NSWorkspace` lists it.

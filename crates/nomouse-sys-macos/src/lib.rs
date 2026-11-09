@@ -28,5 +28,6 @@ pub mod tap;
 
 pub use error::AxError;
 pub use types::{
-    Button, Chord, KeyLayout, Label, LabelStyle, ModifierFlags, Rgba, ScreenFrame, TapEvent,
+    Button, Chord, KeyLayout, Label, LabelStyle, ModifierFlags, Outline, Rgba, ScreenFrame,
+    TapEvent,
 };

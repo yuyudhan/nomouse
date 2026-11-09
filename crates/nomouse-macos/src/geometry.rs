@@ -70,6 +70,44 @@ pub fn screen_rect(screen: ScreenFrame, primary: ScreenFrame) -> Rect {
     ax_rect(screen.x, top, screen.width, screen.height)
 }
 
+/// A rectangle in one panel's view coordinates: (`x`, `y`) is its bottom-left corner.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PanelRect {
+    /// Index of the screen (in the order the screens were given).
+    pub screen: usize,
+    /// Left edge, from the screen's left edge.
+    pub x: f64,
+    /// Bottom edge, from the screen's bottom edge.
+    pub y: f64,
+    /// Width.
+    pub width: f64,
+    /// Height.
+    pub height: f64,
+}
+
+/// The parts of a global top-left `rect` on each screen it overlaps, in that screen's panel
+/// coordinates. `screens` lists Cocoa frames with the primary screen first.
+pub fn to_panel_rects(rect: Rect, screens: &[ScreenFrame]) -> Vec<PanelRect> {
+    let Some(primary) = screens.first().copied() else {
+        return Vec::new();
+    };
+    screens
+        .iter()
+        .enumerate()
+        .filter_map(|(index, screen)| {
+            let part = rect.intersection(&screen_rect(*screen, primary))?;
+            let bottom = f64::from(part.y) + f64::from(part.height);
+            Some(PanelRect {
+                screen: index,
+                x: f64::from(part.x) - screen.x,
+                y: primary.y + primary.height - bottom - screen.y,
+                width: f64::from(part.width),
+                height: f64::from(part.height),
+            })
+        })
+        .collect()
+}
+
 /// Converts wheel steps in nomouse's convention (positive `dy` scrolls down, positive `dx`
 /// right) to Quartz wheel values (vertical, horizontal), where positive scrolls up and left.
 pub const fn wheel_deltas(dx: i32, dy: i32) -> (i32, i32) {
@@ -195,6 +233,36 @@ mod tests {
             Rect::new(1440, -80, 1920, 1080)
         );
         assert_eq!(screen_rect(ABOVE, PRIMARY), Rect::new(0, -900, 1440, 900));
+    }
+
+    #[test]
+    fn rects_split_across_the_screens_they_overlap() {
+        let screens = [PRIMARY, RIGHT, ABOVE];
+        let parts = to_panel_rects(Rect::new(1400, 100, 100, 50), &screens);
+        assert_eq!(
+            parts,
+            vec![
+                PanelRect {
+                    screen: 0,
+                    x: 1400.0,
+                    y: 750.0,
+                    width: 40.0,
+                    height: 50.0
+                },
+                PanelRect {
+                    screen: 1,
+                    x: 0.0,
+                    y: 850.0,
+                    width: 60.0,
+                    height: 50.0
+                },
+            ]
+        );
+        assert_eq!(
+            to_panel_rects(Rect::new(-500, 2000, 10, 10), &screens),
+            vec![]
+        );
+        assert_eq!(to_panel_rects(Rect::new(0, 0, 10, 10), &[]), vec![]);
     }
 
     #[test]

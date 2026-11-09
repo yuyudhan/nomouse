@@ -7,7 +7,7 @@ use objc2::runtime::AnyObject;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSFont, NSPanel, NSScreenSaverWindowLevel,
-    NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSWindowAnimationBehavior, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CFRetained, CFString, CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGColor;
@@ -15,7 +15,7 @@ use objc2_foundation::NSString;
 use objc2_quartz_core::{CALayer, CATextLayer, CATransaction, kCAAlignmentCenter};
 
 use crate::app::App;
-use crate::types::{Label, LabelStyle, Rgba, ScreenFrame};
+use crate::types::{Label, LabelStyle, Outline, Rgba, ScreenFrame};
 
 /// The monospaced font the labels use; Menlo ships with every macOS release.
 const FONT_NAME: &str = "Menlo-Bold";
@@ -23,6 +23,8 @@ const FONT_NAME: &str = "Menlo-Bold";
 const PAD_X: f64 = 3.0;
 /// Vertical padding inside a label box, in points.
 const PAD_Y: f64 = 1.0;
+/// Thickness of the outline around scroll mode's active area, in points.
+const OUTLINE_WIDTH: f64 = 3.0;
 
 struct Panel {
     window: Retained<NSPanel>,
@@ -75,6 +77,9 @@ fn new_panel(mtm: MainThreadMarker, frame: ScreenFrame, scale: f64) -> Panel {
     window.setFloatingPanel(true);
     window.setHidesOnDeactivate(false);
     window.setLevel(NSScreenSaverWindowLevel);
+    // Panels fade out when ordered out; the labels must vanish at once, before the click
+    // lands under them.
+    window.setAnimationBehavior(NSWindowAnimationBehavior::None);
     window.setCollectionBehavior(
         NSWindowCollectionBehavior::CanJoinAllSpaces
             | NSWindowCollectionBehavior::Stationary
@@ -144,7 +149,13 @@ fn label_layer(
 
     let container = CALayer::new();
     container.setFrame(rect(x, y, width, height));
-    container.setBackgroundColor(Some(&cg_color(style.background)));
+    // The highlighted label swaps background and text colours, so it stands out.
+    let (fill, text) = if label.focused {
+        (style.foreground, style.background)
+    } else {
+        (style.background, style.foreground)
+    };
+    container.setBackgroundColor(Some(&cg_color(fill)));
     container.setBorderColor(Some(&cg_color(style.border)));
     container.setBorderWidth(1.0);
     container.setCornerRadius(3.0);
@@ -156,11 +167,27 @@ fn label_layer(
         container.addSublayer(&part);
     }
     if !rest.is_empty() {
-        let part = text_layer(&rest, style, style.foreground, panel.scale);
+        let part = text_layer(&rest, style, text, panel.scale);
         part.setFrame(rect(PAD_X + typed_width, PAD_Y, rest_width, line_height));
         container.addSublayer(&part);
     }
     container
+}
+
+/// An unfilled frame in the label background colour around `outline`.
+fn outline_layer(
+    outline: &Outline,
+    style: &LabelStyle,
+    panel: &Panel,
+    opacity: f32,
+) -> Retained<CALayer> {
+    let layer = CALayer::new();
+    layer.setFrame(rect(outline.x, outline.y, outline.width, outline.height));
+    layer.setBorderColor(Some(&cg_color(style.background)));
+    layer.setBorderWidth(OUTLINE_WIDTH);
+    layer.setOpacity(opacity);
+    layer.setContentsScale(panel.scale);
+    layer
 }
 
 impl Overlay {
@@ -195,16 +222,30 @@ impl Overlay {
             .collect();
     }
 
-    /// Shows `labels` (replacing any shown before) on the screens [`App::screens`] reports
-    /// now, with `opacity` from 0.0 to 1.0. Labels whose screen index is out of range are
-    /// skipped.
-    pub fn show(&mut self, app: &App, labels: &[Label], style: &LabelStyle, opacity: f32) {
+    /// Shows `labels` above `outlines` (replacing anything shown before) on the screens
+    /// [`App::screens`] reports now, with `opacity` from 0.0 to 1.0. Labels and outlines whose
+    /// screen index is out of range are skipped.
+    pub fn show(
+        &mut self,
+        app: &App,
+        labels: &[Label],
+        outlines: &[Outline],
+        style: &LabelStyle,
+        opacity: f32,
+    ) {
         self.sync_panels(app);
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         for panel in &self.panels {
             // SAFETY: clearing the sublayer array with `None` is always valid.
             unsafe { panel.root.setSublayers(None) };
+        }
+        for outline in outlines {
+            if let Some(panel) = self.panels.get(outline.screen) {
+                panel
+                    .root
+                    .addSublayer(&outline_layer(outline, style, panel, opacity));
+            }
         }
         for label in labels {
             if let Some(panel) = self.panels.get(label.screen) {

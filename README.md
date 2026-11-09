@@ -28,7 +28,8 @@ work the same way.
 | Click without moving the pointer (accessibility action) | yes, opt-in | not documented |
 | Labels on every window of every monitor | yes, opt-in | not documented |
 | Plain-text config you can keep in your dotfiles | `~/.config/nomouse/config.toml` | settings window |
-| Menu bar icon, ignored apps, label themes | [planned](docs/plan.md) | yes |
+| Ignored apps, label themes that follow dark mode | yes | yes |
+| Menu bar icon | [planned](docs/plan.md) | yes |
 
 Every feature, with how it works on each OS and what is still missing, is in
 [docs/features.md](docs/features.md).
@@ -135,8 +136,9 @@ theme = "original"          # original (yellow), light, dark, or auto (the syste
 # foreground = "#1c1c1c"    # background, foreground, typed_foreground, border
 
 [ignore]
-apps = ["org.wezfurlong.wezterm", "kitty"]   # no labels in these apps: bundle id, Wayland
-                                             # app id, X11 WM_CLASS or process name
+apps = ["org.wezfurlong.wezterm", "kitty"]   # no labels in these apps: bundle id or
+                                             # executable name (macOS), Wayland app id,
+                                             # X11 WM_CLASS or process name
 
 [macos]
 enhanced_ui_apps = ["com.google.Chrome"]   # Chromium browsers build their tree only on request

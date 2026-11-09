@@ -15,13 +15,15 @@ use nomouse_sys_macos::ax::{AxElement, is_process_trusted};
 use nomouse_sys_macos::input::{self, MouseEventKind};
 use nomouse_sys_macos::overlay::Overlay as Panels;
 use nomouse_sys_macos::tap::EventTap;
-use nomouse_sys_macos::{Button, KeyLayout, Label, LabelStyle, ModifierFlags, TapEvent, layout};
+use nomouse_sys_macos::{
+    Button, KeyLayout, Label, LabelStyle, ModifierFlags, Outline, TapEvent, layout,
+};
 
 use crate::ax_tree::{LiveTree, RootSet, not_trusted, roots};
-use crate::geometry::{lerp, screen_rect, to_panel, union, wheel_deltas};
+use crate::geometry::{lerp, screen_rect, to_panel, to_panel_rects, union, wheel_deltas};
 use crate::keys::{chord, held, key_press, modifier_flags};
 use crate::roles::{PRESS, SHOW_MENU};
-use crate::style::label_style;
+use crate::style::{Themed, appearance};
 use crate::walk::{Limits, walk};
 
 /// Global Accessibility messaging timeout, in seconds: how long one call waits for a busy app.
@@ -47,6 +49,8 @@ pub struct MacPlatform {
     tap: EventTap,
     panels: Panels,
     style: LabelStyle,
+    /// Re-resolves `style` when `overlay.theme = "auto"` and the system appearance changes.
+    themed: Themed,
     opacity: f32,
     semantic_click: bool,
     enhanced_ui_apps: Vec<String>,
@@ -90,17 +94,19 @@ impl MacPlatform {
         AxElement::system_wide()
             .set_messaging_timeout(AX_TIMEOUT)
             .ok();
-        // `theme = "auto"` takes the light colours here: NSApp.effectiveAppearance is not read
-        // yet.
-        let colours = config
-            .overlay
-            .colours(nomouse_core::config::Appearance::Light)
+        let (themed, style) = Themed::new(&config.overlay, || appearance(app.prefers_dark()))
             .map_err(|error| PlatformError::Backend(error.to_string()))?;
+        tracing::debug!(
+            "labels use the {:?} colours (background {})",
+            themed.appearance(),
+            themed.background()
+        );
         Ok(Self {
             app,
             tap,
             panels: Panels::new(),
-            style: label_style(config.overlay.font_size, colours),
+            style,
+            themed,
             opacity: crate::style::opacity(config.overlay.opacity),
             semantic_click: config.hints.semantic_click,
             enhanced_ui_apps: config.macos.enhanced_ui_apps.clone(),
@@ -152,12 +158,14 @@ impl MacPlatform {
             .is_some_and(|entry| entry.element.perform_action(action).is_ok())
     }
 
-    /// Draws the hint labels, plus the search box `/query` near the top centre of the main
-    /// screen for a `query`, and grabs the keyboard.
-    fn present(&mut self, hints: &[Hint], typed: &str, query: Option<&str>) {
+    /// Draws the frame's hint labels (the focused one highlighted), the outline of its scroll
+    /// area, and the search box `/query` near the top centre of the main screen for a query,
+    /// and grabs the keyboard.
+    fn present(&mut self, frame: &Frame<'_>) {
         let screens = self.app.screens();
-        let typed_len = typed.chars().count();
-        let mut labels: Vec<Label> = hints
+        let typed_len = frame.typed.chars().count();
+        let mut labels: Vec<Label> = frame
+            .hints
             .iter()
             .filter_map(|hint| {
                 let bounds = hint.element.bounds;
@@ -168,10 +176,11 @@ impl MacPlatform {
                     y: anchor.y,
                     text: hint.label.to_uppercase(),
                     typed: typed_len.min(hint.label.chars().count()),
+                    focused: frame.focused == Some(hint.label.as_str()),
                 })
             })
             .collect();
-        if let (Some(query), Some(primary)) = (query, screens.first().copied()) {
+        if let (Some(query), Some(primary)) = (frame.query, screens.first().copied()) {
             let box_at = search_box_anchor(screen_rect(primary, primary));
             if let Some(anchor) = to_panel(Point::new(box_at.x, box_at.y), &screens) {
                 let text = format!("/{}", query.to_uppercase());
@@ -181,11 +190,25 @@ impl MacPlatform {
                     y: anchor.y,
                     typed: text.chars().count(),
                     text,
+                    focused: false,
                 });
             }
         }
+        let outlines: Vec<Outline> = frame
+            .area
+            .map(|area| to_panel_rects(area, &screens))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|part| Outline {
+                screen: part.screen,
+                x: part.x,
+                y: part.y,
+                width: part.width,
+                height: part.height,
+            })
+            .collect();
         self.panels
-            .show(&self.app, &labels, &self.style, self.opacity);
+            .show(&self.app, &labels, &outlines, &self.style, self.opacity);
         self.tap.set_grab(true);
     }
 
@@ -207,10 +230,25 @@ impl MacPlatform {
             }
         }
     }
+
+    /// Follows a system appearance switch under `theme = "auto"` (read before each scan, so
+    /// every activation starts in the current colours).
+    fn follow_appearance(&mut self) {
+        let app = &self.app;
+        if let Some(style) = self.themed.changed(|| appearance(app.prefers_dark())) {
+            self.style = style;
+            tracing::debug!(
+                "system appearance is now {:?}: labels use background {}",
+                self.themed.appearance(),
+                self.themed.background()
+            );
+        }
+    }
 }
 
 impl ElementSource for MacPlatform {
     fn elements(&mut self, scope: Scope) -> Result<Vec<Element>, PlatformError> {
+        self.follow_appearance();
         let frontmost = app::frontmost_pid();
         if let Some(pid) = frontmost {
             self.prepare_app(pid);
@@ -234,9 +272,8 @@ impl ElementSource for MacPlatform {
                 id: ElementId(u64::try_from(index).unwrap_or(u64::MAX)),
                 role: found.role,
                 name: found.name,
-                // The macOS walk reads no AXDescription, AXHelp or AXValue: search matches names.
-                description: String::new(),
-                value: String::new(),
+                description: found.description,
+                value: found.value,
                 bounds: found.bounds,
                 enabled: found.enabled,
             });
@@ -249,9 +286,11 @@ impl ElementSource for MacPlatform {
     }
 
     fn focused_app(&mut self) -> Result<Option<nomouse_core::AppIdentity>, PlatformError> {
-        // The frontmost app by bundle id; process names are not read on macOS.
+        // The frontmost app, by bundle id and by executable name (unbundled programs have
+        // only the latter).
         Ok(app::frontmost_pid().map(|pid| nomouse_core::AppIdentity {
             app_id: app::bundle_id(pid),
+            process: app::process_name(pid),
             ..nomouse_core::AppIdentity::default()
         }))
     }
@@ -259,12 +298,16 @@ impl ElementSource for MacPlatform {
 
 impl Overlay for MacPlatform {
     fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError> {
-        self.present(hints, typed, None);
+        self.present(&Frame {
+            hints,
+            typed,
+            ..Frame::default()
+        });
         Ok(())
     }
 
     fn show_frame(&mut self, frame: &Frame<'_>) -> Result<(), PlatformError> {
-        self.present(frame.hints, frame.typed, frame.query);
+        self.present(frame);
         Ok(())
     }
 
