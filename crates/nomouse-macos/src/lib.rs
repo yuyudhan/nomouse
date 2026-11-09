@@ -9,11 +9,13 @@
 //! - [`keys`]: virtual key codes for hotkeys and typed keys.
 //! - [`walk`]: the bounded, cycle-safe tree walk over any [`walk::AxTree`].
 //! - [`style`]: the overlay look from the configuration.
+//! - [`setup`]: the guided first run's permission and its dialogs.
 #![forbid(unsafe_code)]
 
 pub mod geometry;
 pub mod keys;
 pub mod roles;
+pub mod setup;
 pub mod style;
 pub mod walk;
 
@@ -25,6 +27,7 @@ mod platform;
 #[cfg(target_os = "macos")]
 pub use platform::MacPlatform;
 
+use nomouse_core::setup::Permission;
 use nomouse_core::{Config, Platform, PlatformError};
 
 /// The OS this backend serves.
@@ -54,6 +57,25 @@ pub fn platform(_config: &Config) -> Result<Box<dyn Platform>, PlatformError> {
     Err(PlatformError::Unsupported(
         "the macOS backend runs only on macOS".to_owned(),
     ))
+}
+
+/// The permissions the guided first run walks through on macOS: Accessibility.
+pub fn first_run_permissions() -> Vec<Permission> {
+    setup::permissions()
+}
+
+/// Checks and requests Accessibility trust for the guided first run.
+#[cfg(target_os = "macos")]
+pub fn first_run_probe() -> Box<dyn nomouse_core::setup::Probe> {
+    Box::new(setup::TrustProbe)
+}
+
+/// Dialogs for a first run without a terminal (`nomouse.app`); `None` off the main thread.
+#[cfg(target_os = "macos")]
+pub fn first_run_dialogs() -> Option<Box<dyn nomouse_core::setup::Presenter>> {
+    setup::Dialogs::new()
+        .ok()
+        .map(|dialogs| Box::new(dialogs) as Box<dyn nomouse_core::setup::Presenter>)
 }
 
 /// Environment checks for `nomouse doctor`: (check name, `Ok(detail)` or `Err(problem and fix)`).

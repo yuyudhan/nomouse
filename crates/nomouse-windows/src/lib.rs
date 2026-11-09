@@ -47,3 +47,19 @@ pub const TARGET_OS: &str = "windows";
 
 /// What the user must do so nomouse can read the accessibility tree on this OS.
 pub const ACCESSIBILITY_REQUIREMENT: &str = "UI Automation is always on; run nomouse at the same integrity level as the apps it should reach (elevated apps need an elevated nomouse).";
+
+/// The permissions the guided first run walks through: none, UI Automation and `SendInput`
+/// need no grant.
+pub fn first_run_permissions() -> Vec<nomouse_core::setup::Permission> {
+    Vec::new()
+}
+
+/// Nothing to check or request on Windows.
+pub fn first_run_probe() -> Box<dyn nomouse_core::setup::Probe> {
+    Box::new(nomouse_core::setup::NothingToAsk)
+}
+
+/// No dialogs: there is nothing to ask for.
+pub fn first_run_dialogs() -> Option<Box<dyn nomouse_core::setup::Presenter>> {
+    None
+}

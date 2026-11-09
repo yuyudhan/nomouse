@@ -134,7 +134,7 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-APP-07 | Config reload without restarting the daemon (file watch or `nomouse reload`) | `FSEvents` / socket | inotify / socket | P1 | missing |
 | NM-APP-08 | Menu bar / tray icon: enabled state, open config, doctor, quit | `NSStatusItem` | StatusNotifierItem (KDE, GNOME with the AppIndicator extension) | P1 | missing |
 | NM-APP-09 | Launch at login | `SMAppService` (needs the `.app`) | XDG autostart `.desktop`, systemd user unit | P1 | missing |
-| NM-APP-10 | First-run onboarding: explain and request each permission, then verify with a live probe | AX prompt + System Settings deep link | enable `org.a11y.Status.IsEnabled`, explain Qt/Chromium flags and uinput | P0 | partial (prompt and doctor exist; no guided first run) |
+| NM-APP-10 | First-run onboarding: explain and request each permission, then verify with a live probe | AX prompt + System Settings deep link | enable `org.a11y.Status.IsEnabled`, explain Qt/Chromium flags and uinput | P0 | partial (`nomouse setup` and the daemon's start walk through missing permissions; macOS: dialogs or terminal, Settings pane, waits for trust, restarts itself. Linux: `nomouse setup` turns the AT-SPI switch on, not yet run on Linux; the uinput rule is not printed yet) |
 | NM-APP-11 | Settings window (GUI over `config.toml`) | SwiftUI-free: AppKit via `objc2` | GTK 4 or a TOML-editing TUI | P2 | missing |
 | NM-APP-12 | Update check (notify only; package managers update) | GitHub releases API | same | P2 | missing |
 

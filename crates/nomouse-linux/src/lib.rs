@@ -12,6 +12,8 @@
 #[cfg(target_os = "linux")]
 mod a11y;
 #[cfg(target_os = "linux")]
+mod first_run;
+#[cfg(target_os = "linux")]
 mod linux;
 pub mod session;
 #[cfg(all(target_os = "linux", feature = "wayland"))]
@@ -19,6 +21,10 @@ mod wayland;
 #[cfg(target_os = "linux")]
 mod x11;
 
+#[cfg(target_os = "linux")]
+pub use first_run::{
+    ACCESSIBILITY_SWITCH, first_run_dialogs, first_run_permissions, first_run_probe,
+};
 #[cfg(target_os = "linux")]
 pub use linux::{LinuxPlatform, doctor, platform};
 #[cfg(all(target_os = "linux", feature = "wayland"))]

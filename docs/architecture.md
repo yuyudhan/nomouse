@@ -180,6 +180,17 @@ exits non-zero when any check fails. When the daemon cannot start, the backend's
   switch (the daemon turns it on), the compositor's Wayland globals, `/dev/uinput` access when
   needed. Fixes that need root (the uinput udev rule) are printed, never run.
 
+The guided first run (NM-APP-10) is `nomouse_core::setup`: a step machine over the backend's
+permission list and a `Probe` (is it granted, ask the OS for it) that explains each missing
+permission, asks once, polls every 500 ms for up to 10 minutes, and reports whether a
+*required* permission was granted on the way. `nomouse setup` walks through every permission
+in the terminal. The daemon walks through the required ones before it starts, in a terminal
+when it has one and otherwise in the backend's dialogs (macOS `NSAlert`, as when
+`nomouse.app` is opened), then replaces itself with a fresh start (`exec`) once they are
+granted. macOS: Accessibility (required; the request shows macOS's prompt, which lists nomouse
+in the pane, and opens the pane). Linux: the AT-SPI switch (optional, the daemon's start also
+turns it on). Windows: nothing to ask.
+
 ## Packaging
 
 | Target | Artifact | State |

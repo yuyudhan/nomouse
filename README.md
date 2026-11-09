@@ -60,6 +60,7 @@ While the repository is private, release downloads need a GitHub login; use
 
 Then run:
 
+    nomouse setup      # walks you through the permissions nomouse needs
     nomouse doctor     # checks permissions and prints the platform backend
     nomouse            # starts the daemon with the default hotkeys
 
@@ -134,7 +135,7 @@ Terminals and games without a tree are not supported yet.
 
 | OS | Elements | What to enable |
 |----|----------|----------------|
-| macOS | AXUIElement | System Settings › Privacy & Security › Accessibility: allow `nomouse` (or the terminal you run it from), then restart nomouse |
+| macOS | AXUIElement | System Settings › Privacy & Security › Accessibility: allow `nomouse` (or the terminal you run it from). `nomouse setup`, or the first start of `nomouse.app`, opens that pane, waits for the switch and restarts nomouse |
 | Linux X11 | AT-SPI over D-Bus | nothing on GNOME and KDE; `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` for Qt apps, `--force-renderer-accessibility` for Chromium and Electron |
 | Linux Wayland | AT-SPI | as X11; on compositors without a virtual pointer (KDE), write access to `/dev/uinput`. GNOME Wayland is not supported yet: use GNOME on Xorg |
 

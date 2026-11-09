@@ -1,13 +1,14 @@
 //! The AppKit application object, the run loop, screens and running applications.
 
-use objc2::MainThreadMarker;
 use objc2::rc::Retained;
+use objc2::runtime::NSObjectProtocol;
+use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSEventMask, NSRunningApplication, NSScreen,
-    NSWorkspace,
+    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSApplicationActivationPolicy, NSEventMask,
+    NSRunningApplication, NSScreen, NSWorkspace,
 };
 use objc2_core_foundation::{CFRunLoop, kCFRunLoopDefaultMode};
-use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSProcessInfo};
+use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSProcessInfo, NSString};
 
 use crate::types::ScreenFrame;
 
@@ -94,6 +95,24 @@ impl App {
             .iter()
             .map(|screen| screen.backingScaleFactor())
             .collect()
+    }
+
+    /// Shows a modal alert with `title`, `message` and `buttons` (the first is the default and
+    /// answers Return), in front of other apps, and returns the index of the button clicked.
+    pub fn alert(&self, title: &str, message: &str, buttons: &[&str]) -> usize {
+        let alert = NSAlert::new(self.mtm);
+        alert.setMessageText(&NSString::from_str(title));
+        alert.setInformativeText(&NSString::from_str(message));
+        for button in buttons {
+            alert.addButtonWithTitle(&NSString::from_str(button));
+        }
+        // An agent app (no Dock icon) is not activated by showing a window; `activate` exists
+        // from macOS 14. Earlier systems activated the app when it was opened.
+        if self.app.respondsToSelector(sel!(activate)) {
+            self.app.activate();
+        }
+        let response = alert.runModal();
+        usize::try_from(response - NSAlertFirstButtonReturn).unwrap_or(0)
     }
 }
 

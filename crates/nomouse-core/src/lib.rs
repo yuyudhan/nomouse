@@ -8,6 +8,7 @@
 //! - [`platform`]: the traits each OS backend implements.
 //! - [`session`]: one hint-mode activation, tying the above together.
 //! - [`search`]: fuzzy matching of a typed query against element names (search-by-text).
+//! - [`setup`]: the guided first run that walks the user through missing permissions.
 //! - `contract` (feature `testing`): the backend contract suite and an in-memory fake.
 #![forbid(unsafe_code)]
 
@@ -24,6 +25,7 @@ pub mod hotkey;
 pub mod platform;
 pub mod search;
 pub mod session;
+pub mod setup;
 
 pub use action::{Action, ActionKind, MouseButton};
 pub use config::{Config, ConfigError};

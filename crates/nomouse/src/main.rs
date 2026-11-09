@@ -2,6 +2,7 @@
 //! and configuration commands.
 #![forbid(unsafe_code)]
 
+mod first_run;
 #[cfg(unix)]
 mod ipc;
 mod lock;
@@ -41,6 +42,18 @@ mod backend {
 
     pub(crate) fn doctor(_config: &Config) -> Vec<(String, Result<String, String>)> {
         Vec::new()
+    }
+
+    pub(crate) fn first_run_permissions() -> Vec<nomouse_core::setup::Permission> {
+        Vec::new()
+    }
+
+    pub(crate) fn first_run_probe() -> Box<dyn nomouse_core::setup::Probe> {
+        Box::new(nomouse_core::setup::NothingToAsk)
+    }
+
+    pub(crate) fn first_run_dialogs() -> Option<Box<dyn nomouse_core::setup::Presenter>> {
+        None
     }
 }
 
@@ -84,6 +97,8 @@ enum Command {
     Search,
     /// Check the session, accessibility, input and configuration.
     Doctor,
+    /// Walk through the permissions nomouse needs: explain each, ask the OS, wait for it.
+    Setup,
     /// Configuration commands.
     Config {
         #[command(subcommand)]
@@ -207,6 +222,7 @@ fn daemon() -> Result<String, String> {
         std::env::var("USER").ok(),
     );
     let _lock = lock::acquire(&path).map_err(|e| e.to_string())?;
+    first_run::before_daemon()?;
     let config = load_or_default()?;
     let settings = settings(&config)?;
     let mut platform = backend::platform(&config).map_err(|e| e.to_string())?;
@@ -402,6 +418,7 @@ fn run_command(command: Command, standalone: bool) -> Result<String, String> {
         Command::Scroll => activate(Mode::Scroll, standalone),
         Command::Search => activate(Mode::Search, standalone),
         Command::Doctor => doctor(),
+        Command::Setup => first_run::setup_command(),
         Command::Config { command } => config_command(command),
         Command::Labels { count, alphabet } => {
             let alphabet = match alphabet {
