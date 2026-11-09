@@ -54,6 +54,32 @@ pub(crate) const fn hotkey_keysym(key: Key) -> u32 {
     }
 }
 
+/// The modifier keycodes down in `keys` (a `QueryKeymap` bitmap: bit `code % 8` of byte
+/// `code / 8`), from the modifier mapping `mapping` (`per` keycodes for each of the eight
+/// modifiers, zero for an empty slot). Lock and the Num Lock modifier (`numlock`, a mask) are
+/// left out: they are toggles, not keys held for a moment.
+pub(crate) fn pressed_modifiers(mapping: &[u8], per: usize, keys: &[u8], numlock: u16) -> Vec<u8> {
+    let mut pressed = Vec::new();
+    for (index, codes) in mapping.chunks(per.max(1)).enumerate() {
+        let bit = u32::try_from(index)
+            .ok()
+            .and_then(|i| 1_u16.checked_shl(i))
+            .unwrap_or(0);
+        if bit == mask::LOCK || bit == numlock {
+            continue;
+        }
+        for &code in codes {
+            let down = keys
+                .get(usize::from(code / 8))
+                .is_some_and(|byte| byte & (1 << (code % 8)) != 0);
+            if code != 0 && down && !pressed.contains(&code) {
+                pressed.push(code);
+            }
+        }
+    }
+    pressed
+}
+
 /// The core modifier mask of a chord (Alt is Mod1, Super is Mod4 on every common layout).
 pub(crate) const fn modifier_mask(modifiers: Modifiers) -> u16 {
     let mut value = 0;
@@ -272,6 +298,22 @@ mod tests {
         let alt_super = modifiers(mask::MOD1 | mask::MOD4);
         assert!(alt_super.alt && alt_super.meta && !alt_super.ctrl);
         assert_eq!(modifiers(mask::LOCK), Modifiers::NONE);
+    }
+
+    #[test]
+    fn pressed_modifiers_skip_locks_empty_slots_and_released_keys() {
+        // Two keycodes per modifier: Shift 50/62, Lock 66, Control 37, Mod1 64, Mod2 (Num
+        // Lock) 77, Mod4 133; Mod3 and Mod5 empty.
+        let mapping = [50, 62, 66, 0, 37, 0, 64, 0, 77, 0, 0, 0, 133, 0, 0, 0];
+        let mut keys = [0_u8; 32];
+        for code in [62_u8, 66, 77, 133, 10] {
+            keys[usize::from(code / 8)] |= 1 << (code % 8);
+        }
+        assert_eq!(pressed_modifiers(&mapping, 2, &keys, 0x10), [62, 133]);
+        assert_eq!(
+            pressed_modifiers(&mapping, 2, &[0; 32], 0x10),
+            Vec::<u8>::new()
+        );
     }
 
     #[test]

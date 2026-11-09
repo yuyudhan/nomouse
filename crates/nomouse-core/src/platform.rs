@@ -13,7 +13,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::action::Action;
-use crate::element::Element;
+use crate::element::{Element, Rect};
 use crate::hints::Hint;
 use crate::hotkey::{Hotkey, KeyEvent};
 
@@ -76,6 +76,8 @@ pub struct Frame<'a> {
     pub query: Option<&'a str>,
     /// The label of the highlighted hint (focus-then-act), drawn in inverted colours.
     pub focused: Option<&'a str>,
+    /// Scroll mode: the active scroll area, outlined so the user sees what the keys scroll.
+    pub area: Option<Rect>,
 }
 
 /// Draws hint labels above all windows and captures the keyboard while shown.

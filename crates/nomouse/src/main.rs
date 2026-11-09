@@ -167,6 +167,7 @@ fn settings(config: &Config) -> Result<Settings, String> {
         alphabet: config.alphabet().map_err(|e| e.to_string())?,
         scope: config.hints.scope,
         scroll_step: i32::try_from(config.scroll.step).unwrap_or(3),
+        dash_step: i32::try_from(config.scroll.dash_step).unwrap_or(15),
         keys: config.hints.keys,
     })
 }

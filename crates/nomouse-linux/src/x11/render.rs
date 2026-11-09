@@ -20,6 +20,9 @@ const FONT_CANDIDATES: [&str; 6] = [
 ];
 const FONT_DIRS: [&str; 2] = ["/usr/share/fonts", "/usr/local/share/fonts"];
 
+/// Thickness in pixels of the outline drawn around the active scroll area.
+const OUTLINE: u32 = 3;
+
 /// Label colours and sizes, from `[overlay]`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Style {
@@ -218,16 +221,54 @@ impl Renderer {
         Some(Label { bounds, pixels })
     }
 
+    /// Solid strips in the label background colour framing `rect`, clipped to `area` (one
+    /// monitor): the outline of the active scroll area.
+    pub(crate) fn outline(&self, rect: Rect, area: Rect) -> Vec<Label> {
+        let rgb = self.style.background;
+        let pixel = [rgb[2], rgb[1], rgb[0], u8::MAX];
+        let width = rect.width.clamp(1, OUTLINE);
+        let height = rect.height.clamp(1, OUTLINE);
+        let right = i64::from(rect.x) + i64::from(rect.width) - i64::from(width);
+        let bottom = i64::from(rect.y) + i64::from(rect.height) - i64::from(height);
+        let (right, bottom) = (
+            i32::try_from(right).unwrap_or(rect.x),
+            i32::try_from(bottom).unwrap_or(rect.y),
+        );
+        [
+            Rect::new(rect.x, rect.y, rect.width, height),
+            Rect::new(rect.x, bottom, rect.width, height),
+            Rect::new(rect.x, rect.y, width, rect.height),
+            Rect::new(right, rect.y, width, rect.height),
+        ]
+        .iter()
+        .filter_map(|strip| strip.intersection(&area))
+        .map(|bounds| {
+            let count =
+                usize::try_from(u64::from(bounds.width) * u64::from(bounds.height)).unwrap_or(0);
+            Label {
+                bounds,
+                pixels: pixel.repeat(count),
+            }
+        })
+        .collect()
+    }
+
     /// Renders a whole frame onto `areas` (monitors or outputs): `result[i]` holds the labels
     /// on `areas[i]`. Each hint goes to the area containing its centre (else the first it
     /// overlaps, else the first area); the hint labelled `frame.focused` is highlighted. With
     /// a query, a search box `/query` is drawn near the top centre of the area of the best
-    /// match (the first hint), or of the first area when nothing matches.
+    /// match (the first hint), or of the first area when nothing matches. `frame.area` is
+    /// outlined on every area it overlaps, below the labels.
     pub(crate) fn frame(&self, frame: &Frame<'_>, areas: &[Rect]) -> Vec<Vec<Label>> {
         let mut per_area: Vec<Vec<Label>> = vec![Vec::new(); areas.len()];
         let Some(first_area) = areas.first() else {
             return per_area;
         };
+        if let Some(outlined) = frame.area {
+            for (labels, area) in per_area.iter_mut().zip(areas) {
+                labels.extend(self.outline(outlined, *area));
+            }
+        }
         let typed = frame.typed.chars().count();
         let mut best_area = None;
         for hint in frame.hints {
@@ -348,6 +389,7 @@ mod tests {
             typed: "",
             query: Some("x"),
             focused: Some("s"),
+            area: None,
         };
         let per_area = renderer.frame(&frame, &areas);
         // The first area holds `a` and the search box (it follows the best match, `a`).
@@ -357,5 +399,43 @@ mod tests {
         assert_eq!(fill(&per_area[1][0]), opaque.foreground);
         assert_eq!(fill(&per_area[1][1]), opaque.background);
         assert_eq!(renderer.frame(&frame, &[]), Vec::<Vec<Label>>::new());
+    }
+
+    #[test]
+    fn frame_outlines_the_scroll_area_on_each_monitor_it_spans() {
+        if find_font().is_none() {
+            return;
+        }
+        let renderer = Renderer::new(style()).unwrap();
+        let monitors = [Rect::new(0, 0, 800, 600), Rect::new(800, 0, 800, 600)];
+        // Spans both monitors: top, bottom and left strips on the first; top, bottom and
+        // right strips on the second.
+        let area = Rect::new(700, 100, 200, 100);
+        let frame = Frame {
+            area: Some(area),
+            ..Frame::default()
+        };
+        let per_monitor = renderer.frame(&frame, &monitors);
+        let bounds = |labels: &[Label]| labels.iter().map(|l| l.bounds).collect::<Vec<_>>();
+        assert_eq!(
+            bounds(&per_monitor[0]),
+            [
+                Rect::new(700, 100, 100, OUTLINE),
+                Rect::new(700, 197, 100, OUTLINE),
+                Rect::new(700, 100, OUTLINE, 100),
+            ]
+        );
+        assert_eq!(
+            bounds(&per_monitor[1]),
+            [
+                Rect::new(800, 100, 100, OUTLINE),
+                Rect::new(800, 197, 100, OUTLINE),
+                Rect::new(897, 100, OUTLINE, 100),
+            ]
+        );
+        let strip = &per_monitor[0][0];
+        let rgb = style().background;
+        assert_eq!(strip.pixels.len(), 100 * 3 * 4);
+        assert_eq!(strip.pixels[..4], [rgb[2], rgb[1], rgb[0], 255]);
     }
 }

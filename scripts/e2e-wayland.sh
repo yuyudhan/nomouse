@@ -147,6 +147,8 @@ title_is() {
     current="$(title "$1")"
     [[ "$current" == "${2%\*}"* ]]
 }
+# title_matches <shell> <regex>: the title matches the extended regular expression.
+title_matches() { title "$1" | grep -qE "$2"; }
 has_window() { [[ -n "$(shell_window "$1" pid)" ]]; }
 focus() { swaymsg "[pid=$(shell_window "$1" pid)] focus" >/dev/null; sleep 0.2; }
 scans() { grep -c 'scan [0-9]*:' "$1" || true; }
@@ -231,17 +233,22 @@ for shell in xdg_shell xwayland; do
         fail "$shell: right click: no label"
     fi
 
-    echo "--- $shell: scroll mode"
+    echo "--- $shell: scroll mode (largest list active; j, G, gg, Tab)"
     focus "$shell"
     log="$tmp/scroll-$shell.log"
-    if run_hints "$log" scroll && label="$(grep -E 'hint [a-z]+ = ScrollArea' "$log" | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/')" && [[ -n "$label" ]]; then
-        wtype "$label"
+    if run_hints "$log" scroll && grep -qE 'hint [0-9] = ScrollArea' "$log"; then
         sleep 0.3
         wtype jjjj
-        sleep 0.3
+        wait_for 3 title_matches "$shell" '^scrolled: [1-9][0-9]* #' && down=1 || down=0
+        wtype -M shift g -m shift
+        wait_for 3 title_matches "$shell" '^scrolled: [0-9]+ \(bottom\) #' && bottom=1 || bottom=0
+        wtype gg
+        wait_for 3 title_matches "$shell" '^scrolled: 0 \(top\) #' && top=1 || top=0
+        wtype -k Tab jj
+        wait_for 3 title_matches "$shell" '^scrolled 2: [1-9]' && second=1 || second=0
         wtype -k Escape
         reap "$hints_pid" || true
-        if wait_for 3 title_is "$shell" "scrolled: *"; then pass "$shell: scroll landed ($(title "$shell"))"; else fail "$shell: scroll: '$(title "$shell")'"; fi
+        if ((down && bottom && top && second)); then pass "$shell: scroll landed; G, gg and Tab worked ($(title "$shell"))"; else fail "$shell: scroll: j=$down G=$bottom gg=$top Tab=$second, '$(title "$shell")'"; fi
     else
         kill "$hints_pid" 2>/dev/null || true
         fail "$shell: scroll: no scroll-area label"

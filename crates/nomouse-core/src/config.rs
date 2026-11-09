@@ -110,11 +110,16 @@ impl Default for HotkeysConfig {
 pub struct ScrollConfig {
     /// Wheel steps per key press, 1 to 50.
     pub step: u32,
+    /// Wheel steps per Shift-scroll key press (`H` `J` `K` `L`), 1 to 100.
+    pub dash_step: u32,
 }
 
 impl Default for ScrollConfig {
     fn default() -> Self {
-        Self { step: 3 }
+        Self {
+            step: 3,
+            dash_step: 15,
+        }
     }
 }
 
@@ -293,6 +298,7 @@ impl Config {
             }
         }
         check_range("scroll.step", self.scroll.step, 1, 50)?;
+        check_range("scroll.dash_step", self.scroll.dash_step, 1, 100)?;
         check_range("overlay.font_size", self.overlay.font_size, 6, 72)?;
         check_range("overlay.opacity", self.overlay.opacity, 10, 100)?;
         self.overlay.colours().map(|_| ())
@@ -355,12 +361,14 @@ mod tests {
     #[test]
     fn partial_override() {
         let config = Config::from_toml(
-            "[hints]\nalphabet = \"jkfd\"\naction = \"right-click\"\nscope = \"screen\"\n[scroll]\nstep = 5\n",
+            "[hints]\nalphabet = \"jkfd\"\naction = \"right-click\"\nscope = \"screen\"\n[scroll]\nstep = 5\ndash_step = 40\n",
         )
         .unwrap();
         assert_eq!(config.hints.action, ActionKind::RightClick);
         assert_eq!(config.hints.scope, Scope::Screen);
         assert_eq!(config.scroll.step, 5);
+        assert_eq!(config.scroll.dash_step, 40);
+        assert_eq!(Config::default().scroll.dash_step, 15);
         assert_eq!(config.overlay, OverlayConfig::default());
     }
 
@@ -407,6 +415,17 @@ mod tests {
             Config::from_toml("[scroll]\nstep = 0\n"),
             Err(ConfigError::OutOfRange { .. })
         ));
+        for dash_step in [0, 101] {
+            assert!(matches!(
+                Config::from_toml(&format!("[scroll]\ndash_step = {dash_step}\n")),
+                Err(ConfigError::OutOfRange {
+                    field: "scroll.dash_step",
+                    ..
+                })
+            ));
+        }
+        assert!(Config::from_toml("[scroll]\ndash_step = 100\n").is_ok());
+        assert!(Config::from_toml("[scroll]\ndash_step = 1\n").is_ok());
         assert!(matches!(
             Config::from_toml("[overlay]\nborder = \"red\"\n"),
             Err(ConfigError::Colour {

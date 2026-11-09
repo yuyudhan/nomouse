@@ -157,8 +157,8 @@ scans() { grep -c 'scan [0-9]*:' "$1" || true; }
 scans_at_least() { (($(scans "$1") >= $2)); }
 # label_for <log> <accessible name>: the label of the last scan's hint for that name.
 label_for() { grep -E "hint [a-z]+ = [A-Za-z]+ \"$2\"$" "$1" | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
-# label_for_role <log> <role>: the label of the last scan's first hint with that role.
-label_for_role() { grep -E "hint [a-z]+ = $2 " "$1" | tail -n1 | sed -E 's/.*hint ([a-z]+) = .*/\1/'; }
+# area_labels <log>: how many scroll areas the last scroll-mode scan labelled (with digits).
+area_labels() { grep -cE 'hint [0-9] = ScrollArea ' "$1" || true; }
 # title_is <window> <prefix>*: the title starts with the literal prefix; callers write it as
 # a glob such as "left: Button 1 #*" (a trailing `*` is the only wildcard used).
 title_is() {
@@ -166,6 +166,8 @@ title_is() {
     current="$(title "$1")"
     [[ "$current" == "${2%\*}"* ]]
 }
+# title_matches <window> <regex>: the title matches the extended regular expression.
+title_matches() { title "$1" | grep -qE "$2"; }
 
 # run_hints <log> <args...>: starts `nomouse hints`, waits for its first scan.
 run_hints() {
@@ -349,22 +351,27 @@ else
 fi
 rm "$XDG_CONFIG_HOME/nomouse/config.toml"
 
-echo "--- scroll mode: the scroll area is the target"
+echo "--- scroll mode: the largest list is active; j, G, gg, then Tab to the second list"
 focus "$gtk_win"
 log="$tmp/scroll.log"
 if run_hints "$log" scroll; then
-    label="$(label_for_role "$log" ScrollArea)"
-    rows="$(grep -cE 'hint [a-z]+ = [A-Za-z]+ "Row [0-9]+"$' "$log" || true)"
-    xdotool type --delay 20 "$label"
+    areas="$(area_labels "$log")"
+    rows="$(grep -cE 'hint [a-z0-9]+ = [A-Za-z]+ "Row [0-9]+"$' "$log" || true)"
     sleep 0.2
     xdotool key --delay 30 j j j
-    wait_for 3 title_is "$gtk_win" "scrolled: *" && scrolled=1 || scrolled=0
+    wait_for 3 title_matches "$gtk_win" '^scrolled: [1-9][0-9]* #' && down=1 || down=0
+    xdotool key shift+g
+    wait_for 3 title_matches "$gtk_win" '^scrolled: [0-9]+ \(bottom\) #' && bottom=1 || bottom=0
+    xdotool key --delay 30 g g
+    wait_for 3 title_matches "$gtk_win" '^scrolled: 0 \(top\) #' && top=1 || top=0
+    xdotool key --delay 30 Tab j j
+    wait_for 3 title_matches "$gtk_win" '^scrolled 2: [1-9]' && second=1 || second=0
     xdotool key Escape
     reap "$hints_pid" || true
-    if ((scrolled)) && [[ -n "$label" ]] && ((rows == 0)); then
-        pass "scroll mode labelled the scroll area and scrolled it ($(title "$gtk_win"))"
+    if ((areas == 2 && rows == 0 && down && bottom && top && second)); then
+        pass "scroll mode: j scrolled the large list, G reached its bottom, gg its top, Tab j scrolled the second list ($(title "$gtk_win"))"
     else
-        fail "scroll mode: label '$label', $rows row hints, title '$(title "$gtk_win")'"
+        fail "scroll mode: $areas area labels, $rows row hints, j=$down G=$bottom gg=$top Tab=$second, title '$(title "$gtk_win")'"
     fi
 else
     fail "scroll mode: no labels"

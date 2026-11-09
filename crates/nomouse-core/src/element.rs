@@ -68,13 +68,27 @@ impl Rect {
 
     /// Whether the two rectangles overlap with a non-empty area.
     pub fn intersects(&self, other: &Self) -> bool {
+        self.intersection(other).is_some()
+    }
+
+    /// The overlap of the two rectangles; `None` when it has no area.
+    pub fn intersection(&self, other: &Self) -> Option<Self> {
         let left = i64::from(self.x).max(i64::from(other.x));
         let top = i64::from(self.y).max(i64::from(other.y));
         let right = (i64::from(self.x) + i64::from(self.width))
             .min(i64::from(other.x) + i64::from(other.width));
         let bottom = (i64::from(self.y) + i64::from(self.height))
             .min(i64::from(other.y) + i64::from(other.height));
-        left < right && top < bottom
+        if left >= right || top >= bottom {
+            return None;
+        }
+        // Inside both rectangles, so every value fits its type.
+        Some(Self::new(
+            i32::try_from(left).ok()?,
+            i32::try_from(top).ok()?,
+            u32::try_from(right - left).ok()?,
+            u32::try_from(bottom - top).ok()?,
+        ))
     }
 }
 
@@ -213,6 +227,13 @@ mod tests {
         assert!(!rect.contains(Point::new(10, 5)));
         assert!(rect.intersects(&Rect::new(5, 5, 10, 10)));
         assert!(!rect.intersects(&Rect::new(10, 0, 5, 5)));
+        assert_eq!(
+            rect.intersection(&Rect::new(5, -5, 10, 10)),
+            Some(Rect::new(5, 0, 5, 5))
+        );
+        assert_eq!(rect.intersection(&Rect::new(10, 0, 5, 5)), None);
+        let wide = Rect::new(i32::MIN, i32::MIN, u32::MAX, u32::MAX);
+        assert_eq!(wide.intersection(&rect), Some(rect));
     }
 
     #[test]

@@ -27,6 +27,7 @@ prop_compose! {
         semantic_click in any::<bool>(),
         keys in prop::sample::select(vec![KeyBindings::Nomouse, KeyBindings::Homerow]),
         step in 1u32..=50,
+        dash_step in 1u32..=100,
         font_size in 6u32..=72,
         opacity in 10u32..=100,
         colours in [colour(), colour(), colour(), colour()],
@@ -34,7 +35,7 @@ prop_compose! {
         let [background, foreground, typed_foreground, border] = colours;
         Config {
             hints: HintsConfig { alphabet, scope, action, semantic_click, keys },
-            scroll: ScrollConfig { step },
+            scroll: ScrollConfig { step, dash_step },
             overlay: OverlayConfig {
                 font_size,
                 opacity,
@@ -64,6 +65,16 @@ proptest! {
             Err(ConfigError::OutOfRange { field: "scroll.step", .. })
         );
         prop_assert!(rejected, "step {} accepted", step);
+    }
+
+    #[test]
+    fn dash_step_outside_range_is_rejected(dash_step in prop_oneof![Just(0u32), 101u32..10_000]) {
+        let text = format!("[scroll]\ndash_step = {dash_step}\n");
+        let rejected = matches!(
+            Config::from_toml(&text),
+            Err(ConfigError::OutOfRange { field: "scroll.dash_step", .. })
+        );
+        prop_assert!(rejected, "dash_step {} accepted", dash_step);
     }
 
     #[test]

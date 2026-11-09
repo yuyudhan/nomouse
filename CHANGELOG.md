@@ -20,6 +20,9 @@ the release's section; add entries under Unreleased as changes land.
   element, and matching covers an element's description (tooltips), value (text field
   contents, slider positions; never password fields) and role (`button`, `check box`), names
   first. Linux reads descriptions and values over AT-SPI.
+- Scroll mode starts on the largest scrollable area and outlines it; areas are numbered, and
+  Tab, Shift-Tab or a digit switch between them. `gg` and `G` go to the top and bottom, and
+  Shift with `h` `j` `k` `l` scrolls faster (`scroll.dash_step`, default 15 wheel steps).
 - Hint mode: a hotkey labels every clickable element of the focused window from the
   accessibility tree; typing a label clicks it (left, right, double, middle, move, semantic
   click), with a continuous mode that keeps hinting after each click.

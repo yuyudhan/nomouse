@@ -167,10 +167,11 @@ fn check_overlay<P: Platform + ?Sized>(platform: &mut P, probe: Probe, out: &mut
         typed,
         query,
         focused,
+        area: None,
     };
-    // A frame with neither a query nor a highlight goes through `show`, the rest through
-    // `show_frame`.
-    let steps: [(&str, Frame<'_>); 7] = [
+    // A frame with neither a query, a highlight nor an outline goes through `show`, the rest
+    // through `show_frame`.
+    let steps: [(&str, Frame<'_>); 8] = [
         ("show", frame(&hints, "", None, None)),
         ("show replaces", frame(&hints, "a", None, None)),
         ("show nothing", frame(&[], "", None, None)),
@@ -187,9 +188,16 @@ fn check_overlay<P: Platform + ?Sized>(platform: &mut P, probe: Probe, out: &mut
             "search box, nothing matches",
             frame(&[], "", Some("zzz"), None),
         ),
+        (
+            "scroll area outlined",
+            Frame {
+                area: Some(hints[0].element.bounds),
+                ..frame(&hints, "", None, Some(label))
+            },
+        ),
     ];
     for (step, frame) in steps {
-        let result = if frame.query.is_none() && frame.focused.is_none() {
+        let result = if frame.query.is_none() && frame.focused.is_none() && frame.area.is_none() {
             platform.show(frame.hints, frame.typed)
         } else {
             platform.show_frame(&frame)

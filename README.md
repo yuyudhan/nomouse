@@ -90,8 +90,11 @@ cmd-clicks, as in Homerow.
 In search mode, Enter clicks the highlighted match (the best one unless moved), Tab freezes the
 query so letters pick a label, and Backspace with no label typed returns to the query. Search
 matches names, tooltips and descriptions, text field contents and roles (`button`); spaces are
-ignored, and `*` or `;` alone matches everything. In scroll mode, `j` `k` `h` `l` (or the
-arrows) scroll, `d` and `u` scroll five times as far, Escape or Enter ends it.
+ignored, and `*` or `;` alone matches everything. Scroll mode starts on the largest scrollable
+area, outlined, with every area numbered: `j` `k` `h` `l` (or the arrows) scroll, Shift with
+them scrolls `dash_step` wheel steps at a time, `d` and `u` scroll five times as far, `gg`
+goes to the top and `G` to the bottom, Tab and Shift-Tab (or a digit) switch areas, and
+Escape or Enter ends it.
 
 Every mode is also a command (`nomouse hints`, `continuous`, `scroll`, `search`), with
 `--action right-click|double-click|hover|drag|scroll` for one-off actions. On Wayland the
@@ -119,6 +122,7 @@ search = "ctrl+alt+/"
 
 [scroll]
 step = 3
+dash_step = 15
 
 [overlay]
 font_size = 13

@@ -26,7 +26,7 @@ use x11rb::protocol::{Event, randr, xtest};
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
-use input::{Fake, plan};
+use input::{Fake, plan, plan_scroll_unmodified};
 use keys::{KeyMap, sym};
 use render::{Label, Renderer};
 
@@ -691,13 +691,42 @@ impl X11 {
             .collect()
     }
 
-    /// Performs `action` with XTEST, holding its [`Action::modifiers`] (ctrl+click, ...).
+    /// The modifier keys the user holds right now.
+    fn pressed_modifiers(&self) -> Result<Vec<u8>, PlatformError> {
+        let mapping = self
+            .conn
+            .get_modifier_mapping()
+            .map_err(lost)?
+            .reply()
+            .map_err(lost)?;
+        let keys = self
+            .conn
+            .query_keymap()
+            .map_err(lost)?
+            .reply()
+            .map_err(lost)?;
+        Ok(keys::pressed_modifiers(
+            &mapping.keycodes,
+            usize::from(mapping.keycodes_per_modifier()),
+            &keys.keys,
+            self.numlock,
+        ))
+    }
+
+    /// Performs `action` with XTEST, holding its [`Action::modifiers`] (ctrl+click, ...). A
+    /// scroll lets go of the modifiers the user holds for its duration: wheel events carry the
+    /// server's modifier state, and Shift (pressed for scroll mode's `G` and dash keys) would
+    /// make toolkits scroll sideways.
     ///
     /// # Errors
     /// When the connection is lost.
     pub(crate) fn perform(&mut self, action: &Action) -> Result<(), PlatformError> {
-        let held = self.modifier_keycodes(action.modifiers());
-        for fake in plan(action, &held) {
+        let fakes = if matches!(action, Action::Scroll { .. }) {
+            plan_scroll_unmodified(action, &self.pressed_modifiers()?)
+        } else {
+            plan(action, &self.modifier_keycodes(action.modifiers()))
+        };
+        for fake in fakes {
             let (kind, detail, at) = match fake {
                 Fake::Motion(at) => (xproto::MOTION_NOTIFY_EVENT, 0, at),
                 Fake::Press(button) => (xproto::BUTTON_PRESS_EVENT, button, Point::default()),

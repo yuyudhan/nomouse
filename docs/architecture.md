@@ -26,7 +26,7 @@ Defined in `crates/nomouse-core/src/platform.rs`, split by responsibility:
   and never a password field's value).
 - `Overlay::show(hints, typed)` / `show_frame(frame)` / `hide()`: draws labels above all windows
   and grabs the keyboard while shown, so typed keys reach nomouse, not the app. A `Frame` adds
-  the search query box and the highlighted label.
+  the search query box, the highlighted label and the outlined scroll area.
 - `InputInjector::perform(action)`: click (any button, any count), hover, drag, scroll.
 - `HotkeySource::register(hotkey)` / `unregister(id)` / `next_event(timeout)`: global hotkeys and
   the key presses captured while the overlay is up (`KeyEvent`: the key plus the modifiers
@@ -51,8 +51,10 @@ Every method is blocking and runs on the event-loop thread; errors are `Platform
    that match nothing, or yields `SessionEvent::Perform(action)` (a complete label, or Return on
    the highlight; with `hints.keys = "homerow"` a label only highlights, and Return yields
    `Armed` until the double-press time passes or a second Return makes it a double click). Drag
-   takes two picks; scroll picks a target then enters scroll mode. Escape cancels, and so does
-   an activation hotkey or a command-socket request arriving while the labels are up (toggle).
+   takes two picks; scroll mode (core `ScrollSession`) starts on the largest scroll area,
+   outlined through `Frame::area` (without one it picks an element first). Escape cancels, and
+   so does an activation hotkey or a command-socket request arriving while the labels are up
+   (toggle).
 5. `Overlay::hide`, then `InputInjector::perform(action)`.
 
 Hint alphabet: `asdfghjk` by default, configurable; `i`, `l`, `o` are rejected as ambiguous.
@@ -151,6 +153,7 @@ search = "ctrl+alt+/"
 
 [scroll]
 step = 3                     # wheel steps per key press, 1..=50; d/u scroll five times this
+dash_step = 15               # wheel steps per Shift-h/j/k/l press, 1..=100
 
 [overlay]
 font_size = 13               # points, 6..=72

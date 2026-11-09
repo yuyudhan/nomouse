@@ -3,8 +3,8 @@
 use std::time::{Duration, Instant};
 
 use nomouse_core::{
-    Action, ActionKind, Alphabet, Frame, Hint, HintSession, InputEvent, KeyBindings, KeyPress,
-    Platform, PlatformError, Point, Scope, SessionEvent,
+    Action, ActionKind, Alphabet, Frame, Hint, HintSession, InputEvent, KeyBindings, Platform,
+    PlatformError, Rect, Scope, ScrollEvent, ScrollSession, SessionEvent,
 };
 
 /// How long continuous mode waits after a click before re-scanning, so the app can update.
@@ -24,7 +24,7 @@ pub(crate) enum Mode {
     Once(ActionKind),
     /// Keep re-labelling after every action until Escape.
     Continuous(ActionKind),
-    /// Pick a scroll target, then scroll with keys until Escape.
+    /// Scroll the largest scroll area (or a picked element) with keys until Escape.
     Scroll,
     /// Type to filter elements by name; Enter (or a label after Tab) clicks a match.
     Search,
@@ -59,6 +59,7 @@ fn draw(platform: &mut dyn Platform, session: &HintSession) -> Result<(), Platfo
         typed: session.typed(),
         query: session.query(),
         focused: session.focused().map(|hint| hint.label.as_str()),
+        area: None,
     })
 }
 
@@ -71,6 +72,8 @@ pub(crate) struct Settings {
     pub(crate) scope: Scope,
     /// Wheel steps per scroll key press.
     pub(crate) scroll_step: i32,
+    /// Wheel steps per Shift-scroll key press.
+    pub(crate) dash_step: i32,
     /// Which keys act on a hint.
     pub(crate) keys: KeyBindings,
 }
@@ -124,30 +127,27 @@ impl Drop for Shown<'_> {
     }
 }
 
-/// The scroll for a key in scroll mode; `None` ends scroll mode.
-pub(crate) fn scroll_delta(key: KeyPress, step: i32) -> Option<(i32, i32)> {
-    let page = step.saturating_mul(5);
-    match key {
-        KeyPress::Char('j') | KeyPress::Down => Some((0, step)),
-        KeyPress::Char('k') | KeyPress::Up => Some((0, -step)),
-        KeyPress::Char('h') | KeyPress::Left => Some((-step, 0)),
-        KeyPress::Char('l') | KeyPress::Right => Some((step, 0)),
-        KeyPress::Char('d' | ' ') => Some((0, page)),
-        KeyPress::Char('u') => Some((0, -page)),
-        KeyPress::Escape | KeyPress::Enter => None,
-        _ => Some((0, 0)),
-    }
+/// Draws scroll mode: the active area outlined, every area labelled with its digit.
+fn draw_scroll(platform: &mut dyn Platform, scroll: &ScrollSession) -> Result<(), PlatformError> {
+    let hints = scroll.hints();
+    platform.show_frame(&Frame {
+        hints: &hints,
+        focused: scroll.active_label(),
+        area: Some(scroll.active()),
+        ..Frame::default()
+    })
 }
 
+/// Scroll mode: the pointer rests on the active area (wheel events go where the pointer is)
+/// and the keys scroll it, until Escape or Enter. Returns the scrolls performed.
 fn scroll_mode(
     platform: &mut dyn Platform,
-    at: Point,
-    step: i32,
+    mut scroll: ScrollSession,
     dismissed: &dyn Fn() -> bool,
 ) -> Result<usize, PlatformError> {
-    platform.perform(&Action::hover(at))?;
-    // Showing no labels keeps the keyboard grabbed for the scroll keys.
-    platform.show(&[], "")?;
+    platform.perform(&Action::hover(scroll.active().center()))?;
+    // The overlay stays up: it holds the keyboard for the scroll keys.
+    draw_scroll(platform, &scroll)?;
     let mut scrolls = 0;
     loop {
         let key = match wait(platform, POLL, dismissed)? {
@@ -155,14 +155,39 @@ fn scroll_mode(
             Wait::Dismissed => return Ok(scrolls),
             Wait::Timeout => continue,
         };
-        match scroll_delta(key.key, step) {
-            None => return Ok(scrolls),
-            Some((0, 0)) => {}
-            Some((dx, dy)) => {
-                platform.perform(&Action::scroll(at, dx, dy))?;
+        match scroll.key(key) {
+            ScrollEvent::Done => return Ok(scrolls),
+            ScrollEvent::Ignored => {}
+            ScrollEvent::Switched => {
+                platform.perform(&Action::hover(scroll.active().center()))?;
+                draw_scroll(platform, &scroll)?;
+            }
+            ScrollEvent::Scroll { dx, dy } => {
+                platform.perform(&Action::scroll(scroll.active().center(), dx, dy))?;
                 scrolls += 1;
             }
         }
+    }
+}
+
+/// Logs the labels of a scan (debug) and, for the first, how long labelling took (info).
+fn log_scan(hints: &[Hint], scans: usize, started: Instant) {
+    tracing::debug!("scan {scans}: {} hints", hints.len());
+    for hint in hints {
+        let element = &hint.element;
+        tracing::debug!(
+            "hint {} = {:?} {:?}",
+            hint.label,
+            element.role,
+            element.name
+        );
+    }
+    if scans == 1 {
+        tracing::info!(
+            "labels shown {} ms after the trigger ({} hints)",
+            started.elapsed().as_millis(),
+            hints.len()
+        );
     }
 }
 
@@ -194,6 +219,17 @@ pub(crate) fn activate(
     let mut scans = 0_usize;
     loop {
         let elements = platform.elements(settings.scope)?;
+        if mode == Mode::Scroll {
+            let areas = ScrollSession::areas_of(&elements);
+            if let Some(scroll) =
+                ScrollSession::new(areas, settings.scroll_step, settings.dash_step)
+            {
+                log_scan(&scroll.hints(), 1, started);
+                return Ok(Outcome::Performed(scroll_mode(
+                    platform, scroll, dismissed,
+                )?));
+            }
+        }
         let mut session = mode.session(settings, elements);
         if session.is_empty() {
             return Ok(if performed > 0 {
@@ -204,23 +240,7 @@ pub(crate) fn activate(
         }
         draw(platform, &session)?;
         scans += 1;
-        tracing::debug!("scan {scans}: {} hints", session.hints().len());
-        for hint in session.hints() {
-            let element = &hint.element;
-            tracing::debug!(
-                "hint {} = {:?} {:?}",
-                hint.label,
-                element.role,
-                element.name
-            );
-        }
-        if scans == 1 {
-            tracing::info!(
-                "labels shown {} ms after the trigger ({} hints)",
-                started.elapsed().as_millis(),
-                session.hints().len()
-            );
-        }
+        log_scan(session.hints(), scans, started);
         let action = loop {
             let key = match wait(platform, POLL, dismissed)? {
                 Wait::Key(key) => key,
@@ -237,8 +257,16 @@ pub(crate) fn activate(
                 }
                 SessionEvent::Cancelled => return Ok(ended(performed)),
                 SessionEvent::ScrollTarget(at) => {
-                    platform.hide()?;
-                    let scrolls = scroll_mode(platform, at, settings.scroll_step, dismissed)?;
+                    // No scroll area: the picked element is the one to scroll.
+                    let bounds = session
+                        .hints()
+                        .iter()
+                        .map(|hint| hint.element.bounds)
+                        .find(|bounds| bounds.center() == at)
+                        .unwrap_or_else(|| Rect::new(at.x, at.y, 1, 1));
+                    let step = (settings.scroll_step, settings.dash_step);
+                    let scrolls = ScrollSession::new(vec![bounds], step.0, step.1)
+                        .map_or(Ok(0), |scroll| scroll_mode(platform, scroll, dismissed))?;
                     return Ok(Outcome::Performed(performed + scrolls));
                 }
                 SessionEvent::Armed(single) => match wait(platform, DOUBLE_PRESS, dismissed)? {
@@ -268,7 +296,7 @@ mod tests {
 
     use nomouse_core::{
         Element, ElementId, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource, InputInjector,
-        Modifiers, Overlay, Rect, Role,
+        KeyPress, Modifiers, Overlay, Point, Rect, Role,
     };
 
     use super::*;
@@ -284,6 +312,8 @@ mod tests {
         visible: bool,
         queries: Vec<String>,
         focused: Vec<Option<String>>,
+        /// The outlined scroll area of each frame.
+        outlined: Vec<Option<Rect>>,
     }
 
     impl ElementSource for Fake {
@@ -305,6 +335,7 @@ mod tests {
                 self.queries.push(query.to_owned());
             }
             self.focused.push(frame.focused.map(str::to_owned));
+            self.outlined.push(frame.area);
             self.show(frame.hints, frame.typed)
         }
 
@@ -356,7 +387,8 @@ mod tests {
             })
             .collect();
         // `!` Escape, `<` Backspace, `=` Enter, `>` Tab, `^` Shift-Tab, `+` Shift-Enter,
-        // `@` an activation hotkey, `_` a poll that times out; anything else types itself.
+        // `@` an activation hotkey, `_` a poll that times out, an upper-case letter that letter
+        // with Shift; anything else types itself.
         let keys = keys
             .chars()
             .map(|c| {
@@ -369,6 +401,9 @@ mod tests {
                     '>' => KeyPress::Tab.into(),
                     '^' => KeyPress::Tab.with(Modifiers::SHIFT),
                     '+' => KeyPress::Enter.with(Modifiers::SHIFT),
+                    upper if upper.is_ascii_uppercase() => {
+                        KeyPress::Char(upper.to_ascii_lowercase()).with(Modifiers::SHIFT)
+                    }
                     other => KeyPress::Char(other).into(),
                 };
                 Some(InputEvent::Key(key))
@@ -386,6 +421,7 @@ mod tests {
             alphabet: Alphabet::default(),
             scope: Scope::FocusedWindow,
             scroll_step: 3,
+            dash_step: 15,
             keys: KeyBindings::Nomouse,
         }
     }
@@ -516,13 +552,82 @@ mod tests {
         assert_eq!(cancelled.performed, Vec::<Action>::new());
     }
 
-    #[test]
-    fn scroll_mode_targets_the_scroll_area() {
-        let mut p = fake(3, "aj!");
+    /// A button, a small scroll area and a large one below it, with the key script `keys`.
+    fn scroll_areas(keys: &str) -> Fake {
+        let mut p = fake(3, keys);
+        p.elements[1].role = Role::ScrollArea;
+        p.elements[1].bounds = Rect::new(0, 100, 100, 100);
         p.elements[2].role = Role::ScrollArea;
+        p.elements[2].bounds = Rect::new(0, 300, 400, 400);
+        p
+    }
+
+    const SMALL: Point = Point::new(50, 150);
+    const LARGE: Point = Point::new(200, 500);
+
+    #[test]
+    fn scroll_mode_starts_on_the_largest_area_outlined() {
+        let mut p = scroll_areas("j!");
         assert_eq!(run(&mut p, Mode::Scroll), Ok(Outcome::Performed(1)));
-        assert_eq!(p.performed[0], Action::hover(Point::new(205, 5)));
-        assert_eq!(p.performed[1], Action::scroll(Point::new(205, 5), 0, 3));
+        assert_eq!(
+            p.performed,
+            [Action::hover(LARGE), Action::scroll(LARGE, 0, 3)]
+        );
+        // Both areas carry a digit label; the large one (second in reading order) is active.
+        assert_eq!(p.shown[0].0, 2);
+        assert_eq!(p.focused, [Some("2".to_owned())]);
+        assert_eq!(p.outlined, [Some(Rect::new(0, 300, 400, 400))]);
+        assert!(!p.visible);
+    }
+
+    #[test]
+    fn scroll_mode_tab_and_digits_switch_areas() {
+        let mut p = scroll_areas(">j^j1j2j!");
+        assert_eq!(run(&mut p, Mode::Scroll), Ok(Outcome::Performed(4)));
+        assert_eq!(
+            p.performed,
+            [
+                Action::hover(LARGE),
+                Action::hover(SMALL),
+                Action::scroll(SMALL, 0, 3),
+                Action::hover(LARGE),
+                Action::scroll(LARGE, 0, 3),
+                Action::hover(SMALL),
+                Action::scroll(SMALL, 0, 3),
+                Action::hover(LARGE),
+                Action::scroll(LARGE, 0, 3),
+            ]
+        );
+        let large = Some(Rect::new(0, 300, 400, 400));
+        let small = Some(Rect::new(0, 100, 100, 100));
+        assert_eq!(p.outlined, [large, small, large, small, large]);
+    }
+
+    #[test]
+    fn scroll_mode_gg_g_and_shift_dash() {
+        let mut p = scroll_areas("GggJKHLxg!");
+        assert_eq!(run(&mut p, Mode::Scroll), Ok(Outcome::Performed(6)));
+        let edge = nomouse_core::scroll::EDGE_STEPS;
+        assert_eq!(
+            p.performed[1..],
+            [
+                Action::scroll(LARGE, 0, edge),
+                Action::scroll(LARGE, 0, -edge),
+                Action::scroll(LARGE, 0, 15),
+                Action::scroll(LARGE, 0, -15),
+                Action::scroll(LARGE, -15, 0),
+                Action::scroll(LARGE, 15, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn scroll_mode_ends_on_enter_and_on_the_hotkey() {
+        let mut entered = scroll_areas("j=j");
+        assert_eq!(run(&mut entered, Mode::Scroll), Ok(Outcome::Performed(1)));
+        let mut dismissed = scroll_areas("_j@j");
+        assert_eq!(run(&mut dismissed, Mode::Scroll), Ok(Outcome::Performed(1)));
+        assert!(!dismissed.visible);
     }
 
     #[test]
@@ -569,13 +674,15 @@ mod tests {
     }
 
     #[test]
-    fn scroll_mode_scrolls_until_escape() {
+    fn scroll_mode_without_areas_scrolls_the_picked_element() {
         let mut p = fake(2, "ajjkdx!");
         assert_eq!(run(&mut p, Mode::Scroll), Ok(Outcome::Performed(4)));
         assert_eq!(p.performed[0], Action::hover(Point::new(5, 5)));
         assert_eq!(p.performed[1], Action::scroll(Point::new(5, 5), 0, 3));
         assert_eq!(p.performed[3], Action::scroll(Point::new(5, 5), 0, -3));
         assert_eq!(p.performed[4], Action::scroll(Point::new(5, 5), 0, 15));
+        // The picked element is outlined once it is the scroll target.
+        assert_eq!(p.outlined.last(), Some(&Some(Rect::new(0, 0, 10, 10))));
         assert!(!p.visible);
     }
 
@@ -619,11 +726,16 @@ mod tests {
     }
 
     #[test]
-    fn scroll_keys() {
-        assert_eq!(scroll_delta(KeyPress::Char('h'), 2), Some((-2, 0)));
-        assert_eq!(scroll_delta(KeyPress::Right, 2), Some((2, 0)));
-        assert_eq!(scroll_delta(KeyPress::Char('u'), 2), Some((0, -10)));
-        assert_eq!(scroll_delta(KeyPress::Enter, 2), None);
-        assert_eq!(scroll_delta(KeyPress::Tab, 2), Some((0, 0)));
+    fn dash_step_setting_sets_shift_scrolls() {
+        let mut p = scroll_areas("J!");
+        let dash = Settings {
+            dash_step: 40,
+            ..settings()
+        };
+        assert_eq!(
+            activate(&mut p, &dash, Mode::Scroll, Instant::now(), &|| false),
+            Ok(Outcome::Performed(1))
+        );
+        assert_eq!(p.performed[1], Action::scroll(LARGE, 0, 40));
     }
 }

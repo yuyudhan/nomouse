@@ -22,6 +22,7 @@ pub mod glyph;
 pub mod hints;
 pub mod hotkey;
 pub mod platform;
+pub mod scroll;
 pub mod search;
 pub mod session;
 
@@ -35,4 +36,5 @@ pub use platform::{
     ElementSource, Frame, HotkeyId, HotkeySource, InputEvent, InputInjector, Overlay, Platform,
     PlatformError, Scope,
 };
+pub use scroll::{ScrollEvent, ScrollSession};
 pub use session::{HintSession, KeyBindings, SessionEvent};

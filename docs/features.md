@@ -93,13 +93,13 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 
 | Id | Feature | macOS | Linux | Pri | Status (mac / X11 / Wayland / Windows) |
 | --- | --- | --- | --- | --- | --- |
-| NM-SCRL-01 | Scroll mode labels scrollable areas; pick one, then `h`/`j`/`k`/`l` | `AXScrollArea` + wheel `CGEvent` | AT-SPI scroll panes + wheel buttons / discrete axis | P0 | done (all) |
+| NM-SCRL-01 | Scroll mode labels scrollable areas (digits) and scrolls with `h`/`j`/`k`/`l`; without one, pick an element to scroll | `AXScrollArea` + wheel `CGEvent` | AT-SPI scroll panes + wheel buttons / discrete axis | P0 | done (all) |
 | NM-SCRL-02 | Page scroll `d`/`u` (and Space) | wheel × 5 | same | P0 | done (all) |
-| NM-SCRL-03 | `gg` top, `G` bottom | many wheel steps or `AXScrollToVisible` on first/last child | wheel or AT-SPI `scroll_to` | P1 | missing |
-| NM-SCRL-04 | Dash scroll: Shift-`hjkl` at a separate, configurable speed | wheel | wheel | P1 | missing |
-| NM-SCRL-05 | Tab/Shift-Tab cycle scroll areas; digits `0`-`9` jump to one; the largest is preselected | core | core | P1 | missing |
+| NM-SCRL-03 | `gg` top, `G` bottom | many wheel steps or `AXScrollToVisible` on first/last child | 500 wheel steps (core `scroll::EDGE_STEPS`; X11 lets go of a held Shift around the wheel) | P1 | partial (core; not verified on macOS) / done / done / partial (core; not verified) |
+| NM-SCRL-04 | Dash scroll: Shift-`hjkl` at a separate, configurable speed | wheel | wheel; `scroll.dash_step` | P1 | partial (core; not verified on macOS) / done / done / partial (core; not verified) |
+| NM-SCRL-05 | Tab/Shift-Tab cycle scroll areas; digits `0`-`9` jump to one; the largest is preselected | core | core `ScrollSession` | P1 | partial (core; not verified on macOS) / done / done / partial (core; not verified) |
 | NM-SCRL-06 | Smooth (pixel) scrolling instead of wheel notches | `kCGScrollEventUnitPixel` | `AXIS_VALUE120` / virtual pointer axis | P2 | missing |
-| NM-SCRL-07 | Highlight border around the active scroll area | overlay | overlay | P1 | missing |
+| NM-SCRL-07 | Highlight border around the active scroll area | overlay | `Frame::area`, outlined by the shared renderer | P1 | partial (the macOS overlay draws no outline yet) / done / done / missing |
 
 ### Hotkeys and keys (KEY)
 
@@ -165,9 +165,9 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | Priority | Features | Done | Partial | Missing |
 | --- | --- | --- | --- | --- |
 | P0 | 29 | 26 | 2 | 1 |
-| P1 | 25 | 5 | 8 | 12 |
+| P1 | 25 | 5 | 12 | 8 |
 | P2 | 17 | 0 | 3 | 14 |
-| **All** | **71** | **31** | **13** | **27** |
+| **All** | **71** | **31** | **17** | **23** |
 
 A feature counts as done when it is done on macOS and Linux X11 (Wayland limits are listed per
 row). The three open P0 items are all macOS distribution and onboarding: the signed and
