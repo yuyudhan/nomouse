@@ -112,6 +112,8 @@ jobs:
                   sudo apt-get update
                   sudo apt-get install -y --no-install-recommends sway xwayland wtype grim \
                       dbus-daemon at-spi2-core python3-gi gir1.2-gtk-3.0 fonts-dejavu-core
+            # Job logs need a GitHub login; a failure's FAIL lines and log tail are also written as an
+            # annotation, which anyone can read from the check run.
             - name: e2e (native Wayland and XWayland GTK)
               run: |
                   set +e
