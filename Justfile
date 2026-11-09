@@ -59,6 +59,11 @@ deny:
 e2e *args:
     scripts/e2e-linux.sh {{args}}
 
+# macOS end-to-end tests against a Swift fixture app on the logged-in desktop (needs the
+# Accessibility grant; moves the real pointer). `--bin <path>` tests another nomouse binary.
+e2e-macos *args:
+    scripts/e2e-macos.sh {{args}}
+
 # Line coverage of nomouse-core and the binary's non-OS logic; fails below the floors.
 coverage *args:
     scripts/coverage.sh {{args}}

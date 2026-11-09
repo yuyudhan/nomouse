@@ -12,6 +12,7 @@ the machine either fails or says `SKIP:` with the reason.
 | Backend contract, real | the same suite over the real backend | Linux (e2e), Windows, macOS | see below |
 | OS integration | `crates/nomouse-windows/tests/winforms.rs`, `crates/nomouse-macos/tests/macos_accessibility.rs` | their OS | `just test` |
 | End to end, Linux X11 | `scripts/e2e-linux.sh` | Linux | `just e2e` |
+| End to end, macOS | `scripts/e2e-macos.sh` | a Mac with the Accessibility grant | `just e2e-macos` |
 | Coverage floor | `scripts/coverage.sh` | Linux | `just coverage` |
 
 `just verify` (the pre-push hook) runs format, guards, typos, shellcheck, clippy for every
@@ -135,6 +136,36 @@ Debian/Ubuntu packages: `sway xwayland wtype grim dbus-daemon at-spi2-core pytho
 gir1.2-gtk-3.0`. The `/dev/uinput` path cannot run there (the headless backend reads no
 libinput devices); it is covered by unit tests of the event translation and needs a manual
 check on a compositor without virtual pointer (KDE).
+
+## End to end on macOS
+
+`scripts/e2e-macos.sh` (`just e2e-macos`) runs on the logged-in, unlocked desktop of a Mac:
+macOS has no private display, so it moves the real pointer and types for real. It compiles two
+Swift programs with `swiftc` (Xcode or the Command Line Tools):
+
+- `scripts/e2e/mac_app.swift`, the fixture: one window `nomouse-e2e` with buttons `One`..`Ten`,
+  a `Context` button with a context menu, a text field, a 200-row list and a drag `Source` and
+  `Target`. Each control updates a static text with an accessibility identifier
+  (`count.<button>`, `menus`, `drops`, `first-row`, `field`).
+- `scripts/e2e/mac_probe.swift`: reads those counters through Accessibility (`value`), brings
+  the fixture to the front (`front`), counts a process's windows as Accessibility lists them
+  (`windows`), and posts key events (`type`, `key ctrl+space`) on the key that types each
+  character in the current layout, with real modifier key presses around chords.
+
+With a private `XDG_CONFIG_HOME` and `XDG_RUNTIME_DIR` (the user's config and daemon are never
+touched) it asserts: 10/10 left clicks on `One`..`Ten`; a right click opens the context menu
+without a left click; a double click adds two; a drag moves the Source onto the Target; scroll
+mode scrolls the list; search `seven` + Enter clicks `Seven`; the daemon's `ctrl+space` hotkey
+then a label clicks; `nomouse hints` hands its mode to the daemon, and after Escape the daemon
+has no window left. `--bin <path>` tests another binary (a bundle's
+`nomouse.app/Contents/MacOS/nomouse` runs in place, so its own grant applies); `--keep` keeps
+the logs.
+
+The grant belongs to the process that runs the script: the terminal, or `sshd` for a remote
+run. Without it the script fails within seconds and says where to grant it; under `CI=true`
+(GitHub's runners have no grant) it prints `SKIP:` and passes. The determinism rules above
+apply: bounded polling only for the fixture window and the first scan, one attempt per
+assertion, every `nomouse` reaped with a deadline.
 
 ## Coverage
 

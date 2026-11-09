@@ -33,6 +33,9 @@ the release's section; add entries under Unreleased as changes land.
   compositors bind hotkeys); `--standalone` runs it in-process.
 - `scripts/e2e-wayland.sh`: end-to-end test on a private headless Sway with native and
   XWayland GTK windows.
+- `scripts/e2e-macos.sh` (`just e2e-macos`): end-to-end test on the Mac desktop against a Swift
+  fixture app, asserting clicks, right click, double click, drag, scroll, search and the daemon
+  through Accessibility.
 - macOS backend: AX tree walk, NSPanel overlay, CGEvent input and event-tap hotkeys.
 - Windows backend: UI Automation elements, layered overlay, SendInput and hotkeys.
 - `nomouse doctor` reports whether the platform's accessibility and input access work.
