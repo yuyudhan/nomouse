@@ -5,8 +5,10 @@
 #
 # Usage: scripts/release/build.sh TARGET
 #
-# Native targets build with cargo. aarch64-unknown-linux-gnu from another machine links with
-# aarch64-linux-gnu-gcc when installed (CI installs it), else with cargo-zigbuild (needs zig).
+# Linux targets build on a machine of that architecture: nomouse-settings links the system's
+# GTK 4 and libadwaita, which a cross linker cannot find (the release workflow uses an arm64
+# runner for aarch64). macOS and Windows targets build with cargo from any host that has their
+# toolchain.
 set -euo pipefail
 
 target="${1:-}"
@@ -22,16 +24,11 @@ host="$(rustc -vV | sed -n 's/^host: //p')"
 args=(--release --locked --package nomouse --target "$target")
 [[ "$target" == *-linux-* ]] && args+=(--package nomouse-settings)
 
-if [ "$target" = "$host" ] || [[ "$target" == *-apple-darwin ]] || [[ "$target" == *-windows-* ]]; then
-    cargo build "${args[@]}" >&2
-elif [ "$target" = "aarch64-unknown-linux-gnu" ] && command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
-    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo build "${args[@]}" >&2
-elif command -v cargo-zigbuild >/dev/null 2>&1; then
-    cargo zigbuild "${args[@]}" >&2
-else
-    echo "build: no linker for ${target}: install aarch64-linux-gnu-gcc or cargo-zigbuild + zig" >&2
+if [[ "$target" == *-linux-* ]] && [ "$target" != "$host" ]; then
+    echo "build: ${target} links GTK 4 for the settings window: build it on a ${target%%-*} Linux machine (this is ${host})" >&2
     exit 1
 fi
+cargo build "${args[@]}" >&2
 
 target_dir="${CARGO_TARGET_DIR:-${root}/target}"
 binary="${target_dir}/${target}/release/nomouse"

@@ -77,7 +77,7 @@ The tag push runs `.github/workflows/release.yml`:
 
 | Job | Builds |
 |-----|--------|
-| Linux (ubuntu-22.04, glibc 2.35) | `nomouse-x86_64-unknown-linux-gnu.tar.gz`, `nomouse-aarch64-unknown-linux-gnu.tar.gz` (cross-linked with gcc-aarch64-linux-gnu), `nomouse_amd64.deb`, `nomouse_arm64.deb` (cargo-deb) |
+| Linux (ubuntu-22.04, glibc 2.35) | `nomouse-x86_64-unknown-linux-gnu.tar.gz`, `nomouse-aarch64-unknown-linux-gnu.tar.gz` (built on an arm64 runner: the settings window links GTK 4), `nomouse_amd64.deb`, `nomouse_arm64.deb` (cargo-deb) |
 | macOS | arm64 and x86_64 joined with `lipo` into `nomouse-universal-apple-darwin.tar.gz`; the same binary in `nomouse.app` (`scripts/release/app.sh`) as `nomouse-universal-apple-darwin.app.zip` and in the disk image `nomouse-universal-apple-darwin.dmg` (`scripts/release/dmg.sh`); `scripts/test-app.sh` checks the bundle, the image and the cask |
 | Windows | `nomouse-x86_64-pc-windows-msvc.zip` |
 | Assemble | `install.sh`, `install.ps1`, `nomouse.rb` (Homebrew formula from `packaging/homebrew/`), `nomouse-app.rb` (the cask, when the disk image is there), a `.sha256` per asset and `SHA256SUMS`; tests `install.sh` against the built archive, then creates the GitHub release with the changelog section as notes |
@@ -88,8 +88,8 @@ it fails the run.
 
 Running the workflow by hand is a dry run: `gh workflow run release.yml --ref nightly` builds
 and packs every asset and uploads them as the `release-X.Y.Z` workflow artifact, with no tag and
-no release. `just release-dry-run` does the Linux half locally (needs `cargo-deb`, and for
-aarch64 either `aarch64-linux-gnu-gcc` or `cargo-zigbuild` with zig).
+no release. `just release-dry-run` does this machine's Linux architecture locally (needs
+`cargo-deb`, `libgtk-4-dev` and `libadwaita-1-dev`).
 
 Homebrew: `nomouse.rb` (the formula, the bare command line) and `nomouse-app.rb` (the cask,
 `nomouse.app` from the disk image) are attached to every release; publishing them means copying

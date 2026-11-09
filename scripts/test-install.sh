@@ -75,16 +75,27 @@ fi
 
 # 3. The installed binary runs.
 if version="$(sandbox "${home}/.local/bin/nomouse" --version)" && [[ "$version" == "nomouse "* ]]; then
+    version_installed="$version"
     pass "installed binary runs: ${version}"
 else
     fail "nomouse --version: ${version:-no output}"
 fi
 
+# 3a. The settings window is installed beside it and runs (--version needs no display).
+if version="$(sandbox "${home}/.local/bin/nomouse-settings" --version)" &&
+    [ "$version" = "nomouse-settings ${version_installed#nomouse }" ]; then
+    pass "the settings window is installed beside nomouse: ${version}"
+else
+    fail "nomouse-settings --version: ${version:-no output}"
+fi
+
 # 3b. The app launcher entry and its icons are installed, and the .deb ships the same files.
 entry="${home}/.local/share/applications/io.github.yuyudhan.nomouse.desktop"
 if grep -qxF "Exec=\"${home}/.local/bin/nomouse\" launch" "$entry" 2>/dev/null &&
-    [ -f "${home}/.local/share/icons/hicolor/256x256/apps/io.github.yuyudhan.nomouse.png" ]; then
-    pass "the app launcher entry runs the installed nomouse and has its icons"
+    [ -f "${home}/.local/share/icons/hicolor/256x256/apps/io.github.yuyudhan.nomouse.png" ] &&
+    [ -f "${home}/.local/share/icons/hicolor/symbolic/apps/io.github.yuyudhan.nomouse-symbolic.svg" ] &&
+    [ -f "${home}/.local/share/icons/hicolor/symbolic/apps/io.github.yuyudhan.nomouse-paused-symbolic.svg" ]; then
+    pass "the app launcher entry runs the installed nomouse and has its icons and the tray icons"
 else
     fail "no app launcher entry at ${entry}"
 fi
@@ -99,6 +110,17 @@ if [ -f "$deb" ] && command -v dpkg-deb >/dev/null 2>&1; then
     else
         fail "the .deb's usr/share differs from the tarball's share/"
     fi
+    if cmp -s "${work}/deb/usr/bin/nomouse-settings" "${work}/tar/nomouse-x86_64-unknown-linux-gnu/nomouse-settings"; then
+        pass "the .deb and the tarball ship the same nomouse-settings"
+    else
+        fail "the .deb's usr/bin/nomouse-settings is missing or differs from the tarball's"
+    fi
+    if dpkg-deb -f "$deb" Recommends | grep -q 'libgtk-4-1' &&
+        dpkg-deb -f "$deb" Recommends | grep -q 'libadwaita-1-0'; then
+        pass "the .deb recommends GTK 4 and libadwaita"
+    else
+        fail "the .deb's Recommends: $(dpkg-deb -f "$deb" Recommends)"
+    fi
 else
     echo "skip - no ${deb} or no dpkg-deb: the .deb's launcher files are not compared"
 fi
@@ -106,9 +128,9 @@ fi
 # 4. Uninstall keeps the config.
 sandbox "${home}/.local/bin/nomouse" config init >/dev/null
 out="$(sandbox bash "${dist}/install.sh" --uninstall 2>&1)"
-if [ ! -e "${home}/.local/bin/nomouse" ] && [ -f "${home}/.config/nomouse/config.toml" ] &&
-    [ ! -e "$entry" ]; then
-    pass "--uninstall removes the binary and the launcher entry and keeps the config"
+if [ ! -e "${home}/.local/bin/nomouse" ] && [ ! -e "${home}/.local/bin/nomouse-settings" ] &&
+    [ -f "${home}/.config/nomouse/config.toml" ] && [ ! -e "$entry" ]; then
+    pass "--uninstall removes both binaries and the launcher entry and keeps the config"
 else
     fail "--uninstall: ${out}"
 fi
