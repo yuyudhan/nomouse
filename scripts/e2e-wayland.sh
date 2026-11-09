@@ -206,7 +206,12 @@ if [[ -n "$chrome" ]]; then
     # XWayland's display name: Sway hands it to the programs it starts.
     swaymsg "exec sh -c 'echo \$DISPLAY >$tmp/xdisplay'" >/dev/null
     wait_for 5 test -s "$tmp/xdisplay" || { echo "no XWayland display"; exit 1; }
-    DISPLAY="$(cat "$tmp/xdisplay")" "$chrome" --ozone-platform=x11 --force-renderer-accessibility --user-data-dir="$tmp/chrome" --no-first-run \
+    chrome_flags=()
+    # GitHub's Ubuntu runners forbid the unprivileged user namespaces Chrome's sandbox needs
+    # (AppArmor), so Chrome aborts at start there; the throwaway CI profile runs without it.
+    # Local runs keep the sandbox.
+    if [[ "${CI:-}" == true ]]; then chrome_flags+=(--no-sandbox); fi
+    DISPLAY="$(cat "$tmp/xdisplay")" "$chrome" "${chrome_flags[@]}" --ozone-platform=x11 --force-renderer-accessibility --user-data-dir="$tmp/chrome" --no-first-run \
         --no-default-browser-check --disable-gpu --disable-dev-shm-usage --password-store=basic \
         --disable-features=Translate --new-window "$far" >"$tmp/chrome-stderr.log" 2>&1 &
     chrome_pid=$!
