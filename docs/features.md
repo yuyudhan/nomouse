@@ -152,7 +152,7 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | Id | Feature | macOS | Linux | Pri | Status |
 | --- | --- | --- | --- | --- | --- |
 | NM-DIST-01 | Release archives with checksums and a no-sudo installer | universal binary | x86_64, aarch64 tarballs | P0 | done |
-| NM-DIST-02 | Signed and notarized `nomouse.app` (stable Accessibility grant across updates) in a `.dmg` | `codesign --options runtime`, `notarytool`, `stapler` | n/a | P0 | missing (needs the owner's Developer ID) |
+| NM-DIST-02 | Signed and notarized `nomouse.app` (stable Accessibility grant across updates) in a `.dmg` | `codesign --options runtime`, `notarytool`, `stapler` | n/a | P0 | partial (`scripts/release/app.sh` builds an ad-hoc signed `nomouse.app`; Developer ID signing, notarization and the `.dmg` need the owner's certificate) |
 | NM-DIST-03 | Homebrew: cask for the `.app` | `yuyudhan/homebrew-tap` | n/a | P0 | partial (a formula for the bare binary) |
 | NM-DIST-04 | `.deb` | n/a | cargo-deb | P0 | done |
 | NM-DIST-05 | `.rpm` | n/a | cargo-generate-rpm | P1 | missing |
@@ -164,10 +164,10 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 
 | Priority | Features | Done | Partial | Missing |
 | --- | --- | --- | --- | --- |
-| P0 | 29 | 26 | 2 | 1 |
+| P0 | 29 | 26 | 3 | 0 |
 | P1 | 25 | 4 | 4 | 17 |
 | P2 | 17 | 0 | 3 | 14 |
-| **All** | **71** | **30** | **9** | **32** |
+| **All** | **71** | **30** | **10** | **31** |
 
 A feature counts as done when it is done on macOS and Linux X11 (Wayland limits are listed per
 row). The three open P0 items are all macOS distribution and onboarding: the signed and

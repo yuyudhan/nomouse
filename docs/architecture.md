@@ -185,7 +185,8 @@ exits non-zero when any check fails. When the daemon cannot start, the backend's
 | Target | Artifact | State |
 |--------|----------|-------|
 | macOS | universal binary tarball + `install.sh` | done |
-| macOS | `nomouse.app` (LSUIElement agent, bundle id to be decided), Developer ID signed with hardened runtime, notarized and stapled, in a `.dmg` | planned (needs the owner's certificate) |
+| macOS | `nomouse.app` (LSUIElement agent, bundle id `com.yuyudhan.nomouse`, icon, version from `Cargo.toml`), ad-hoc signed, zipped: `scripts/release/app.sh` | done |
+| macOS | `nomouse.app` Developer ID signed with hardened runtime, notarized and stapled, in a `.dmg` | planned (needs the owner's certificate) |
 | macOS | Homebrew cask in `yuyudhan/homebrew-tap` pointing at the `.dmg` (the formula stays for the CLI) | planned |
 | Linux | x86_64/aarch64 tarballs + `install.sh`, `.deb` (cargo-deb) | done |
 | Linux | `.rpm` (cargo-generate-rpm), AUR `nomouse-bin`, AppImage; each ships the uinput udev rule and an XDG autostart entry | planned |

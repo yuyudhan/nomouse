@@ -36,6 +36,9 @@ the release's section; add entries under Unreleased as changes land.
 - `scripts/e2e-macos.sh` (`just e2e-macos`): end-to-end test on the Mac desktop against a Swift
   fixture app, asserting clicks, right click, double click, drag, scroll, search and the daemon
   through Accessibility.
+- `nomouse.app` (`scripts/release/app.sh`, `just app`): the macOS binary in an ad-hoc signed
+  agent bundle (no Dock icon, bundle id `com.yuyudhan.nomouse`, icon), released as
+  `nomouse-universal-apple-darwin.app.zip`; `scripts/test-app.sh` checks it.
 - macOS backend: AX tree walk, NSPanel overlay, CGEvent input and event-tap hotkeys.
 - Windows backend: UI Automation elements, layered overlay, SendInput and hotkeys.
 - `nomouse doctor` reports whether the platform's accessibility and input access work.

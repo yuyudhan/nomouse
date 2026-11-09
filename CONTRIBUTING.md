@@ -78,7 +78,7 @@ The tag push runs `.github/workflows/release.yml`:
 | Job | Builds |
 |-----|--------|
 | Linux (ubuntu-22.04, glibc 2.35) | `nomouse-x86_64-unknown-linux-gnu.tar.gz`, `nomouse-aarch64-unknown-linux-gnu.tar.gz` (cross-linked with gcc-aarch64-linux-gnu), `nomouse_amd64.deb`, `nomouse_arm64.deb` (cargo-deb) |
-| macOS | arm64 and x86_64 joined with `lipo` into `nomouse-universal-apple-darwin.tar.gz` |
+| macOS | arm64 and x86_64 joined with `lipo` into `nomouse-universal-apple-darwin.tar.gz`, and `nomouse-universal-apple-darwin.app.zip`: the same binary in `nomouse.app` (`scripts/release/app.sh`, ad-hoc signed) |
 | Windows | `nomouse-x86_64-pc-windows-msvc.zip` |
 | Assemble | `install.sh`, `install.ps1`, `nomouse.rb` (Homebrew formula from `packaging/homebrew/`), a `.sha256` per asset and `SHA256SUMS`; tests `install.sh` against the built archive, then creates the GitHub release with the changelog section as notes |
 
@@ -96,10 +96,12 @@ repository (`yuyudhan/homebrew-tap`, `Formula/nomouse.rb`).
 
 ### macOS signing and notarization (not done yet)
 
-The macOS binary is unsigned (the linker's ad-hoc signature only). That is enough for the
+The macOS binary and `nomouse.app` carry ad-hoc signatures only. That is enough for the
 installer: curl sets no quarantine flag, so Gatekeeper does not stop it. A download through a
 browser is quarantined and blocked, and macOS ties Accessibility and Input Monitoring grants to
-the code signature, so an unsigned binary loses them on every update. Signing needs the owner's
+the code signature: an ad-hoc signature's designated requirement is its code hash, so the grant
+survives rebuilding the same binary (`scripts/test-app.sh` checks that) but not an update.
+Signing needs the owner's
 Apple Developer Program membership and, as repository secrets, a Developer ID Application
 certificate (`.p12` and password) plus an App Store Connect API key for notarization. The
 macOS job would then import the certificate into a temporary keychain, run

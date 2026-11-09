@@ -105,7 +105,12 @@ jobs:
                   "${{ steps.build.outputs.binary }}" --version
                   "${{ steps.build.outputs.binary }}" --version | grep -q "${{ needs.version.outputs.version }}"
             - name: Package
-              run: scripts/release/package.sh universal-apple-darwin "${{ steps.build.outputs.binary }}" dist
+              run: |
+                  scripts/release/package.sh universal-apple-darwin "${{ steps.build.outputs.binary }}" dist
+                  scripts/release/app.sh "${{ steps.build.outputs.binary }}" dist
+                  rm -rf dist/nomouse.app
+            - name: Test nomouse.app
+              run: scripts/test-app.sh --bin "${{ steps.build.outputs.binary }}"
             - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
               with:
                   name: assets-universal-apple-darwin

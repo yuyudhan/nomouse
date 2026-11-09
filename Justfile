@@ -87,6 +87,15 @@ release-dry-run:
 test-install dist="target/dist":
     scripts/test-install.sh {{dist}}
 
+# Build nomouse.app (ad-hoc signed) and its zip from a release build into target/app/.
+app:
+    cargo build --release -p nomouse
+    scripts/release/app.sh target/release/nomouse target/app
+
+# Build nomouse.app twice and check its Info.plist, signature, stable requirement and zip.
+test-app *args:
+    scripts/test-app.sh {{args}}
+
 # Cut release VERSION: bump, changelog, verify, commit, tag, push. Only on the owner's word.
 release version:
     scripts/release/release.sh {{version}}
