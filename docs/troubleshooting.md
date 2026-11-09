@@ -11,10 +11,10 @@ NOMOUSE_LOG=debug nomouse hints --standalone
 
 ## The install
 
-**`curl: (56) The requested URL returned error: 404`**
-The repository is private, so its release downloads need a GitHub login. Install with your
-token, as [install.md](install.md#the-one-line-install) shows, or with
-`gh release download` and `install.sh --from`.
+**`curl: (22)` or `(56) The requested URL returned error`**
+The download URL could not be reached, often through a proxy. Download the release assets from
+the [releases page](https://github.com/yuyudhan/nomouse/releases) and install from the folder
+with `install.sh --from`, as [install.md](install.md#the-one-line-install) shows.
 
 **`checksum mismatch`**
 The download was cut off or changed on the way. Nothing was installed; run the installer

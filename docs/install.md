@@ -30,20 +30,11 @@ system.
 If `~/.local/bin` is not on your `PATH`, the installer says so and gives the line to add to
 `~/.profile` or `~/.zshrc`.
 
-While the repository is private, the public download URL answers 404. Download through the
-GitHub API with your token instead (any account that can read the repository):
+Offline, or behind a proxy that blocks the script: download the release assets and install from
+the folder (`gh release download --repo yuyudhan/nomouse --pattern '*' --dir nomouse-release`
+does it in one step), then:
 
 ```sh
-curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
-    -H "Accept: application/octet-stream" \
-    "$(gh api repos/yuyudhan/nomouse/releases/latest --jq '.assets[] | select(.name == "install.sh") | .url')" \
-    | GH_TOKEN="$(gh auth token)" bash
-```
-
-or, simpler, fetch the release with `gh` and install from the folder:
-
-```sh
-gh release download --repo yuyudhan/nomouse --pattern '*' --dir nomouse-release
 bash nomouse-release/install.sh --from nomouse-release
 ```
 
@@ -181,7 +172,7 @@ curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.
 |-------------|--------|
 | `NOMOUSE_INSTALL_DIR` | where the `nomouse` command goes (default `~/.local/bin`) |
 | `NOMOUSE_APP_DIR` | macOS: where `nomouse.app` goes (default `/Applications`) |
-| `GH_TOKEN` or `GITHUB_TOKEN` | download through the GitHub API with this token (works for a private repository) |
+| `GH_TOKEN` or `GITHUB_TOKEN` | download through the GitHub API with this token (avoids anonymous rate limits) |
 | `NOMOUSE_INSTALL_BASE` | a URL holding the release assets, for mirrors |
 | `NOMOUSE_API_BASE` | the GitHub API base for token downloads (default `https://api.github.com`) |
 

@@ -21,15 +21,6 @@ One command for macOS (Apple silicon and Intel) and Linux (x86_64 and aarch64, X
 No sudo: it verifies the download's SHA-256, installs `nomouse.app` on macOS or the `nomouse`
 binary in `~/.local/bin` on Linux, and prints the next step for your system.
 
-> [!NOTE]
-> While the repository is private, that URL answers 404 to anyone not logged in. Until it is
-> public, install with the GitHub CLI:
->
-> ```sh
-> gh release download --repo yuyudhan/nomouse --pattern '*' --dir nomouse-release
-> bash nomouse-release/install.sh --from nomouse-release
-> ```
-
 Debian and Ubuntu `.deb` packages, the Windows build, every installer option and building from
 source: [docs/install.md](docs/install.md).
 
