@@ -49,7 +49,9 @@ cleanup() {
         kill "$pid" 2>/dev/null || true
     done
     wait 2>/dev/null || true
-    if ((keep)); then echo "kept $tmp"; else rm -rf "$tmp"; fi
+    # Chrome's helper processes outlive the browser process and keep writing into its profile.
+    pkill -f -- "--user-data-dir=$tmp" 2>/dev/null || true
+    if ((keep)); then echo "kept $tmp"; else rm -rf "$tmp" || { sleep 1; rm -rf "$tmp"; }; fi
 }
 trap cleanup EXIT
 
@@ -184,6 +186,43 @@ if ((hold)); then
     sleep infinity
 fi
 
+# The fake appearance portal (see the theme checks below) owns the portal's bus name from the
+# start: Chrome calls the portal at startup, and a real xdg-desktop-portal that D-Bus activates
+# for it would hold the name against the fake one.
+portal_state="$tmp/color-scheme"
+echo 1 >"$portal_state"
+python3 "$root/scripts/e2e/fake_portal.py" "$portal_state" &
+pids+=($!)
+# Chrome (on XWayland, in the same Sway) starts first and waits on workspace 2 for its checks.
+# Native Wayland Chrome is not used: it reports its extents about 8 px off its drawn page (its
+# window shadow), which misses a 17 px link; and a Chrome started after wtype's virtual
+# keyboards came and went dies in xkb_state_update_mask.
+chrome="$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)"
+chrome_up=0
+chrome_config="$XDG_CONFIG_HOME/nomouse/config.toml"
+if [[ -n "$chrome" ]]; then
+    far='data:text/html,<title>tall</title><body style="margin:40px"><button>Near</button><div style="height:6000px"></div><a href="%23x" onclick="document.title=%27clicked faraway%27">Faraway link</a></body>'
+    swaymsg workspace 2 >/dev/null
+    # XWayland's display name: Sway hands it to the programs it starts.
+    swaymsg "exec sh -c 'echo \$DISPLAY >$tmp/xdisplay'" >/dev/null
+    wait_for 5 test -s "$tmp/xdisplay" || { echo "no XWayland display"; exit 1; }
+    DISPLAY="$(cat "$tmp/xdisplay")" "$chrome" --ozone-platform=x11 --force-renderer-accessibility --user-data-dir="$tmp/chrome" --no-first-run \
+        --no-default-browser-check --disable-gpu --disable-dev-shm-usage --password-store=basic \
+        --disable-features=Translate --new-window "$far" >"$tmp/chrome-stderr.log" 2>&1 &
+    chrome_pid=$!
+    pids+=("$chrome_pid")
+    chrome_title() { swaymsg -t get_tree | python3 "$root/scripts/e2e/sway_tree.py" pid "$chrome_pid" name; }
+    chrome_title_is() { [[ "$(chrome_title)" == "${1%\*}"* ]]; }
+    chrome_focus() { swaymsg "[pid=$chrome_pid] focus" >/dev/null; sleep 0.2; }
+    if wait_for 30 chrome_title_is "tall*"; then
+        chrome_up=1
+        # The renderer fills its accessibility tree seconds after the window maps.
+        python3 "$root/scripts/e2e/a11y_ready.py" "$chrome_pid" "Near" 30 ||
+            echo "  Chrome never exposed the page over AT-SPI; the checks below will show it"
+    fi
+    swaymsg workspace 1 >/dev/null
+fi
+
 echo "--- nomouse doctor on headless Sway"
 "$bin" doctor || true
 
@@ -269,6 +308,76 @@ if run_hints "$log" hints; then
 else
     kill "$hints_pid" 2>/dev/null || true
     fail "cancel: no labels"
+fi
+
+echo "--- Chrome on Wayland: a link 6000 px below the viewport (hints.browser)"
+if [[ -z "$chrome" ]]; then
+    echo "SKIP: no Chromium/Chrome installed"
+else
+    if ((chrome_up)); then
+        # fast (the default): only the viewport is read, so the far link is not found.
+        chrome_focus
+        log="$tmp/tall-fast.log"
+        if run_hints "$log" search; then
+            wtype "faraway link"
+            wtype -k Return
+            sleep 1
+            if chrome_title_is "tall*"; then pass "Chrome browser = fast: the link 6000 px down is not reached"; else fail "Chrome browser = fast: title '$(chrome_title)'"; fi
+            wtype -k Escape
+            reap "$hints_pid" || true
+        else
+            kill "$hints_pid" 2>/dev/null || true
+            fail "Chrome browser = fast: no search box"
+        fi
+
+        mkdir -p "$XDG_CONFIG_HOME/nomouse"
+        printf '[hints]\nbrowser = "exhaustive"\n' >"$chrome_config"
+        chrome_focus
+        log="$tmp/tall-hints.log"
+        if run_hints "$log" hints; then
+            if grep -qE 'hint [a-z]+ = [A-Za-z]+ "Near"$' "$log" && ! grep -q '"Faraway link"$' "$log"; then
+                pass "Chrome browser = exhaustive: hint mode labels the visible button and not the far link"
+            else
+                fail "Chrome browser = exhaustive: hint mode labels: $(grep 'hint ' "$log" | tr '\n' ' ')"
+            fi
+            wtype -k Escape
+            reap "$hints_pid" || true
+        else
+            kill "$hints_pid" 2>/dev/null || true
+            fail "Chrome browser = exhaustive: no labels"
+        fi
+        # exhaustive: search finds the link, scrolls it into view and clicks it. Five runs, each
+        # after a reload that puts the title and the scroll position back.
+        far_ok=0
+        for i in 1 2 3 4 5; do
+            chrome_focus
+            wtype -k F5
+            wait_for 10 chrome_title_is "tall*" || true
+            sleep 1
+            wtype -M ctrl -k Home -m ctrl
+            sleep 0.5
+            log="$tmp/tall-exhaustive-$i.log"
+            if run_hints "$log" search; then
+                wtype "faraway link"
+                wtype -k Return
+                reap "$hints_pid" || true
+                if wait_for 5 chrome_title_is "clicked faraway*"; then
+                    far_ok=$((far_ok + 1))
+                else
+                    echo "  run $i: title '$(chrome_title)'"
+                fi
+            else
+                kill "$hints_pid" 2>/dev/null || true
+                echo "  run $i: no search box"
+            fi
+        done
+        if ((far_ok == 5)); then pass "Chrome browser = exhaustive: search scrolled to the link 6000 px down and clicked it (5/5)"; else fail "Chrome browser = exhaustive: $far_ok/5 clicks landed"; fi
+        rm -f "$chrome_config"
+    else
+        fail "Chrome window with the tall page did not appear"
+        sed 's/^/    /' "$tmp/chrome-stderr.log" | tail -n 20
+    fi
+    kill "$chrome_pid" 2>/dev/null || true
 fi
 
 echo "--- daemon: nomouse hints over the socket, and a Sway bindsym"
@@ -378,10 +487,6 @@ else
 fi
 
 echo "--- overlay.theme = \"auto\" follows the appearance portal (a fake one) without a restart"
-portal_state="$tmp/color-scheme"
-echo 1 >"$portal_state"
-python3 "$root/scripts/e2e/fake_portal.py" "$portal_state" &
-pids+=($!)
 portal_up() {
     dbus-send --session --dest=org.freedesktop.portal.Desktop --print-reply /org/freedesktop/portal/desktop \
         org.freedesktop.portal.Settings.Read string:org.freedesktop.appearance string:color-scheme >/dev/null 2>&1

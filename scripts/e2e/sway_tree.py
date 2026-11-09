@@ -2,6 +2,7 @@
 """Reads `swaymsg -t get_tree` JSON on stdin for scripts/e2e-wayland.sh.
 
     sway_tree.py field <xdg_shell|xwayland> <key>   the key (pid, name, ...) of that window
+    sway_tree.py pid <pid> <key>                     the key (name, ...) of that process's window
     sway_tree.py layout                              one line per application window
 """
 
@@ -23,6 +24,11 @@ def main():
         for window in windows(tree):
             if window.get("shell") == shell:
                 sys.stdout.write(f"{window[key]}\n")
+                return
+    elif sys.argv[1] == "pid":
+        for window in windows(tree):
+            if window["pid"] == int(sys.argv[2]):
+                sys.stdout.write(f"{window[sys.argv[3]]}\n")
                 return
     elif sys.argv[1] == "layout":
         for window in windows(tree):

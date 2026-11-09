@@ -84,7 +84,10 @@ a private D-Bus session bus, `at-spi-bus-launcher` and i3 with a private IPC soc
 2. a GTK 3 window (`scripts/e2e/gtk_app.py`): 10 single clicks, continuous mode, right click,
    semantic (AT-SPI action) click with the pointer parked away, scroll mode;
 3. the hotkey daemon: single instance, five hotkey-to-labels latency samples, a click;
-4. a Chromium/Chrome `data:` page with `--force-renderer-accessibility`;
+4. a Chromium/Chrome `data:` page with `--force-renderer-accessibility`, and a second page with
+   a link 6000 px below the viewport (`hints.browser`): `fast` search does not reach it, hint
+   mode under `exhaustive` labels only what is in view, and `exhaustive` search scrolls to the
+   link and clicks it five times out of five;
 5. a Qt 5 window (`scripts/e2e/qt_app.py`, PyQt5) with `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1`;
 6. no `nomouse-overlay` window is left behind.
 
@@ -128,7 +131,8 @@ content is offset inside its container), and types labels with `wtype`. It asser
 windows: 10/10 left clicks, a right click and scroll mode landing; that labels change the
 screen (`grim`) and leave it identical after Escape; that the daemon takes `nomouse hints` over
 its socket and from a Sway `bindsym Ctrl+space`; that a second daemon is refused and the socket
-is removed on exit. `--keep` keeps the temp dir with logs and screenshots. The same
+is removed on exit; and, with Chrome installed (native Wayland), the same `hints.browser`
+checks as on X11. `--keep` keeps the temp dir with logs and screenshots. The same
 determinism rules apply (bounded readiness polling, one attempt per assertion, every child
 reaped with a deadline).
 

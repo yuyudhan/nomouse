@@ -61,7 +61,9 @@ cleanup() {
     for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
     wait 2>/dev/null || true
     # NOMOUSE_E2E_KEEP=1 keeps the logs (nomouse debug logs, app stderr) for a failed run.
-    if [[ "${NOMOUSE_E2E_KEEP:-0}" == 1 ]]; then echo "logs kept in $tmp"; else rm -rf "$tmp"; fi
+    # Chrome's helper processes outlive the browser process and keep writing into its profile.
+    pkill -f -- "--user-data-dir=$tmp" 2>/dev/null || true
+    if [[ "${NOMOUSE_E2E_KEEP:-0}" == 1 ]]; then echo "logs kept in $tmp"; else rm -rf "$tmp" || { sleep 1; rm -rf "$tmp"; }; fi
 }
 trap cleanup EXIT
 
@@ -572,6 +574,85 @@ if ((chromium)); then
         fi
     else
         skip_or_fail "$require_chromium" "no Chromium/Chrome installed"
+    fi
+fi
+
+if ((chromium)); then
+    chrome="$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)"
+    if [[ -n "$chrome" ]]; then
+        echo "--- Chromium page with a link 6000 px below the viewport (hints.browser)"
+        far='data:text/html,<title>tall</title><body style="margin:40px"><button>Near</button><div style="height:6000px"></div><a href="%23x" onclick="document.title=%27clicked faraway%27">Faraway link</a></body>'
+        far_flags=()
+        if [[ "${CI:-}" == true ]]; then far_flags+=(--no-sandbox); fi
+        "$chrome" "${far_flags[@]}" --force-renderer-accessibility --user-data-dir="$tmp/chrome-tall" --no-first-run \
+            --no-default-browser-check --disable-gpu --disable-dev-shm-usage --password-store=basic \
+            --disable-features=Translate --new-window "$far" >"$tmp/chrome-tall-stderr.log" 2>&1 &
+        pids+=($!)
+        if wait_for 30 xdotool search --name '^tall' >/dev/null; then
+            tall_win="$(xdotool search --name '^tall' | head -n1)"
+            python3 "$root/scripts/e2e/a11y_ready.py" "$(xdotool getwindowpid "$tall_win")" "Near" 30 ||
+                echo "  Chromium never exposed the page over AT-SPI; the checks below will show it"
+            mkdir -p "$XDG_CONFIG_HOME/nomouse"
+
+            # fast (the default): only the viewport is read, so the far link is not found.
+            focus "$tall_win"
+            log="$tmp/tall-fast.log"
+            if run_hints "$log" search; then
+                xdotool type --delay 20 "faraway link"
+                xdotool key Return
+                reap "$hints_pid" || true
+                sleep 1
+                if title_is "$tall_win" "tall*"; then pass "browser = fast: the link 6000 px down is not reached"; else fail "browser = fast: title '$(title "$tall_win")'"; fi
+            else
+                fail "browser = fast: no search box"
+            fi
+
+            printf '[hints]\nbrowser = "exhaustive"\n' >"$XDG_CONFIG_HOME/nomouse/config.toml"
+            # exhaustive: hint mode labels only what is in view.
+            focus "$tall_win"
+            log="$tmp/tall-hints.log"
+            if run_hints "$log" hints; then
+                if grep -qE 'hint [a-z]+ = [A-Za-z]+ "Near"$' "$log" && ! grep -q '"Faraway link"$' "$log"; then
+                    pass "browser = exhaustive: hint mode labels the visible button and not the far link"
+                else
+                    fail "browser = exhaustive: hint mode labels: $(grep 'hint ' "$log" | tr '\n' ' ')"
+                fi
+                xdotool key Escape
+                reap "$hints_pid" || true
+            else
+                fail "browser = exhaustive: no labels"
+            fi
+            # exhaustive: search finds the link, scrolls it into view and clicks it. Five runs,
+            # each after a reload that puts the title and the scroll position back.
+            far_ok=0
+            for i in 1 2 3 4 5; do
+                focus "$tall_win"
+                xdotool key F5
+                wait_for 10 title_is "$tall_win" "tall*" || true
+                sleep 1
+                xdotool key ctrl+Home
+                sleep 0.5
+                log="$tmp/tall-exhaustive-$i.log"
+                if run_hints "$log" search; then
+                    xdotool type --delay 20 "faraway link"
+                    xdotool key Return
+                    reap "$hints_pid" || true
+                    if wait_for 5 title_is "$tall_win" "clicked faraway*"; then
+                        far_ok=$((far_ok + 1))
+                    else
+                        echo "  run $i: title '$(title "$tall_win")'"
+                    fi
+                else
+                    kill "$hints_pid" 2>/dev/null || true
+                    echo "  run $i: no search box"
+                fi
+            done
+            if ((far_ok == 5)); then pass "browser = exhaustive: search scrolled to the link 6000 px down and clicked it (5/5)"; else fail "browser = exhaustive: $far_ok/5 clicks landed"; fi
+            rm -f "$XDG_CONFIG_HOME/nomouse/config.toml"
+        else
+            fail "Chromium window with the tall page did not appear"
+            sed 's/^/    /' "$tmp/chrome-tall-stderr.log" | tail -n 20
+        fi
     fi
 fi
 

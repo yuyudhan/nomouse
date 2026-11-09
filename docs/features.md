@@ -61,7 +61,7 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-HINT-11 | Focus-then-act: Tab/↓/Ctrl-N and Shift-Tab/↑/Ctrl-P move a highlight across labels; Return acts on it | core | core | P1 | done / done / done / partial (keys work; no highlight drawn) |
 | NM-HINT-12 | Tutor: `?` shows the focused element's role, name and searchable properties | AX attributes | AT-SPI attributes | P2 | missing |
 | NM-HINT-13 | Mission Control: label window thumbnails while Mission Control is open; optional auto-activate | Dock AX tree | n/a | P2 | missing |
-| NM-HINT-14 | Browser modes: fast (visible viewport) and exhaustive (whole document) | `hints.browser`; web areas walked past the viewport, picked off-screen elements scrolled in with `AXScrollToVisible` (`AXEnhancedUserInterface` via `macos.enhanced_ui_apps`) | `hints.browser`; `DOCUMENT_WEB` objects that are `VISIBLE` but not `SHOWING` kept, scrolled in with `Component.ScrollTo` | P1 | partial (done on macOS, checked in Chrome; Linux written and compile-checked, its unit tests and a Chromium check still to run on Linux) |
+| NM-HINT-14 | Browser modes: fast (visible viewport) and exhaustive (whole document) | `hints.browser`; web areas walked past the viewport, picked off-screen elements scrolled in with `AXScrollToVisible` (`AXEnhancedUserInterface` via `macos.enhanced_ui_apps`) | `hints.browser`; `DOCUMENT_WEB` objects that are `VISIBLE` but not `SHOWING` kept, scrolled in with `Component.ScrollTo` | P1 | done (checked in Chrome; its clicks were intermittent, and the settle-and-refuse fix has not been re-run on a Mac yet) / done (Chromium e2e: fast misses a link 6000 px down, exhaustive search clicks it 5/5) / done (the same e2e with Chrome on XWayland; native-Wayland Chrome reports its extents about 8 px off its page, so small links can be missed) / missing (the Windows backend reads the visible window only) |
 
 ### Actions (ACT)
 
@@ -165,9 +165,9 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | Priority | Features | Done | Partial | Missing |
 | --- | --- | --- | --- | --- |
 | P0 | 29 | 26 | 3 | 0 |
-| P1 | 25 | 19 | 1 | 5 |
+| P1 | 25 | 20 | 0 | 5 |
 | P2 | 17 | 0 | 3 | 14 |
-| **All** | **71** | **45** | **7** | **19** |
+| **All** | **71** | **46** | **6** | **19** |
 
 A feature counts as done when it is done on macOS and Linux X11 (Wayland limits are listed per
 row). The three open P0 items are all macOS distribution and onboarding: the signed and
