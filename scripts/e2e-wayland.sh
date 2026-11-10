@@ -27,6 +27,9 @@ while (($#)); do
 done
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+# The release flavour even when the caller's shell exports NOMOUSE_FLAVOUR=dev: Sway binds the
+# release chord (Ctrl+space) and the daemon reads ~/.config/nomouse/.
+export NOMOUSE_FLAVOUR=release
 cargo build --quiet --release --manifest-path "$root/Cargo.toml" -p nomouse
 # The shared backend contract test (crates/nomouse-linux/tests/contract.rs), built now: cargo
 # cannot run once HOME points at the private dir. It drives whichever backend the session gets.

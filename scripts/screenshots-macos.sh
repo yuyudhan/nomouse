@@ -25,8 +25,10 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$bin" ]; then
-    # The app bundle, so the menu offers Start at login as installed copies do.
-    (cd "$root" && cargo build --release -p nomouse)
+    # The app bundle, so the menu offers Start at login as installed copies do. The release
+    # flavour even when the shell exports NOMOUSE_FLAVOUR=dev: app.sh names a dev binary's
+    # bundle "nomouse Dev.app", and the pictures show the release hotkeys.
+    (cd "$root" && NOMOUSE_FLAVOUR=release cargo build --release -p nomouse)
     "$root/scripts/release/app.sh" "$root/target/release/nomouse" "$root/target/app" >/dev/null
     bin="$root/target/app/nomouse.app/Contents/MacOS/nomouse"
 fi

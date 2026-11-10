@@ -214,9 +214,14 @@ mod linux {
                 && !continuous.is_recording(),
             "Escape cancels recording",
         )?;
+        // This build's own default (a test build is the dev flavour, `cargo test --release`
+        // the release one): nothing has changed the continuous chord yet.
+        let default = nomouse_core::config::HotkeysConfig::default()
+            .continuous
+            .human();
         ensure(
-            continuous.button().label().as_deref() == Some("Ctrl+Shift+Space"),
-            "a cancelled recording keeps the old chord",
+            continuous.button().label().as_deref() == Some(default.as_str()),
+            &format!("a cancelled recording keeps the old chord {default}"),
         )
     }
 

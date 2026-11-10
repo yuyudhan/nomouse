@@ -42,6 +42,9 @@ while (($#)); do
 done
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+# The release flavour even when the caller's shell exports NOMOUSE_FLAVOUR=dev: the checks read
+# the release hotkeys (Ctrl+Space, the Sway bindsym line) and the release D-Bus names.
+export NOMOUSE_FLAVOUR=release
 cargo build --quiet --release --manifest-path "$root/Cargo.toml" -p nomouse -p nomouse-settings
 
 tmp="$(mktemp -d /tmp/nomouse-e2e-desktop.XXXXXX)"

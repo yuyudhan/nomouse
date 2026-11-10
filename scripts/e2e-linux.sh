@@ -40,7 +40,10 @@ done
 qt_python="${NOMOUSE_E2E_QT_PYTHON:-python3}"
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-# Release build: the latency figures are meaningless for a debug zbus.
+# Release build: the latency figures are meaningless for a debug zbus. The release flavour
+# even when the caller's shell exports NOMOUSE_FLAVOUR=dev: the checks press the release
+# hotkeys (ctrl+space) and write ~/.config/nomouse/.
+export NOMOUSE_FLAVOUR=release
 cargo build --quiet --release --manifest-path "$root/Cargo.toml" -p nomouse
 # The contract test binary, built now: cargo cannot run once HOME points at the private dir.
 contract_test="$(cargo test --quiet --release --no-run --message-format=json \
