@@ -8,7 +8,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gio, glib};
 use nomouse_core::settings::Section;
-use nomouse_linux::control::APP_ID;
+use nomouse_linux::control::ICON;
 
 use crate::args::Page;
 use crate::controls::Control;
@@ -130,7 +130,7 @@ impl SettingsWindow {
             .title("nomouse Settings")
             .default_width(900)
             .default_height(640)
-            .icon_name(APP_ID)
+            .icon_name(ICON)
             .content(&toasts)
             .build();
         if let Some(app) = app {
@@ -273,7 +273,7 @@ impl SettingsWindow {
             .website_label("github.com/yuyudhan/nomouse")
             .license_type(gtk::License::Custom)
             .license("nomouse is licensed under MIT OR Apache-2.0, at your option.")
-            .logo_icon_name(APP_ID)
+            .logo_icon_name(ICON)
             .build();
         about.present();
         about

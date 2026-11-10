@@ -166,8 +166,9 @@ fn an_invalid_change_is_rejected_before_writing() {
         settings.set("overlay.font_size", Value::Number(500)),
         Err(SettingsError::Rejected(ConfigError::OutOfRange { .. }))
     ));
+    let hints = crate::config::HotkeysConfig::default().hints.to_string();
     assert!(matches!(
-        settings.set("hotkeys.scroll", Value::Text("ctrl+space".to_owned())),
+        settings.set("hotkeys.scroll", Value::Text(hints)),
         Err(SettingsError::Rejected(ConfigError::DuplicateHotkey { .. }))
     ));
     assert!(matches!(

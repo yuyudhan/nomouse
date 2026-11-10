@@ -271,7 +271,7 @@ mod tests {
         MenuState {
             version: "0.1.3".to_owned(),
             active: true,
-            hotkeys: Some(HotkeysConfig::default()),
+            hotkeys: Some(HotkeysConfig::defaults(crate::Flavour::Release)),
             start_at_login: Some(false),
             ..MenuState::default()
         }

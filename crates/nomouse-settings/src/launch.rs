@@ -1,8 +1,10 @@
 //! Where the `nomouse` binary and the daemon's log are: pure lookups over an explicit
 //! environment so they are testable anywhere.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+
+use nomouse_core::Flavour;
 
 /// The command line binary's name.
 pub const NOMOUSE: &str = "nomouse";
@@ -21,23 +23,38 @@ pub fn find_program(name: &str, exe_dir: Option<&Path>, path: Option<&OsStr>) ->
     })
 }
 
-/// [`find_program`] for this process: the `nomouse` binary to run, or plain `nomouse` (left to
-/// the `PATH` lookup at spawn time, which then reports it missing).
+/// Where `flavour`'s settings window may look for `nomouse` past its own folder: `path` for a
+/// release build, nowhere for a development build (an installed `nomouse` is the release's,
+/// with the release's configuration and daemon).
+fn search_path(flavour: Flavour, path: Option<OsString>) -> Option<OsString> {
+    match flavour {
+        Flavour::Release => path,
+        Flavour::Dev => None,
+    }
+}
+
+/// [`find_program`] for this process: the `nomouse` binary to run. When there is none, plain
+/// `nomouse` for a release build (left to the `PATH` lookup at spawn time, which then reports
+/// it missing) and the absent sibling for a development build (reported missing at once).
 pub fn nomouse_program() -> PathBuf {
     let exe = std::env::current_exe().ok();
     let exe_dir = exe.as_deref().and_then(Path::parent);
-    find_program(NOMOUSE, exe_dir, std::env::var_os("PATH").as_deref())
-        .unwrap_or_else(|| PathBuf::from(NOMOUSE))
+    let path = search_path(Flavour::CURRENT, std::env::var_os("PATH"));
+    find_program(NOMOUSE, exe_dir, path.as_deref()).unwrap_or_else(|| match Flavour::CURRENT {
+        Flavour::Release => PathBuf::from(NOMOUSE),
+        Flavour::Dev => exe_dir.map_or_else(|| PathBuf::from(NOMOUSE), |dir| dir.join(NOMOUSE)),
+    })
 }
 
-/// The daemon log `nomouse launch` writes too: `$XDG_RUNTIME_DIR/nomouse.log`, else
-/// `<temp dir>/nomouse-$USER.log`.
-pub fn log_path(env: impl Fn(&str) -> Option<String>) -> PathBuf {
+/// The daemon log `nomouse launch` writes too, for `flavour`: `$XDG_RUNTIME_DIR/<stem>.log`,
+/// else `<temp dir>/<stem>-$USER.log` (`nomouse` or `nomouse-dev`).
+pub fn log_path(flavour: Flavour, env: impl Fn(&str) -> Option<String>) -> PathBuf {
     let get = |name: &str| env(name).filter(|value| !value.is_empty());
+    let stem = flavour.stem();
     match get("XDG_RUNTIME_DIR") {
-        Some(dir) => Path::new(&dir).join("nomouse.log"),
+        Some(dir) => Path::new(&dir).join(format!("{stem}.log")),
         None => std::env::temp_dir().join(format!(
-            "nomouse-{}.log",
+            "{stem}-{}.log",
             get("USER").unwrap_or_else(|| "user".to_owned())
         )),
     }
@@ -58,17 +75,41 @@ mod tests {
             }
         };
         assert_eq!(
-            log_path(env(&[("XDG_RUNTIME_DIR", "/run/user/1000"), ("USER", "u")])),
+            log_path(
+                Flavour::Release,
+                env(&[("XDG_RUNTIME_DIR", "/run/user/1000"), ("USER", "u")])
+            ),
             PathBuf::from("/run/user/1000/nomouse.log")
         );
         assert_eq!(
-            log_path(env(&[("XDG_RUNTIME_DIR", ""), ("USER", "u")])),
+            log_path(
+                Flavour::Dev,
+                env(&[("XDG_RUNTIME_DIR", "/run/user/1000"), ("USER", "u")])
+            ),
+            PathBuf::from("/run/user/1000/nomouse-dev.log")
+        );
+        assert_eq!(
+            log_path(
+                Flavour::Release,
+                env(&[("XDG_RUNTIME_DIR", ""), ("USER", "u")])
+            ),
             std::env::temp_dir().join("nomouse-u.log")
         );
         assert_eq!(
-            log_path(env(&[])),
+            log_path(Flavour::Dev, env(&[("XDG_RUNTIME_DIR", ""), ("USER", "u")])),
+            std::env::temp_dir().join("nomouse-dev-u.log")
+        );
+        assert_eq!(
+            log_path(Flavour::Release, env(&[])),
             std::env::temp_dir().join("nomouse-user.log")
         );
+    }
+
+    #[test]
+    fn a_development_build_never_runs_the_installed_nomouse() {
+        let path = || Some(OsString::from("/usr/bin"));
+        assert_eq!(search_path(Flavour::Dev, path()), None);
+        assert_eq!(search_path(Flavour::Release, path()), path());
     }
 
     #[test]

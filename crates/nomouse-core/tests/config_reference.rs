@@ -7,7 +7,8 @@ mod reference {
     use std::collections::BTreeMap;
     use std::path::Path;
 
-    use nomouse_core::config::Config;
+    use nomouse_core::Flavour;
+    use nomouse_core::config::{Config, HotkeysConfig};
 
     /// A file of the repository, by its path from the root.
     fn read(relative: &str) -> String {
@@ -66,9 +67,18 @@ mod reference {
         config
     }
 
+    /// The defaults the page documents: a release build's (a development build binds other
+    /// default hotkeys, so it can run beside the installed nomouse).
+    fn release_defaults() -> Config {
+        Config {
+            hotkeys: HotkeysConfig::defaults(Flavour::Release),
+            ..Config::default()
+        }
+    }
+
     #[test]
     fn the_page_lists_every_key_with_its_default() {
-        let defaults = keys(&Config::default());
+        let defaults = keys(&release_defaults());
         let expected: BTreeMap<String, String> = keys(&every_key_set())
             .into_keys()
             .map(|key| {

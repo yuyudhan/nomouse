@@ -2,7 +2,15 @@
 //! needs: it covers reading other apps' controls, the keyboard event tap and posting clicks.
 //! Input Monitoring is not needed because the tap runs under Accessibility.
 
+use nomouse_core::Flavour;
 use nomouse_core::setup::Permission;
+
+/// This build's app bundle as the grant messages name it: `nomouse.app`, or `nomouse Dev.app`
+/// for a development build (its own bundle id, so its own Accessibility entry).
+pub const APP: &str = match Flavour::CURRENT {
+    Flavour::Release => "nomouse.app",
+    Flavour::Dev => "nomouse Dev.app",
+};
 
 /// The Accessibility permission.
 pub const ACCESSIBILITY: Permission = Permission {
@@ -138,20 +146,20 @@ pub enum GrantHolder {
 pub fn accessibility_check(trusted: bool, holder: &GrantHolder) -> Result<String, String> {
     let requirement = crate::ACCESSIBILITY_REQUIREMENT;
     match (holder, trusted) {
-        (GrantHolder::App, true) => Ok("nomouse.app is trusted".to_owned()),
+        (GrantHolder::App, true) => Ok(format!("{APP} is trusted")),
         (GrantHolder::App, false) => Err(format!(
-            "nomouse.app is not trusted. {requirement} If nomouse is already switched on there, \
+            "{APP} is not trusted. {requirement} If nomouse is already switched on there, \
              that switch is for an older copy: choose Open System Settings in nomouse's menu or \
              Welcome window, which replaces it, then switch nomouse on."
         )),
         (GrantHolder::Terminal(name), true) => Ok(format!(
-            "{} is trusted, so a nomouse started from it works. nomouse.app has its own grant; \
+            "{} is trusted, so a nomouse started from it works. {APP} has its own grant; \
              its menu shows it.",
             terminal(name.as_deref())
         )),
         (GrantHolder::Terminal(name), false) => Err(format!(
-            "{} is not trusted, which matters only for a nomouse started from it. nomouse.app \
-             has its own grant: open /Applications/nomouse.app and its menu shows whether it is \
+            "{} is not trusted, which matters only for a nomouse started from it. {APP} \
+             has its own grant: open /Applications/{APP} and its menu shows whether it is \
              allowed. To run nomouse from this terminal, allow the terminal in the same list and \
              open it again.",
             terminal(name.as_deref())
@@ -159,7 +167,7 @@ pub fn accessibility_check(trusted: bool, holder: &GrantHolder) -> Result<String
         (GrantHolder::Binary, true) => Ok("this nomouse binary is trusted".to_owned()),
         (GrantHolder::Binary, false) => Err(format!(
             "this nomouse binary is not trusted. {requirement} Add the binary with + (a rebuilt \
-             binary needs adding again), or run nomouse.app instead."
+             binary needs adding again), or run {APP} instead."
         )),
     }
 }
@@ -429,13 +437,14 @@ mod tests {
         let terminal = GrantHolder::Terminal(Some("Apple_Terminal".to_owned()));
         let untrusted = accessibility_check(false, &terminal).unwrap_err();
         assert!(untrusted.starts_with("this terminal (Apple_Terminal) is not trusted"));
-        assert!(untrusted.contains("nomouse.app has its own grant"));
+        assert!(untrusted.contains(&format!("{APP} has its own grant")));
         let trusted = accessibility_check(true, &GrantHolder::Terminal(None)).unwrap();
         assert!(trusted.starts_with("this terminal is trusted"));
         assert_eq!(
             accessibility_check(true, &GrantHolder::App),
-            Ok("nomouse.app is trusted".to_owned())
+            Ok(format!("{APP} is trusted"))
         );
+        assert_eq!(APP, format!("{}.app", Flavour::CURRENT.display_name()));
         let app = accessibility_check(false, &GrantHolder::App).unwrap_err();
         assert!(app.contains("older copy"));
         assert!(app.contains("Device Control and Data Access"));

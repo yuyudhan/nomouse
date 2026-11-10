@@ -10,8 +10,18 @@
 # version from scripts/release/version.sh), Contents/Resources/AppIcon.icns built from the
 # logo PNG files in assets/logo/png (scripts/render-logo.sh draws them from assets/logo/*.svg).
 #
+# The bundle follows the binary's flavour, which nomouse fixes when it is compiled
+# (NOMOUSE_FLAVOUR, see crates/nomouse-core/src/flavour.rs): a development binary carries its
+# `--version` text "X.Y.Z (dev)", which is read from its bytes here (the binary is never run,
+# since app.sh also wraps test executables). A release binary makes nomouse.app
+# (com.yuyudhan.nomouse); a development one makes "nomouse Dev.app"
+# (com.yuyudhan.nomouse.dev) and nomouse-dev-universal-apple-darwin.app.zip, so macOS gives it
+# its own Accessibility grant and login item and rebuilding it never touches the installed
+# release's.
+#
 # Environment:
-#   NOMOUSE_BUNDLE_ID         bundle identifier (default com.yuyudhan.nomouse)
+#   NOMOUSE_BUNDLE_ID         bundle identifier (default com.yuyudhan.nomouse, or
+#                             com.yuyudhan.nomouse.dev for a development binary)
 #   NOMOUSE_SIGN_IDENTITY     codesign identity; "-" (the default) signs ad hoc. A Developer ID
 #                             identity also gets the hardened runtime and a secure timestamp,
 #                             as notarization requires.
@@ -37,18 +47,30 @@ outdir="$(cd "$2" && pwd)"
     echo "app: no binary at ${binary}" >&2
     exit 1
 }
-bundle_id="${NOMOUSE_BUNDLE_ID:-com.yuyudhan.nomouse}"
-identity="${NOMOUSE_SIGN_IDENTITY:--}"
 version="$("${root}/scripts/release/version.sh")"
+if LC_ALL=C grep -qaF "${version} (dev)" "$binary"; then
+    flavour="dev"
+    name="nomouse Dev"
+    default_id="com.yuyudhan.nomouse.dev"
+    archive="nomouse-dev-universal-apple-darwin.app.zip"
+else
+    flavour="release"
+    name="nomouse"
+    default_id="com.yuyudhan.nomouse"
+    archive="nomouse-universal-apple-darwin.app.zip"
+fi
+bundle_id="${NOMOUSE_BUNDLE_ID:-${default_id}}"
+identity="${NOMOUSE_SIGN_IDENTITY:--}"
+echo "app: ${flavour} binary -> ${name}.app (${bundle_id})" >&2
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-app="${outdir}/nomouse.app"
+app="${outdir}/${name}.app"
 rm -rf "$app"
 mkdir -p "${app}/Contents/MacOS" "${app}/Contents/Resources"
 cp "$binary" "${app}/Contents/MacOS/nomouse"
 chmod 755 "${app}/Contents/MacOS/nomouse"
-sed -e "s/@VERSION@/${version}/g" -e "s/@BUNDLE_ID@/${bundle_id}/g" \
+sed -e "s/@VERSION@/${version}/g" -e "s/@BUNDLE_ID@/${bundle_id}/g" -e "s/@NAME@/${name}/g" \
     "${root}/packaging/macos/Info.plist.in" >"${app}/Contents/Info.plist"
 plutil -lint -s "${app}/Contents/Info.plist"
 iconset="${work}/AppIcon.iconset"
@@ -69,8 +91,7 @@ if [ -n "${NOMOUSE_NOTARY_KEY_ID:-}" ]; then
     "${root}/scripts/release/notarize.sh" "$app"
 fi
 
-archive="nomouse-universal-apple-darwin.app.zip"
 rm -f "${outdir}/${archive}"
 # Signatures live in files, so extended attributes (provenance, quarantine) are left out.
-(cd "$outdir" && ditto -c -k --norsrc --noextattr --noqtn --keepParent nomouse.app "$archive")
+(cd "$outdir" && ditto -c -k --norsrc --noextattr --noqtn --keepParent "${name}.app" "$archive")
 "${root}/scripts/release/checksum.sh" "${outdir}/${archive}"

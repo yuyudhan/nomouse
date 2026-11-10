@@ -8,7 +8,8 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use nomouse_linux::control::APP_ID;
+use nomouse_core::Flavour;
+use nomouse_linux::control::{APP_ID, ICON};
 
 use crate::args::{self, Args};
 use crate::daemon::Daemon;
@@ -53,14 +54,15 @@ pub fn run() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     // WM_CLASS and the app name match the launcher entry (`APP_ID.desktop`), so docks group
-    // the window under its icon.
+    // the window under its icon. A development build's id is its own, so it never hands its
+    // arguments to an open release window (or the other way round).
     glib::set_prgname(Some(APP_ID));
-    glib::set_application_name("nomouse");
+    glib::set_application_name(Flavour::CURRENT.display_name());
     let app = adw::Application::builder()
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
-    app.connect_startup(|_| gtk::Window::set_default_icon_name(APP_ID));
+    app.connect_startup(|_| gtk::Window::set_default_icon_name(ICON));
     let window: Shared<SettingsWindow> = Rc::new(RefCell::new(None));
     let daemon: Shared<Daemon> = Rc::new(RefCell::new(None));
     app.connect_command_line(move |app, command_line| {

@@ -257,7 +257,9 @@ impl Drop for Daemon {
 /// When the log cannot be created or the program cannot be started.
 pub fn start() -> Result<(), String> {
     let program = launch::nomouse_program();
-    let log = launch::log_path(|name| std::env::var(name).ok());
+    let log = launch::log_path(nomouse_core::Flavour::CURRENT, |name| {
+        std::env::var(name).ok()
+    });
     let cannot = |e: std::io::Error| format!("cannot write {}: {e}", log.display());
     let stdout = File::create(&log).map_err(cannot)?;
     let stderr = stdout.try_clone().map_err(cannot)?;

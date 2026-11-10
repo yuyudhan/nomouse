@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use nomouse_core::Flavour;
 use nomouse_core::config::{Config, HotkeysConfig};
 
 use crate::ipc;
@@ -360,9 +361,20 @@ pub(crate) fn settings_program(exe: &Path, path: Option<&OsStr>) -> Option<PathB
         .or_else(|| find_program(SETTINGS, path))
 }
 
-/// Where the settings window's errors go: `nomouse-settings.log` beside the daemon's lock.
+/// Where the settings window's errors go: `nomouse-settings.log` beside the daemon's lock
+/// (`nomouse-dev-settings.log` for a development build).
 pub(crate) fn settings_log() -> PathBuf {
-    lock::current_path().with_file_name(format!("{SETTINGS}.log"))
+    lock::current_path().with_file_name(format!("{}-settings.log", Flavour::CURRENT.stem()))
+}
+
+/// Where [`settings_program`] may look past the sibling: `PATH` for a release build. A
+/// development build looks only beside itself: an installed `nomouse-settings` is the
+/// release's, and would edit the release's configuration and talk to its daemon.
+fn settings_search_path(flavour: Flavour) -> Option<OsString> {
+    match flavour {
+        Flavour::Release => std::env::var_os("PATH"),
+        Flavour::Dev => None,
+    }
 }
 
 /// Starts the settings window with `args` in its own process group, its errors into
@@ -373,7 +385,7 @@ pub(crate) fn settings_log() -> PathBuf {
 pub(crate) fn spawn_settings(args: &[&str]) -> Result<(Child, PathBuf, PathBuf), String> {
     let exe = std::env::current_exe()
         .map_err(|error| format!("cannot find the nomouse executable: {error}"))?;
-    let program = settings_program(&exe, std::env::var_os("PATH").as_deref())
+    let program = settings_program(&exe, settings_search_path(Flavour::CURRENT).as_deref())
         .ok_or_else(|| format!("the settings window ({SETTINGS}) is not installed"))?;
     let log = settings_log();
     let stderr = File::create(&log).map_err(|e| format!("cannot write {}: {e}", log.display()))?;
@@ -636,6 +648,19 @@ mod tests {
         assert_eq!(settings_program(elsewhere, None), None);
         assert_eq!(find_program("tool", None), None);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_development_build_never_opens_the_installed_settings_window() {
+        assert_eq!(settings_search_path(Flavour::Dev), None);
+        assert_eq!(
+            settings_search_path(Flavour::Release),
+            std::env::var_os("PATH")
+        );
+        let log = settings_log();
+        let name = log.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(name, format!("{}-settings.log", Flavour::CURRENT.stem()));
+        assert_eq!(log.parent(), lock::current_path().parent());
     }
 
     #[test]

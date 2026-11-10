@@ -1,27 +1,42 @@
 //! Start at login on Linux: an XDG autostart entry (`~/.config/autostart/nomouse.desktop`)
 //! that runs `nomouse daemon` when the desktop session starts. GNOME, KDE, Xfce, Cinnamon and
 //! MATE read it; tiling compositors (Sway, Hyprland, i3) do not, so on those
-//! [`TilingSession`] names the line to add to their own config instead.
+//! [`TilingSession`] names the line to add to their own config instead. A development build's
+//! entry is `nomouse-dev.desktop` ([`Flavour`]), so switching it on or off leaves the
+//! installed release's entry alone.
 
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// The entry's file name in the autostart directory.
-pub const FILE_NAME: &str = "nomouse.desktop";
+use nomouse_core::Flavour;
 
-/// `$XDG_CONFIG_HOME/autostart/nomouse.desktop`, else `~/.config/autostart/nomouse.desktop`.
-pub fn path_from(env: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+/// `flavour`'s entry file name in the autostart directory: `nomouse.desktop` or
+/// `nomouse-dev.desktop`.
+#[must_use]
+pub const fn file_name(flavour: Flavour) -> &'static str {
+    match flavour {
+        Flavour::Release => "nomouse.desktop",
+        Flavour::Dev => "nomouse-dev.desktop",
+    }
+}
+
+/// This build's entry file name in the autostart directory.
+pub const FILE_NAME: &str = file_name(Flavour::CURRENT);
+
+/// `flavour`'s entry: `$XDG_CONFIG_HOME/autostart/<file>`, else
+/// `~/.config/autostart/<file>`, with the file from [`file_name`].
+pub fn path_from(flavour: Flavour, env: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
     let get = |name: &str| env(name).filter(|value| !value.is_empty());
     let config = get("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|dir| dir.is_absolute())
         .or_else(|| get("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(config.join("autostart").join(FILE_NAME))
+    Some(config.join("autostart").join(file_name(flavour)))
 }
 
-/// The entry path for this process's environment.
+/// This build's entry path for this process's environment.
 pub fn path() -> Option<PathBuf> {
-    path_from(|name| std::env::var(name).ok())
+    path_from(Flavour::CURRENT, |name| std::env::var(name).ok())
 }
 
 /// Whether the entry at `path` starts nomouse: it exists and is neither `Hidden` nor
@@ -56,18 +71,19 @@ fn exec_word(program: &Path) -> String {
     }
 }
 
-/// The autostart entry that runs `program daemon`.
+/// The autostart entry that runs `program daemon`, named after this build's flavour.
 pub fn entry(program: &Path) -> String {
     format!(
         "[Desktop Entry]\n\
          Type=Application\n\
-         Name=nomouse\n\
+         Name={}\n\
          Comment=Click anything with the keyboard\n\
          Exec={} daemon\n\
          Icon=io.github.yuyudhan.nomouse\n\
          Terminal=false\n\
          NoDisplay=true\n\
          X-GNOME-Autostart-enabled=true\n",
+        Flavour::CURRENT.display_name(),
         exec_word(program)
     )
 }
@@ -214,18 +230,33 @@ mod tests {
         let home = std::env::temp_dir().join("home-u");
         let cfg = std::env::temp_dir().join("cfg");
         let (home_str, cfg_str) = (home.to_str().unwrap(), cfg.to_str().unwrap());
-        let default = home.join(".config").join("autostart").join(FILE_NAME);
-        assert_eq!(path_from(env(&[("HOME", home_str)])), Some(default.clone()));
-        assert_eq!(
-            path_from(env(&[("HOME", home_str), ("XDG_CONFIG_HOME", cfg_str)])),
-            Some(cfg.join("autostart").join(FILE_NAME))
-        );
-        // A relative XDG_CONFIG_HOME is invalid by the spec and ignored.
-        assert_eq!(
-            path_from(env(&[("HOME", home_str), ("XDG_CONFIG_HOME", "cfg")])),
-            Some(default)
-        );
-        assert_eq!(path_from(env(&[])), None);
+        for (flavour, file) in [
+            (Flavour::Release, "nomouse.desktop"),
+            (Flavour::Dev, "nomouse-dev.desktop"),
+        ] {
+            let default = home.join(".config").join("autostart").join(file);
+            assert_eq!(
+                path_from(flavour, env(&[("HOME", home_str)])),
+                Some(default.clone())
+            );
+            assert_eq!(
+                path_from(
+                    flavour,
+                    env(&[("HOME", home_str), ("XDG_CONFIG_HOME", cfg_str)])
+                ),
+                Some(cfg.join("autostart").join(file))
+            );
+            // A relative XDG_CONFIG_HOME is invalid by the spec and ignored.
+            assert_eq!(
+                path_from(
+                    flavour,
+                    env(&[("HOME", home_str), ("XDG_CONFIG_HOME", "cfg")])
+                ),
+                Some(default)
+            );
+            assert_eq!(path_from(flavour, env(&[])), None);
+        }
+        assert_eq!(FILE_NAME, file_name(Flavour::CURRENT));
     }
 
     #[test]

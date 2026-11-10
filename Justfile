@@ -104,10 +104,22 @@ release-dry-run:
 test-install dist="target/dist":
     scripts/test-install.sh {{dist}}
 
-# Build nomouse.app (ad-hoc signed) and its zip from a release build into target/app/.
+# Build "nomouse Dev.app" (ad-hoc signed, bundle id com.yuyudhan.nomouse.dev) and its zip from
+# an optimised development build into target/app/. It runs beside an installed nomouse.app
+# with its own ~/.config/nomouse-dev/, Accessibility grant and login item; the release's
+# nomouse.app comes only from the release workflow (scripts/release/build.sh, then app.sh).
 app:
-    cargo build --release -p nomouse
+    NOMOUSE_FLAVOUR=dev cargo build --release -p nomouse
     scripts/release/app.sh target/release/nomouse target/app
+
+# Run a development build (debug: ~/.config/nomouse-dev/, nomouse-dev.sock, its own D-Bus names
+# and hotkeys), e.g. `just dev doctor`; no arguments runs the daemon.
+dev *args:
+    cargo run -p nomouse -- {{args}}
+
+# Check that a development build bundles as "nomouse Dev.app" with the dev bundle id (macOS).
+test-app-dev *args:
+    scripts/test-app-dev.sh {{args}}
 
 # Build nomouse.app twice and check its Info.plist, signature, stable requirement and zip.
 test-app *args:

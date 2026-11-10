@@ -5,7 +5,9 @@
 //!
 //! The socket is `$XDG_RUNTIME_DIR/nomouse.sock` (owner-only, like the runtime dir). Without a
 //! runtime dir it is `nomouse.sock` inside `<tmp>/nomouse-<uid>/`, a directory created with
-//! mode 0700 and refused when it is a symlink, not ours, or open to group or others. A request
+//! mode 0700 and refused when it is a symlink, not ours, or open to group or others. A
+//! development build uses `nomouse-dev.sock` and `<tmp>/nomouse-dev-<uid>/` instead
+//! ([`nomouse_core::Flavour`]), so its commands never reach the installed release. A request
 //! is one line of at most [`MAX_REQUEST`] bytes (`hints click`, `continuous right-click`,
 //! `scroll`, `search`, `reload`); the daemon answers `ok` before it acts, or
 //! `error: <reason>`. `ping` is answered `ok` and does nothing: `nomouse launch` uses it to see
@@ -21,7 +23,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
-use nomouse_core::ActionKind;
+use nomouse_core::{ActionKind, Flavour};
 
 use crate::Request;
 use crate::run::Mode;
@@ -32,25 +34,30 @@ const TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const MAX_REQUEST: usize = 4096;
 /// Connections answered at once; more get `error: busy`, so silent clients cannot pile up threads.
 const MAX_CLIENTS: usize = 8;
-/// The socket's file name.
-const SOCKET: &str = "nomouse.sock";
 /// The request that only asks whether the daemon is up.
 const PING: &str = "ping";
 /// The request that asks the daemon who it is; answered `ok <pid> <version>`.
 const VERSION: &str = "version";
 
-/// Where the socket lives: `$XDG_RUNTIME_DIR`, else a private per-user directory in the temp
-/// dir, created (mode 0700) and checked by [`private_dir`].
+/// Where `flavour`'s socket lives: `$XDG_RUNTIME_DIR/<stem>.sock`, else `<stem>.sock` in a
+/// private per-user directory `<stem>-<uid>` in the temp dir, created (mode 0700) and checked
+/// by [`private_dir`].
 ///
 /// # Errors
 /// When the fallback directory cannot be created or is unsafe to use.
-pub(crate) fn socket_path(runtime_dir: Option<PathBuf>, uid: u32) -> std::io::Result<PathBuf> {
+pub(crate) fn socket_path(
+    flavour: Flavour,
+    runtime_dir: Option<PathBuf>,
+    uid: u32,
+) -> std::io::Result<PathBuf> {
+    let stem = flavour.stem();
+    let socket = format!("{stem}.sock");
     if let Some(dir) = runtime_dir.filter(|dir| !dir.as_os_str().is_empty()) {
-        return Ok(dir.join(SOCKET));
+        return Ok(dir.join(socket));
     }
-    let dir = std::env::temp_dir().join(format!("nomouse-{uid}"));
+    let dir = std::env::temp_dir().join(format!("{stem}-{uid}"));
     private_dir(&dir, uid)?;
-    Ok(dir.join(SOCKET))
+    Ok(dir.join(socket))
 }
 
 /// Creates `dir` with mode 0700, or accepts an existing one only when it is a real directory
@@ -95,12 +102,13 @@ pub(crate) fn private_dir(dir: &Path, uid: u32) -> std::io::Result<()> {
     Ok(())
 }
 
-/// The socket path for this process's environment.
+/// The socket path for this build's flavour and this process's environment.
 ///
 /// # Errors
 /// As [`socket_path`].
 pub(crate) fn current_path() -> std::io::Result<PathBuf> {
     socket_path(
+        Flavour::CURRENT,
         std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
         rustix::process::getuid().as_raw(),
     )
@@ -486,15 +494,25 @@ mod tests {
 
     #[test]
     fn paths() {
+        let run = || Some(PathBuf::from("/run/user/1000"));
         assert_eq!(
-            socket_path(Some(PathBuf::from("/run/user/1000")), 1000).unwrap(),
+            socket_path(Flavour::Release, run(), 1000).unwrap(),
             PathBuf::from("/run/user/1000/nomouse.sock")
         );
-        let fallback = socket_path(None, uid()).unwrap();
-        assert_eq!(fallback.file_name().unwrap(), "nomouse.sock");
-        let dir = fallback.parent().unwrap();
-        assert!(dir.ends_with(format!("nomouse-{}", uid())));
-        assert_eq!(std::fs::metadata(dir).unwrap().mode() & 0o777, 0o700);
+        assert_eq!(
+            socket_path(Flavour::Dev, run(), 1000).unwrap(),
+            PathBuf::from("/run/user/1000/nomouse-dev.sock")
+        );
+        for (flavour, name) in [(Flavour::Release, "nomouse"), (Flavour::Dev, "nomouse-dev")] {
+            let fallback = socket_path(flavour, None, uid()).unwrap();
+            assert_eq!(
+                fallback.file_name().unwrap(),
+                format!("{name}.sock").as_str()
+            );
+            let dir = fallback.parent().unwrap();
+            assert!(dir.ends_with(format!("{name}-{}", uid())));
+            assert_eq!(std::fs::metadata(dir).unwrap().mode() & 0o777, 0o700);
+        }
     }
 
     #[test]
@@ -504,7 +522,7 @@ mod tests {
         assert_eq!(std::fs::metadata(&dir).unwrap().mode() & 0o777, 0o700);
         // Accepted again once it exists.
         private_dir(&dir, uid()).unwrap();
-        let path = dir.join(SOCKET);
+        let path = dir.join("nomouse.sock");
         let server = Server::bind(&path).unwrap();
         assert_eq!(std::fs::metadata(&path).unwrap().mode() & 0o777, 0o600);
         drop(server);

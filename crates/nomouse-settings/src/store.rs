@@ -166,7 +166,10 @@ mod tests {
         let dir = temp_dir("invalid");
         let path = dir.join("config.toml");
         let mut store = Store::open(&path).unwrap();
-        let clash = store.set("hotkeys.continuous", Value::Text("ctrl+space".to_owned()));
+        let hints = nomouse_core::config::HotkeysConfig::default()
+            .hints
+            .to_string();
+        let clash = store.set("hotkeys.continuous", Value::Text(hints));
         assert!(
             matches!(&clash, Err(StoreError::Rejected(message)) if message.contains("hotkeys.hints")),
             "{clash:?}"

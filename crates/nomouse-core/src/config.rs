@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::action::ActionKind;
+use crate::flavour::Flavour;
 use crate::hints::{Alphabet, AlphabetError, DEFAULT_ALPHABET};
 use crate::hotkey::{Hotkey, Key, Modifiers};
 use crate::platform::Scope;
@@ -121,14 +122,37 @@ const fn chord(ctrl: bool, alt: bool, shift: bool, key: Key) -> Hotkey {
     )
 }
 
-impl Default for HotkeysConfig {
-    fn default() -> Self {
-        Self {
-            hints: chord(true, false, false, Key::Space),
-            continuous: chord(true, false, true, Key::Space),
-            scroll: chord(true, true, false, Key::Space),
-            search: chord(true, true, false, Key::Slash),
+impl HotkeysConfig {
+    /// The default chords of `flavour`. A release build binds `ctrl+space` (hints),
+    /// `ctrl+shift+space` (continuous), `ctrl+alt+space` (scroll) and `ctrl+alt+/` (search). A
+    /// development build adds `alt+shift` to `ctrl` and keeps the four apart by their key
+    /// (`space`, `.`, `,`, `/`): a chord can be grabbed by only one program (X11 refuses the
+    /// second grab, and on macOS the first event tap swallows the press), so a development
+    /// build with the release defaults would lose its hotkeys, or take them from the
+    /// installed nomouse.
+    #[must_use]
+    pub const fn defaults(flavour: Flavour) -> Self {
+        match flavour {
+            Flavour::Release => Self {
+                hints: chord(true, false, false, Key::Space),
+                continuous: chord(true, false, true, Key::Space),
+                scroll: chord(true, true, false, Key::Space),
+                search: chord(true, true, false, Key::Slash),
+            },
+            Flavour::Dev => Self {
+                hints: chord(true, true, true, Key::Space),
+                continuous: chord(true, true, true, Key::Period),
+                scroll: chord(true, true, true, Key::Comma),
+                search: chord(true, true, true, Key::Slash),
+            },
         }
+    }
+}
+
+impl Default for HotkeysConfig {
+    /// [`HotkeysConfig::defaults`] of this build's [`Flavour::CURRENT`].
+    fn default() -> Self {
+        Self::defaults(Flavour::CURRENT)
     }
 }
 
@@ -424,16 +448,22 @@ impl Config {
     }
 }
 
-/// The conventional config file path, from the environment: on Linux and macOS
-/// `$XDG_CONFIG_HOME/nomouse/config.toml`, else `~/.config/nomouse/config.toml`; on Windows
-/// `%APPDATA%\nomouse\config.toml`. `None` when the variables are unset.
+/// The conventional config file path, from the environment, for this build's
+/// [`Flavour::CURRENT`]: on Linux and macOS `$XDG_CONFIG_HOME/<stem>/config.toml`, else
+/// `~/.config/<stem>/config.toml`; on Windows `%APPDATA%\<stem>\config.toml`, where the stem is
+/// `nomouse` for a release build and `nomouse-dev` for a development one. `None` when the
+/// variables are unset.
 pub fn default_path() -> Option<PathBuf> {
-    path_from_env(cfg!(target_os = "windows"), |name| std::env::var_os(name))
+    path_from_env(Flavour::CURRENT, cfg!(target_os = "windows"), |name| {
+        std::env::var_os(name)
+    })
 }
 
-/// [`default_path`] over an explicit environment lookup, so every OS's rule is testable on any
-/// host. Empty values count as unset, as the XDG Base Directory specification requires.
+/// [`default_path`] for `flavour` over an explicit environment lookup, so every OS's rule and
+/// both flavours are testable on any host. Empty values count as unset, as the XDG Base
+/// Directory specification requires.
 fn path_from_env(
+    flavour: Flavour,
     windows: bool,
     lookup: impl Fn(&str) -> Option<std::ffi::OsString>,
 ) -> Option<PathBuf> {
@@ -447,7 +477,7 @@ fn path_from_env(
     } else {
         env("XDG_CONFIG_HOME").or_else(|| env("HOME").map(|home| home.join(".config")))?
     };
-    Some(base.join("nomouse").join("config.toml"))
+    Some(base.join(flavour.stem()).join("config.toml"))
 }
 
 #[cfg(test)]
@@ -462,11 +492,55 @@ mod tests {
     #[test]
     fn defaults_round_trip() {
         let text = Config::default().to_toml();
-        assert!(text.contains("hints = \"ctrl+space\""));
-        assert!(text.contains("continuous = \"ctrl+shift+space\""));
+        let hotkeys = HotkeysConfig::default();
+        assert!(text.contains(&format!("hints = \"{}\"", hotkeys.hints)));
+        assert!(text.contains(&format!("continuous = \"{}\"", hotkeys.continuous)));
         assert!(text.contains("semantic_click = false"));
         assert!(text.contains("keys = \"nomouse\""));
         assert_eq!(Config::from_toml(&text).unwrap(), Config::default());
+    }
+
+    #[test]
+    fn each_flavour_has_its_own_valid_default_hotkeys() {
+        let release = HotkeysConfig::defaults(Flavour::Release);
+        let dev = HotkeysConfig::defaults(Flavour::Dev);
+        assert_eq!(
+            HotkeysConfig::default(),
+            HotkeysConfig::defaults(Flavour::CURRENT)
+        );
+        let names = |keys: &HotkeysConfig| {
+            [keys.hints, keys.continuous, keys.scroll, keys.search].map(|key| key.to_string())
+        };
+        assert_eq!(
+            names(&release),
+            [
+                "ctrl+space",
+                "ctrl+shift+space",
+                "ctrl+alt+space",
+                "ctrl+alt+slash"
+            ]
+        );
+        assert_eq!(
+            names(&dev),
+            [
+                "ctrl+alt+shift+space",
+                "ctrl+alt+shift+period",
+                "ctrl+alt+shift+comma",
+                "ctrl+alt+shift+slash"
+            ]
+        );
+        // No development chord is a release chord, so both builds can run at once.
+        for chord in names(&dev) {
+            assert!(!names(&release).contains(&chord), "{chord}");
+        }
+        for keys in [release, dev] {
+            let config = Config {
+                hotkeys: keys,
+                ..Config::default()
+            };
+            assert!(config.validate().is_ok(), "{:?}", config.hotkeys);
+            assert_eq!(Config::from_toml(&config.to_toml()).unwrap(), config);
+        }
     }
 
     #[test]
@@ -526,7 +600,10 @@ mod tests {
             Err(ConfigError::Parse(_))
         ));
         assert!(matches!(
-            Config::from_toml("[hotkeys]\nscroll = \"ctrl+space\"\n"),
+            Config::from_toml(&format!(
+                "[hotkeys]\nscroll = \"{}\"\n",
+                HotkeysConfig::default().hints
+            )),
             Err(ConfigError::DuplicateHotkey {
                 first: "hints",
                 second: "scroll",
@@ -674,34 +751,79 @@ mod tests {
         }
     }
 
+    // macOS and Linux share one rule (`$XDG_CONFIG_HOME`, else `~/.config`: config lives under
+    // `~/.config` on both), so each case below is the path on either system.
     #[test]
     fn unix_path_prefers_xdg_config_home() {
         let vars = [("XDG_CONFIG_HOME", "/cfg"), ("HOME", "/home/u")];
         assert_eq!(
-            path_from_env(false, lookup(&vars)),
+            path_from_env(Flavour::Release, false, lookup(&vars)),
             Some(PathBuf::from("/cfg/nomouse/config.toml"))
+        );
+        assert_eq!(
+            path_from_env(Flavour::Dev, false, lookup(&vars)),
+            Some(PathBuf::from("/cfg/nomouse-dev/config.toml"))
         );
     }
 
     #[test]
     fn unix_path_falls_back_to_dot_config_when_xdg_unset_or_empty() {
-        let expected = Some(PathBuf::from("/home/u/.config/nomouse/config.toml"));
+        for (flavour, expected) in [
+            (Flavour::Release, "/home/u/.config/nomouse/config.toml"),
+            (Flavour::Dev, "/home/u/.config/nomouse-dev/config.toml"),
+        ] {
+            let expected = Some(PathBuf::from(expected));
+            assert_eq!(
+                path_from_env(flavour, false, lookup(&[("HOME", "/home/u")])),
+                expected
+            );
+            let empty = [("XDG_CONFIG_HOME", ""), ("HOME", "/home/u")];
+            assert_eq!(path_from_env(flavour, false, lookup(&empty)), expected);
+            assert_eq!(path_from_env(flavour, false, lookup(&[])), None);
+        }
+    }
+
+    #[test]
+    fn macos_home_paths_stay_under_dot_config() {
+        let home = [("HOME", "/Users/u")];
         assert_eq!(
-            path_from_env(false, lookup(&[("HOME", "/home/u")])),
-            expected
+            path_from_env(Flavour::Release, false, lookup(&home)),
+            Some(PathBuf::from("/Users/u/.config/nomouse/config.toml"))
         );
-        let empty = [("XDG_CONFIG_HOME", ""), ("HOME", "/home/u")];
-        assert_eq!(path_from_env(false, lookup(&empty)), expected);
-        assert_eq!(path_from_env(false, lookup(&[])), None);
+        assert_eq!(
+            path_from_env(Flavour::Dev, false, lookup(&home)),
+            Some(PathBuf::from("/Users/u/.config/nomouse-dev/config.toml"))
+        );
     }
 
     #[test]
     fn windows_path_uses_appdata_only() {
         let vars = [("APPDATA", "/appdata"), ("XDG_CONFIG_HOME", "/cfg")];
         assert_eq!(
-            path_from_env(true, lookup(&vars)),
+            path_from_env(Flavour::Release, true, lookup(&vars)),
             Some(PathBuf::from("/appdata/nomouse/config.toml"))
         );
-        assert_eq!(path_from_env(true, lookup(&[("HOME", "/home/u")])), None);
+        assert_eq!(
+            path_from_env(Flavour::Dev, true, lookup(&vars)),
+            Some(PathBuf::from("/appdata/nomouse-dev/config.toml"))
+        );
+        assert_eq!(
+            path_from_env(Flavour::Release, true, lookup(&[("HOME", "/home/u")])),
+            None
+        );
+    }
+
+    #[test]
+    fn the_default_path_is_this_builds_flavour() {
+        let windows = cfg!(target_os = "windows");
+        let real = |name: &str| std::env::var_os(name);
+        assert_eq!(
+            default_path(),
+            path_from_env(Flavour::CURRENT, windows, real)
+        );
+        if let Some(path) = default_path() {
+            let dir = path.parent().and_then(Path::file_name);
+            assert_eq!(dir, Some(std::ffi::OsStr::new(Flavour::CURRENT.stem())));
+        }
     }
 }

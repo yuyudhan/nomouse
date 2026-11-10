@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand};
 use nomouse_core::config::{self, Config};
 use nomouse_core::settings::{Change, Settings as ConfigFile};
-use nomouse_core::{ActionKind, Alphabet, InputEvent, Platform, generate_labels};
+use nomouse_core::{ActionKind, Alphabet, Flavour, InputEvent, Platform, generate_labels};
 
 use desktop::Desktop;
 use run::{Mode, Outcome, Settings};
@@ -62,8 +62,15 @@ mod backend {
     }
 }
 
+/// `nomouse --version`: the version, with ` (dev)` after it for a development build
+/// (`scripts/release/app.sh` reads it to name the app bundle).
+const VERSION: &str = match Flavour::CURRENT {
+    Flavour::Release => env!("CARGO_PKG_VERSION"),
+    Flavour::Dev => concat!(env!("CARGO_PKG_VERSION"), " (dev)"),
+};
+
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version = VERSION, about)]
 struct Cli {
     /// Command; `daemon` when omitted.
     #[command(subcommand)]
@@ -698,7 +705,8 @@ pub(crate) fn doctor_report() -> Result<(String, bool), String> {
             Ok(format!("{} absent (defaults apply)", path.display())),
         )
     };
-    let mut checks = backend::doctor(&config);
+    let mut checks = vec![flavour_check(Flavour::CURRENT, &path)];
+    checks.extend(backend::doctor(&config));
     #[cfg(target_os = "linux")]
     checks.push(desktop::doctor_line());
     checks.push(daemon_check());
@@ -710,6 +718,20 @@ pub(crate) fn doctor_report() -> Result<(String, bool), String> {
     };
     checks.push(("ignored apps".to_owned(), Ok(ignored)));
     Ok(render_report(&checks, backend::ACCESSIBILITY_REQUIREMENT))
+}
+
+/// The doctor's first line: which build this is and where its configuration lives, so a
+/// development build and the installed release are never mistaken for each other.
+fn flavour_check(flavour: Flavour, config: &std::path::Path) -> (String, Result<String, String>) {
+    let dir = config.parent().unwrap_or(config);
+    (
+        "flavour".to_owned(),
+        Ok(format!(
+            "{} build, config in {}",
+            flavour.name(),
+            dir.display()
+        )),
+    )
 }
 
 /// The backend checks whose failure means the accessibility tree or synthetic input is out of
@@ -756,7 +778,10 @@ fn render_report(checks: &[(String, Result<String, String>)], requirement: &str)
 const START_DAEMON: &str = if cfg!(target_os = "linux") {
     "`nomouse launch`"
 } else if cfg!(target_os = "macos") {
-    "`open -a nomouse`"
+    match Flavour::CURRENT {
+        Flavour::Release => "`open -a nomouse`",
+        Flavour::Dev => "`open -a \"nomouse Dev\"`",
+    }
 } else {
     "`nomouse daemon`"
 };
@@ -767,7 +792,10 @@ const START_DAEMON: &str = if cfg!(target_os = "linux") {
 const RESTART_DAEMON: &str = if cfg!(target_os = "linux") {
     "`nomouse quit && nomouse launch`"
 } else if cfg!(target_os = "macos") {
-    "`nomouse quit && open -a nomouse`"
+    match Flavour::CURRENT {
+        Flavour::Release => "`nomouse quit && open -a nomouse`",
+        Flavour::Dev => "`nomouse quit && open -a \"nomouse Dev\"`",
+    }
 } else {
     "`nomouse quit && nomouse daemon`"
 };
@@ -972,6 +1000,33 @@ mod tests {
             name.to_owned(),
             result.map(ToOwned::to_owned).map_err(ToOwned::to_owned),
         )
+    }
+
+    #[test]
+    fn the_doctor_names_the_flavour_and_its_config_dir() {
+        let path = std::path::Path::new("/home/u/.config/nomouse-dev/config.toml");
+        let (out, failed) = render_report(&[flavour_check(Flavour::Dev, path)], "");
+        assert!(!failed);
+        assert!(
+            out.contains("[ok  ] flavour: dev build, config in /home/u/.config/nomouse-dev\n"),
+            "{out}"
+        );
+        let path = std::path::Path::new("/Users/u/.config/nomouse/config.toml");
+        let (name, line) = flavour_check(Flavour::Release, path);
+        assert_eq!(name, "flavour");
+        assert_eq!(
+            line.as_deref(),
+            Ok("release build, config in /Users/u/.config/nomouse")
+        );
+    }
+
+    #[test]
+    fn a_development_build_says_so_in_its_version() {
+        let expected = match Flavour::CURRENT {
+            Flavour::Release => env!("CARGO_PKG_VERSION").to_owned(),
+            Flavour::Dev => format!("{} (dev)", env!("CARGO_PKG_VERSION")),
+        };
+        assert_eq!(VERSION, expected);
     }
 
     #[test]

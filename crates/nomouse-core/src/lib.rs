@@ -5,6 +5,7 @@
 //! - [`action`]: pointer actions.
 //! - [`hotkey`]: hotkey chords and overlay key presses.
 //! - [`config`]: the TOML configuration.
+//! - [`flavour`]: the release or development build, and the names each claims.
 //! - [`settings`]: the settings model over `config.toml`: edited, saved atomically and
 //!   watched, plus the fields a settings window shows.
 //! - [`platform`]: the traits each OS backend implements.
@@ -27,6 +28,7 @@ pub mod config;
 pub mod contract;
 pub mod element;
 pub mod filter;
+pub mod flavour;
 #[cfg(feature = "glyph")]
 pub mod glyph;
 pub mod hints;
@@ -47,6 +49,7 @@ pub use apps::AppIdentity;
 pub use config::{Config, ConfigError};
 pub use element::{Element, ElementId, Point, Rect, Role};
 pub use filter::{FilterState, LabelFilter};
+pub use flavour::Flavour;
 pub use hints::{Alphabet, AlphabetError, Hint, assign_hints, generate_labels};
 pub use hotkey::{Hotkey, HotkeyError, Key, KeyEvent, KeyPress, Modifiers};
 pub use platform::{

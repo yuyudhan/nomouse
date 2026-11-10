@@ -13,7 +13,12 @@
 # macOS targets build for macOS 11 (MACOSX_DEPLOYMENT_TARGET, the bundle's LSMinimumSystemVersion)
 # and the binary's LC_BUILD_VERSION minos is checked against it. Windows MSVC targets link the C
 # runtime statically (+crt-static), so nomouse.exe needs no Visual C++ Redistributable.
+#
+# Release assets are the release flavour whatever the caller's environment says
+# (NOMOUSE_FLAVOUR=release: ~/.config/nomouse/, com.yuyudhan.nomouse; see
+# crates/nomouse-core/src/flavour.rs).
 set -euo pipefail
+export NOMOUSE_FLAVOUR=release
 
 target="${1:-}"
 [ -n "$target" ] || {

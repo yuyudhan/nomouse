@@ -73,7 +73,11 @@ impl Onboarding {
         let app = App::new()?;
         let mtm = app.main_thread();
         ui::install_main_menu(mtm);
-        let item = StatusItem::new(mtm, MENU_ICON, "nomouse");
+        let item = StatusItem::new(
+            mtm,
+            MENU_ICON,
+            nomouse_core::Flavour::CURRENT.display_name(),
+        );
         item.set_menu(&[
             MenuLine::Item {
                 tag: 0,

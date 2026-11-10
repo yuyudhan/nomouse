@@ -1,23 +1,33 @@
-//! One daemon per user: an exclusive lock on `$XDG_RUNTIME_DIR/nomouse.lock`.
+//! One daemon per user and flavour: an exclusive lock on `$XDG_RUNTIME_DIR/nomouse.lock`
+//! (`nomouse-dev.lock` for a development build, so it runs beside the installed release).
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Where the lock lives: `$XDG_RUNTIME_DIR`, else the temp dir with the user name.
-pub(crate) fn lock_path(runtime_dir: Option<PathBuf>, user: Option<String>) -> PathBuf {
+use nomouse_core::Flavour;
+
+/// Where `flavour`'s lock lives: `$XDG_RUNTIME_DIR/<stem>.lock`, else
+/// `<stem>-<user>.lock` in the temp dir.
+pub(crate) fn lock_path(
+    flavour: Flavour,
+    runtime_dir: Option<PathBuf>,
+    user: Option<String>,
+) -> PathBuf {
+    let stem = flavour.stem();
     match runtime_dir.filter(|dir| !dir.as_os_str().is_empty()) {
-        Some(dir) => dir.join("nomouse.lock"),
+        Some(dir) => dir.join(format!("{stem}.lock")),
         None => std::env::temp_dir().join(format!(
-            "nomouse-{}.lock",
+            "{stem}-{}.lock",
             user.unwrap_or_else(|| "user".to_owned())
         )),
     }
 }
 
-/// [`lock_path`] for this process's `XDG_RUNTIME_DIR` and `USER`.
+/// [`lock_path`] for this build's flavour and this process's `XDG_RUNTIME_DIR` and `USER`.
 pub(crate) fn current_path() -> PathBuf {
     lock_path(
+        Flavour::CURRENT,
         std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
         std::env::var("USER").ok(),
     )
@@ -76,12 +86,24 @@ mod tests {
 
     #[test]
     fn paths() {
+        let run = || Some(PathBuf::from("/run/user/1000"));
         assert_eq!(
-            lock_path(Some(PathBuf::from("/run/user/1000")), None),
+            lock_path(Flavour::Release, run(), None),
             PathBuf::from("/run/user/1000/nomouse.lock")
         );
-        let fallback = lock_path(Some(PathBuf::new()), Some("ann".into()));
+        assert_eq!(
+            lock_path(Flavour::Dev, run(), None),
+            PathBuf::from("/run/user/1000/nomouse-dev.lock")
+        );
+        let fallback = lock_path(Flavour::Release, Some(PathBuf::new()), Some("ann".into()));
         assert!(fallback.ends_with("nomouse-ann.lock"));
+        let fallback = lock_path(Flavour::Dev, None, Some("ann".into()));
+        assert!(fallback.ends_with("nomouse-dev-ann.lock"));
+        assert!(
+            current_path()
+                .to_string_lossy()
+                .contains(Flavour::CURRENT.stem())
+        );
     }
 
     #[test]

@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use nomouse_core::Flavour;
 use nomouse_core::menu::{MenuAction, MenuState};
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::OwnedObjectPath;
@@ -54,8 +55,10 @@ impl Item {
         Self {
             shared,
             category: "ApplicationStatus",
-            id: "nomouse",
-            title: "nomouse",
+            // A development build's item is its own (`nomouse-dev`, titled "nomouse Dev"), so
+            // hosts that remember items by id keep the two apart.
+            id: Flavour::CURRENT.stem(),
+            title: Flavour::CURRENT.display_name(),
             menu: OwnedObjectPath::try_from(MENU_PATH).unwrap_or_default(),
         }
     }

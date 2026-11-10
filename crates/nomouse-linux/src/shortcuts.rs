@@ -266,7 +266,7 @@ mod tests {
     fn compositor_bindings_use_the_configured_chords() {
         let hotkeys = HotkeysConfig {
             hints: "super+shift+j".parse().unwrap(),
-            ..HotkeysConfig::default()
+            ..HotkeysConfig::defaults(nomouse_core::Flavour::Release)
         };
         let sway = Shortcuts::Sway.instructions(&hotkeys).unwrap();
         assert!(sway.contains("bindsym Shift+Mod4+j exec nomouse hints\n"));

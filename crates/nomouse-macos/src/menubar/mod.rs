@@ -219,7 +219,12 @@ impl MenuBar {
         let app = App::new()?;
         let mtm = app.main_thread();
         ui::install_main_menu(mtm);
-        let item = StatusItem::new(mtm, MENU_ICON, "nomouse");
+        // "nomouse Dev" for a development build: its tooltip tells the two icons apart.
+        let item = StatusItem::new(
+            mtm,
+            MENU_ICON,
+            nomouse_core::Flavour::CURRENT.display_name(),
+        );
         let menu_bar = Self {
             app,
             item,

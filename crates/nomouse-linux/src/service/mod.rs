@@ -304,7 +304,7 @@ impl Service {
                     &(
                         "nomouse",
                         0u32,
-                        crate::control::APP_ID,
+                        crate::control::ICON,
                         summary,
                         body,
                         Vec::<&str>::new(),
