@@ -74,7 +74,13 @@ check "icon file is AppIcon" key_is CFBundleIconFile AppIcon
 is_icns() { [[ "$(head -c 4 "$app/Contents/Resources/AppIcon.icns")" == icns ]]; }
 check "AppIcon.icns is an icns file" is_icns
 check "codesign --verify --deep --strict" codesign --verify --deep --strict "$app"
-identifier_is() { codesign -dv "$app" 2>&1 | grep -qx "Identifier=$bundle_id"; }
+# Read the whole output before matching: `grep -q` stops at the first match, and under
+# pipefail the writer it leaves behind can die of SIGPIPE and fail the check.
+identifier_is() {
+    local details
+    details="$(codesign -dv "$app" 2>&1)"
+    grep -qx "Identifier=$bundle_id" <<<"$details"
+}
 check "signing identifier is the bundle id" identifier_is
 requirement() { codesign -d -r- "$1" 2>&1 | grep 'designated =>'; }
 same_requirement() {
@@ -97,7 +103,11 @@ unzipped_verifies() {
         codesign --verify --deep --strict "$tmp/unzipped/nomouse.app"
 }
 check "the bundle unzipped from the zip still verifies" unzipped_verifies
-reports_version() { "$app/Contents/MacOS/nomouse" --version | grep -q "$version"; }
+reports_version() {
+    local reported
+    reported="$("$app/Contents/MacOS/nomouse" --version)"
+    grep -qF "$version" <<<"$reported"
+}
 check "the bundled binary reports $version" reports_version
 
 dmg="$tmp/first/nomouse-universal-apple-darwin.dmg"
@@ -118,8 +128,9 @@ check "the disk image unpacks (volume 'nomouse $version')" extracted
 check "the bundle in the disk image verifies" codesign --verify --deep --strict "$volume/nomouse.app"
 # 7-Zip rebases absolute links when it extracts them, so the link is read from the image.
 applications_link() {
-    local entry="nomouse $version/Applications"
-    7zz l -slt "$dmg" "$entry" | grep -qx 'Mode = lrwxr-xr-x' &&
+    local entry="nomouse $version/Applications" listing
+    listing="$(7zz l -slt "$dmg" "$entry")"
+    grep -qx 'Mode = lrwxr-xr-x' <<<"$listing" &&
         [[ "$(7zz x -so "$dmg" "$entry" 2>/dev/null)" == /Applications ]]
 }
 check "the disk image links /Applications" applications_link
