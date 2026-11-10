@@ -91,6 +91,9 @@ jobs:
         name: macOS universal
         needs: version
         runs-on: macos-latest
+        outputs:
+            # "developer-id" or "ad-hoc" (scripts/release/signature.sh); the cask depends on it.
+            signing: ${{ steps.package.outputs.signing }}
         steps:
             - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
             - name: Install the pinned toolchain
@@ -100,6 +103,7 @@ jobs:
             - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
               with:
                   key: release-macos
+            # build.sh sets MACOSX_DEPLOYMENT_TARGET=11.0 and checks each slice's minos.
             - name: Build arm64 and x86_64, join them with lipo
               id: build
               run: |
@@ -126,10 +130,14 @@ jobs:
                   "${{ steps.build.outputs.binary }}" --version
                   "${{ steps.build.outputs.binary }}" --version | grep -q "${{ needs.version.outputs.version }}"
             - name: Package
+              id: package
+              # An assignment first, so a failed signature check fails this step.
               run: |
                   scripts/release/package.sh universal-apple-darwin "${{ steps.build.outputs.binary }}" dist
                   scripts/release/app.sh "${{ steps.build.outputs.binary }}" dist
                   scripts/release/dmg.sh dist/nomouse.app dist
+                  signing="$(scripts/release/signature.sh dist/nomouse.app)"
+                  echo "signing=${signing}" >>"$GITHUB_OUTPUT"
                   rm -rf dist/nomouse.app
             - name: Gatekeeper accepts the disk image
               if: env.NOMOUSE_NOTARY_KEY_ID != ''
@@ -147,6 +155,44 @@ jobs:
                   name: assets-universal-apple-darwin
                   path: dist/*
                   if-no-files-found: error
+
+    # The shipped macOS assets on the oldest hosted macOS and on GitHub's Intel runner, as an
+    # x86_64 Mac runs them. Older macOS (11 and later is the build's minos, which build.sh
+    # checks) has no hosted runner.
+    macos-smoke:
+        name: macOS smoke test (${{ matrix.runner }})
+        needs: [version, macos]
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - runner: macos-15-intel
+                      arch: x86_64
+                    - runner: macos-14
+                      arch: arm64
+        runs-on: ${{ matrix.runner }}
+        steps:
+            - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+              with:
+                  name: assets-universal-apple-darwin
+                  path: dist
+            - name: Run the universal binary and nomouse.app
+              run: |
+                  test "$(uname -m)" = "${{ matrix.arch }}"
+                  sw_vers
+                  mkdir -p unpacked
+                  tar -xzf dist/nomouse-universal-apple-darwin.tar.gz -C unpacked
+                  bin=unpacked/nomouse-universal-apple-darwin/nomouse
+                  lipo -archs "$bin" | grep -qw "${{ matrix.arch }}"
+                  "$bin" --version | grep -q "${{ needs.version.outputs.version }}"
+                  # No Accessibility grant on the runner: doctor reports and exits non-zero, but
+                  # it must run and print its report.
+                  report="$("$bin" doctor || true)"
+                  printf '%s\n' "$report"
+                  grep -q '^platform: macos' <<<"$report"
+                  ditto -x -k dist/nomouse-universal-apple-darwin.app.zip unpacked
+                  codesign --verify --deep --strict unpacked/nomouse.app
+                  unpacked/nomouse.app/Contents/MacOS/nomouse --version | grep -q "${{ needs.version.outputs.version }}"
 
     windows:
         name: Windows x86_64
@@ -187,7 +233,7 @@ jobs:
 
     assemble:
         name: Assemble${{ github.ref_type == 'tag' && ' and publish' || ' (dry run)' }}
-        needs: [version, linux, macos, windows]
+        needs: [version, linux, macos, macos-smoke, windows]
         runs-on: ubuntu-latest
         permissions:
             contents: write
@@ -199,6 +245,8 @@ jobs:
                   path: dist
                   merge-multiple: true
             - name: Installers, Homebrew formula and SHA256SUMS
+              env:
+                  NOMOUSE_MACOS_SIGNING: ${{ needs.macos.outputs.signing }}
               run: scripts/release/finish.sh "${{ needs.version.outputs.version }}" dist
             # The installed nomouse-settings must start (`--version`), which needs the GTK 4 and
             # libadwaita runtime libraries a desktop has and the runner image lacks.
@@ -223,3 +271,32 @@ jobs:
                   scripts/release/notes.sh "${{ needs.version.outputs.version }}" >notes.md
                   gh release create "$GITHUB_REF_NAME" dist/* \
                       --title "nomouse ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag
+
+    # Formula/nomouse.rb and Casks/nomouse.rb in yuyudhan/homebrew-tap, after the GitHub release
+    # exists: publish-homebrew.sh audits and installs the cask and the formula from the new tap
+    # commit before it pushes. HOMEBREW_TAP_TOKEN: a fine-grained token with Contents read and
+    # write on yuyudhan/homebrew-tap (CONTRIBUTING.md#releases); without it the job fails and
+    # says so. A dry run publishes to a local copy of the tap with `brew style` only (its
+    # version has no release to install from).
+    homebrew:
+        name: Homebrew tap${{ github.ref_type == 'tag' && '' || ' (dry run)' }}
+        needs: [version, assemble]
+        runs-on: macos-latest
+        steps:
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+            - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+              with:
+                  name: release-${{ needs.version.outputs.version }}
+                  path: dist
+            - name: Install from the new tap commit and push it
+              if: github.ref_type == 'tag'
+              env:
+                  GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+              run: scripts/release/publish-homebrew.sh "${{ needs.version.outputs.version }}" dist
+            - name: Publish to a local copy of the tap
+              if: github.ref_type != 'tag'
+              run: |
+                  git clone --quiet --bare https://github.com/yuyudhan/homebrew-tap.git "${RUNNER_TEMP}/tap.git"
+                  NOMOUSE_TAP_REMOTE="file://${RUNNER_TEMP}/tap.git" \
+                      scripts/release/publish-homebrew.sh "${{ needs.version.outputs.version }}" dist --no-install
+                  git -C "${RUNNER_TEMP}/tap.git" log -1 --stat

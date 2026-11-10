@@ -72,12 +72,47 @@ jobs:
             - name: install.sh against a fake release
               if: runner.os != 'Windows'
               run: scripts/test-installer.sh
+            - name: Homebrew formula and cask against a local tap
+              if: runner.os != 'Windows'
+              run: scripts/release/test-publish-homebrew.sh
             - name: install.ps1 end to end
               if: runner.os == 'Windows'
               run: |
                   cargo build --locked -p nomouse
                   scripts/release/package.sh x86_64-pc-windows-msvc target/debug/nomouse.exe target/installer-dist
                   pwsh -NoProfile -File scripts/test-install.ps1 -Dist target/installer-dist
+
+    # The declared floor (workspace rust-version) must build: a user on an older Rust gets
+    # cargo's "requires rustc" message from nomouse itself, never a dependency's. 22.04 has the
+    # oldest GTK 4 and libadwaita the settings window supports.
+    msrv:
+        name: msrv (${{ matrix.os }})
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-22.04, macos-latest, windows-latest]
+        runs-on: ${{ matrix.os }}
+        defaults:
+            run:
+                shell: bash
+        steps:
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+            - name: Install the declared minimum Rust
+              run: |
+                  msrv="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)"
+                  test -n "$msrv"
+                  rustup toolchain install "$msrv" --profile minimal
+                  echo "MSRV=${msrv}" >>"$GITHUB_ENV"
+            - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+              with:
+                  key: msrv
+            - name: Install GTK 4 and libadwaita (the Linux settings window)
+              if: runner.os == 'Linux'
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev
+            - name: Check the workspace on the minimum Rust
+              run: cargo "+${MSRV}" check --locked --workspace --all-targets --all-features
 
     e2e-linux:
         name: e2e (Linux X11, Xvfb + i3 + AT-SPI)
