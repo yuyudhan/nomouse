@@ -12,6 +12,12 @@ nomouse config check    # validates the file and names the first bad key
 The file is `~/.config/nomouse/config.toml` on macOS and Linux (`$XDG_CONFIG_HOME/nomouse/config.toml`
 when `XDG_CONFIG_HOME` is set) and `%APPDATA%\nomouse\config.toml` on Windows.
 
+A development build (`cargo run`, any debug build, `just dev` or `just app`) has its own
+config, `~/.config/nomouse-dev/config.toml`, so it never changes the installed nomouse's
+settings. `just dev-config` installs `config/dev.example.toml` there: every key set to a
+development build's default, with comments giving each one's values and effect. It keeps an
+existing file unless you pass `--force`, which backs it up as `config.toml.bak-<time>` first.
+
 Every key is optional: leave out what you do not change. The running daemon re-reads the file
 within two seconds of a save, or at once with `nomouse reload`. A file with a mistake is
 reported in the daemon's log and the previous settings stay in effect, so a typo never leaves
@@ -61,6 +67,10 @@ every build, so this page cannot fall behind it.
 
 ### `[hotkeys]`: the global shortcuts
 
+The defaults below are the release's. A development build defaults to `ctrl+alt+shift+space`
+(hints), `ctrl+alt+shift+period` (continuous), `ctrl+alt+shift+comma` (scroll) and
+`ctrl+alt+shift+slash` (search), so it never fights the installed nomouse over a chord.
+
 | Key | Default | Mode it starts |
 |-----|---------|----------------|
 | `hotkeys.hints` | `"ctrl+space"` | hints: label the window, type a label to click |
@@ -72,8 +82,8 @@ A hotkey is one or more modifiers and a key joined by `+`, case-insensitive:
 
 - modifiers: `ctrl` (or `control`), `alt` (or `option`), `shift`, `super` (or `cmd`,
   `command`, `meta`, `win`). At least one is required.
-- keys: a letter `a`-`z`, a digit, `f1`-`f24`, `space`, `tab`, `enter`, `escape`, `backspace`,
-  and `/` `;` `,` `.` (or `slash`, `semicolon`, `comma`, `period`).
+- keys: a letter `a`-`z`, a digit, `f1`-`f24`, `space`, `tab`, `enter` (or `return`), `escape`
+  (or `esc`), `backspace`, and `/` `;` `,` `.` (or `slash`, `semicolon`, `comma`, `period`).
 
 Two modes cannot share a hotkey. On Wayland the compositor owns global shortcuts, so these keys
 are not grabbed there: bind `nomouse hints` (and the other modes) in the compositor instead, as
@@ -107,7 +117,7 @@ the rest between light and dark.
 
 | Key | Default | Values |
 |-----|---------|--------|
-| `ignore.apps` | `[]` | apps where the hotkeys show no labels. Each entry is a macOS bundle id (`com.apple.Terminal`) or executable name, a Wayland app id, an X11 `WM_CLASS` instance or class, or a process name; matching ignores case |
+| `ignore.apps` | `[]` | apps where the hotkeys show no labels. Each entry is a macOS bundle id (`com.apple.Terminal`) or executable name, a Wayland app id, an X11 `WM_CLASS` instance or class, or a process name; matching ignores case. No blank entries |
 
 `nomouse doctor` lists the apps it ignores.
 
@@ -115,7 +125,7 @@ the rest between light and dark.
 
 | Key | Default | Values |
 |-----|---------|--------|
-| `macos.enhanced_ui_apps` | `[]` | bundle ids (such as `"com.google.Chrome"`) whose accessibility tree nomouse switches on with `AXEnhancedUserInterface`. Chromium and Electron apps only build their tree when asked; the attribute can slow window animations, so it is opt-in per app. Ignored on other systems |
+| `macos.enhanced_ui_apps` | `[]` | bundle ids (such as `"com.google.Chrome"`) whose accessibility tree nomouse switches on with `AXEnhancedUserInterface`. Chromium and Electron apps only build their tree when asked; the attribute can slow window animations, so it is opt-in per app. No blank entries. Ignored on other systems |
 
 ## Logs
 

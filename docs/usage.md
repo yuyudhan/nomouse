@@ -192,10 +192,10 @@ daemon, the mode runs in the command's own process.
 | `nomouse setup` | walk through the permissions nomouse needs, ask the system, wait for them |
 | `nomouse launch [--doctor]` | Linux, what the app launcher runs: start the daemon unless it runs and open the settings window (without it: notify the state and hotkeys); `--doctor` opens `nomouse doctor` in a terminal |
 | `nomouse-settings [--page <page>]` | Linux, the settings window, on `general`, `hotkeys`, `labels`, `appearance`, `scroll`, `search`, `ignored`, `advanced` or `doctor`; a second start raises the open window |
-| `nomouse doctor` | check the session, accessibility, input, the running daemon (pid and version) and the config, and print the fix for anything missing |
+| `nomouse doctor` | name the flavour (release, or a development build) and its config directory, check the session, accessibility, input, the running daemon (pid and version) and the config, and print the fix for anything missing |
 | `nomouse config init` / `path` / `show` / `check [FILE]` | [configuration](configuration.md) helpers |
 | `nomouse labels COUNT [--alphabet LETTERS]` | print the labels COUNT elements would get |
-| `nomouse --version` | print the version |
+| `nomouse --version` | print the version (`(dev)` after it for a development build) |
 
 `--standalone` before or after a mode runs it in the calling process even when a daemon runs.
 Set `NOMOUSE_LOG=info` or `debug` for logs on stderr.

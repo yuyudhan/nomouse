@@ -200,6 +200,10 @@ The rules (no unsafe outside the two FFI crates, clippy pedantic with `-D warnin
 every change) are in [CONTRIBUTING.md](CONTRIBUTING.md), the test layers in
 [docs/testing.md](docs/testing.md), and the rules for coding agents in [AGENTS.md](AGENTS.md).
 
+`just dev` and `just app` build a development nomouse ("nomouse Dev.app" on macOS) that runs
+beside the installed one with its own config, hotkeys and Accessibility grant:
+[CONTRIBUTING.md](CONTRIBUTING.md#development-builds).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or

@@ -18,6 +18,36 @@ kbvm, the Linux keymap reader, needs it. CI's `msrv` job checks the workspace wi
 version on Linux, macOS and Windows; raise both together when a dependency needs more. Building
 prerequisites per OS are in [docs/install.md](docs/install.md#build-prerequisites).
 
+## Development builds
+
+A development build runs beside the installed nomouse, so you can work on nomouse while using
+it. The flavour is fixed at build time: `NOMOUSE_FLAVOUR=dev` or `release`, else debug builds
+are dev and `--release` builds are release (`crates/nomouse-core/src/flavour.rs`).
+
+| | Release | Dev |
+|---|---|---|
+| Config | `~/.config/nomouse/` | `~/.config/nomouse-dev/` |
+| Socket, lock, log | `nomouse.sock`, `.lock`, `.log` | `nomouse-dev.sock`, `.lock`, `.log` |
+| macOS app | `nomouse.app`, `com.yuyudhan.nomouse` | `nomouse Dev.app`, `com.yuyudhan.nomouse.dev`, with its own Accessibility grant and login item |
+| Linux ids | `io.github.yuyudhan.nomouse`, autostart `nomouse.desktop` | `io.github.yuyudhan.nomouse.dev`, autostart `nomouse-dev.desktop` |
+| Default hotkeys | `ctrl+space`, `ctrl+shift+space`, `ctrl+alt+space`, `ctrl+alt+/` | `ctrl+alt+shift+space`, `ctrl+alt+shift+.`, `ctrl+alt+shift+,`, `ctrl+alt+shift+/` |
+| `--version` | `nomouse 0.1.7` | `nomouse 0.1.7 (dev)` |
+
+- `just dev <args>` runs a debug (dev) build, e.g. `just dev doctor`; with no arguments it runs
+  the daemon. `nomouse doctor`'s first line names the flavour and its config directory
+  (`flavour: dev build, config in ~/.config/nomouse-dev`).
+- `just dev-config` installs `config/dev.example.toml` as the dev config: every key at its dev
+  default, with comments. It keeps an existing file unless `--force`, which backs it up as
+  `config.toml.bak-<time>` first. It never touches `~/.config/nomouse/`.
+- `just app` builds an optimised **nomouse Dev.app** in `target/app/`: open it once and allow
+  *nomouse Dev* in Accessibility. Rebuilding it never touches the installed `nomouse.app`'s
+  grant. `just test-app-dev` checks that bundle; `just test-app` checks the release one.
+- `just e2e-macos --bin <binary>` tests a development build as well as a release one.
+- A dev build looks for `nomouse-settings` and `nomouse` only beside itself, never on `PATH`.
+- The release `nomouse.app` comes only from `scripts/release/build.sh` and `app.sh`, which pin
+  `NOMOUSE_FLAVOUR=release`. Release paths and ids never change: users' configs, Accessibility
+  grants, login items and autostart entries depend on them.
+
 ## Git hooks
 
 `just install-hooks` points `core.hooksPath` at `.githooks/`:
@@ -50,6 +80,7 @@ updated in place, so repeated runs rebuild only what changed.
 | `just release-dry-run` | every Linux release asset into `target/dist/`, nothing published, then `just test-install` |
 | `just test-install` | `install.sh` end to end against `target/dist/` in an `env -i` sandbox (temp HOME, PATH, TERM only); it asserts the sandbox and that decoy `XDG_CONFIG_HOME`/`NOMOUSE_INSTALL_DIR` stay untouched |
 | `just release X.Y.Z` | cut a release (see below); only on the owner's word |
+| `just dev`, `just dev-config`, `just app`, `just test-app-dev` | development builds, see [above](#development-builds) |
 
 ## Rules
 

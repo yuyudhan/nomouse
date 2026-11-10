@@ -235,6 +235,13 @@ or stuck. Stop it with `kill 4242` and start it again as the line says.
 Start it: `open -a nomouse` on macOS, `nomouse launch` (or pick nomouse in the app launcher)
 on Linux.
 
+**`flavour: dev build, config in ~/.config/nomouse-dev`**, or my settings and hotkeys are
+different
+That `nomouse` is a development build (`cargo run`, `just dev`, "nomouse Dev.app"), which has
+its own config, hotkeys (`ctrl+alt+shift+space` and so on) and, on macOS, its own
+Accessibility entry. The installed nomouse says `flavour: release build, config in
+~/.config/nomouse`. See [CONTRIBUTING.md](../CONTRIBUTING.md#development-builds).
+
 ## The config
 
 **My change does nothing**

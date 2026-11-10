@@ -228,8 +228,9 @@ The menu bar section starts a daemon on its own config and checks that the menu 
 `config reloaded`; that the recorded hotkey then labels the fixture; and that **Quit nomouse**
 ends the daemon. The daemon checks count only its overlay panels (`mac_probe panels`, windows
 at the screen-saver level), since the menu bar item and the settings window are windows too.
-`--bin <path>` tests another binary (a bundle's `nomouse.app/Contents/MacOS/nomouse` runs in
-place, so its own grant applies); `--keep` keeps the logs.
+`--bin <path>` tests another binary, a development build as well as a release one (a bundle's
+`nomouse.app/Contents/MacOS/nomouse` or `nomouse Dev.app/Contents/MacOS/nomouse` runs in place,
+so that bundle's own grant applies); `--keep` keeps the logs.
 
 The settings window also has an in-process test, `crates/nomouse-macos/tests/settings_window.rs`
 (`cargo test -p nomouse-macos --features testing --test settings_window`, part of `just test`):

@@ -269,7 +269,7 @@ which a browser quarantines (see [macOS](#macos)).
 ### Allowing nomouse again after an update (macOS)
 
 Until releases are signed with an Apple Developer ID, every new version needs the grant once
-more, also after `just app` or any rebuild of a different version:
+more, also after installing a source build of `nomouse.app` of another version:
 
 1. Open the new app: `open /Applications/nomouse.app` (the installer already did if nomouse
    was running). The Welcome window, or the dimmed menu bar icon's
@@ -395,12 +395,19 @@ bash scripts/install.sh --from target/dist
 ```
 
 macOS, as `nomouse.app` in `/Applications` (an update over an installed copy needs the grant
-again, see [Updating](#updating)):
+again, see [Updating](#updating)). `NOMOUSE_FLAVOUR=release` makes it the release build; without
+it `app.sh` gets whatever flavour the build was:
 
 ```sh
-just app
-bash scripts/install.sh --from target/app
+NOMOUSE_FLAVOUR=release cargo build --release --locked -p nomouse
+scripts/release/app.sh target/release/nomouse target/release-app
+bash scripts/install.sh --from target/release-app
 ```
+
+`just app` is for working on nomouse: it builds **nomouse Dev.app**
+(`com.yuyudhan.nomouse.dev`) in `target/app/`, a development build that runs beside the
+installed nomouse with its own config, Accessibility grant and hotkeys
+([CONTRIBUTING.md](../CONTRIBUTING.md#development-builds)).
 
 Windows: `cargo build --release --locked -p nomouse`, then run `target\release\nomouse.exe`.
 

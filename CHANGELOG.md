@@ -9,6 +9,17 @@ the release's section; add entries under Unreleased as changes land.
 
 ### Added
 
+- Development builds run beside the installed nomouse. A debug build (`cargo run`, `just dev`)
+  or `just app` is the *dev* flavour: it uses `~/.config/nomouse-dev/`,
+  `nomouse-dev.sock`/`.lock`/`.log`, its own Linux ids (`io.github.yuyudhan.nomouse.dev`) and
+  autostart entry (`nomouse-dev.desktop`), and on macOS it is "nomouse Dev.app"
+  (`com.yuyudhan.nomouse.dev`) with its own Accessibility grant and login item. Its default
+  hotkeys are `ctrl+alt+shift+space` / `.` / `,` / `/`, so the two never fight over a chord,
+  and `--version` says `(dev)`. `nomouse doctor`'s first line names the flavour and its config
+  directory. Releases keep every path and id.
+- `just dev-config` installs `config/dev.example.toml`, every option with its values and effect
+  in comments, as the development build's config (an existing file is kept unless `--force`,
+  which backs it up first).
 - `nomouse doctor` has a `daemon` line: `running (pid N, nomouse V)`, or a FAIL with the restart
   command when the running daemon is another version (one left running across an update), when
   it is too old to say its version, or when it holds the single-instance lock without answering
@@ -48,6 +59,10 @@ the release's section; add entries under Unreleased as changes land.
 - Linux: the tray's "update available" notification names the one-line install command.
 - Releases: `MACOS_SIGN_IDENTITY` must be a `Developer ID Application` identity, and a run
   without the signing secrets warns that the release is ad-hoc signed.
+- `just app` builds "nomouse Dev.app" (the dev flavour) instead of `nomouse.app`; the release
+  `nomouse.app` comes only from the release scripts, which pin `NOMOUSE_FLAVOUR=release`.
+  `scripts/e2e-macos.sh --bin` tests a development build as well as a release one.
+- `macos.enhanced_ui_apps` rejects blank entries, as `ignore.apps` does.
 
 ### Fixed
 
@@ -78,6 +93,8 @@ the release's section; add entries under Unreleased as changes land.
   install the pinned toolchain in `rustup show`).
 - `scripts/test-app.sh` failed now and then although the bundle was right: `grep -q` under
   `pipefail` could kill `codesign` with SIGPIPE. It now reads the whole output first.
+- `scripts/test-app.sh` built a dev binary (and so "nomouse Dev.app") when the shell exported
+  `NOMOUSE_FLAVOUR=dev`; its build now pins `NOMOUSE_FLAVOUR=release`.
 
 ## [0.1.7] - 2026-11-09
 
