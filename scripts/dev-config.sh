@@ -5,8 +5,8 @@
 # touches the installed nomouse's config (~/.config/nomouse/).
 #
 # Usage: scripts/dev-config.sh [--force]
-#   An existing file is kept unless --force, which first copies it to
-#   config.toml.bak-<UTC timestamp> next to it.
+#   An existing file is kept (exit 0, with a message) unless --force, which first copies it
+#   to config.toml.bak-<UTC timestamp> next to it.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -40,8 +40,8 @@ target="$dir/config.toml"
 
 if [[ -e "$target" || -L "$target" ]]; then
     if ((force == 0)); then
-        echo "dev-config: $target exists; kept it (--force replaces it after a backup)" >&2
-        exit 1
+        echo "dev-config: kept $target (--force replaces it after a backup)"
+        exit 0
     fi
     backup="$target.bak-$(date -u +%Y%m%dT%H%M%SZ)"
     cp -p "$target" "$backup"
