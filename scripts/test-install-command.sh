@@ -48,7 +48,7 @@ command="$(awk -v fence="$fence" '
 mkdir -p "${tmp}/www/ok" "${tmp}/home"
 printf 'touch "%s/ran"\necho "install.sh ran: $*"\n' "$tmp" >"${tmp}/www/ok/install.sh"
 python3 - "${tmp}/www" "${tmp}/port" "${tmp}/requests" <<'PY' &
-import http.server, os, sys
+import http.server, os, socketserver, sys
 
 www, port_file, log = sys.argv[1], sys.argv[2], sys.argv[3]
 
@@ -71,15 +71,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+# socketserver's TCPServer, not http.server.HTTPServer: HTTPServer looks up the host's fully
+# qualified name when it binds, which takes many seconds on GitHub's macOS runners.
+server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
 with open(port_file + ".tmp", "w") as out:
-    out.write(str(server.server_port))
+    out.write(str(server.server_address[1]))
 os.rename(port_file + ".tmp", port_file)
 server.serve_forever()
 PY
 server_pid=$!
-for _ in $(seq 100); do
+for _ in $(seq 300); do
     [ -s "${tmp}/port" ] && break
+    kill -0 "$server_pid" 2>/dev/null || break
     sleep 0.1
 done
 [ -s "${tmp}/port" ] || {
