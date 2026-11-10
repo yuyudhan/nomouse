@@ -36,7 +36,9 @@ fi
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 if [[ -z "$bin" ]]; then
-    cargo build --quiet --release --manifest-path "$root/Cargo.toml" -p nomouse
+    # The release flavour even when the caller's shell exports NOMOUSE_FLAVOUR=dev: app.sh
+    # names a dev binary's bundle "nomouse Dev.app", and this script checks nomouse.app.
+    NOMOUSE_FLAVOUR=release cargo build --quiet --release --manifest-path "$root/Cargo.toml" -p nomouse
     bin="${CARGO_TARGET_DIR:-$root/target}/release/nomouse"
 fi
 tmp="$(mktemp -d /tmp/nomouse-test-app.XXXXXX)"
