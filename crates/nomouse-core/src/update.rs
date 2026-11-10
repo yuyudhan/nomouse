@@ -4,11 +4,19 @@
 //! (`.../releases/tag/vX.Y.Z`), so it needs no API token, no JSON and no rate-limited API.
 //! It only tells: installing stays with the installer or the package manager. [`check`] asks
 //! over the network with `curl`, which the installer needs anyway, on Linux and macOS alike.
+//! [`INSTALL_COMMAND`] is what menus and dialogs show for the update itself.
 
 use std::process::{Command, Stdio};
 
 /// The page that redirects to the newest release's tag.
 pub const LATEST_URL: &str = "https://github.com/yuyudhan/nomouse/releases/latest";
+
+/// The installer one-liner (macOS and Linux) that installs or updates to the newest release.
+/// Until releases are Developer-ID signed, this is the update path to offer on macOS: the
+/// installer clears the download quarantine that makes Gatekeeper refuse a browser-downloaded
+/// `.dmg` or `.app.zip`.
+pub const INSTALL_COMMAND: &str = "curl -fsSL --retry 5 --retry-all-errors \
+     https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash";
 
 /// Where the release notes of `version` (`0.1.3`) are.
 pub fn release_url(version: &str) -> String {
@@ -169,5 +177,15 @@ mod tests {
             UpdateStatus::UpToDate(Version(0, 2, 0))
         );
         assert!(UpdateStatus::new("dev", Version(0, 1, 0)).is_err());
+    }
+
+    #[test]
+    fn the_install_command_fetches_the_latest_installer() {
+        assert_eq!(
+            INSTALL_COMMAND,
+            "curl -fsSL --retry 5 --retry-all-errors \
+             https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash"
+        );
+        assert!(INSTALL_COMMAND.contains(&format!("{LATEST_URL}/download/install.sh")));
     }
 }

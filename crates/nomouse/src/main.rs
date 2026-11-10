@@ -701,6 +701,7 @@ pub(crate) fn doctor_report() -> Result<(String, bool), String> {
     let mut checks = backend::doctor(&config);
     #[cfg(target_os = "linux")]
     checks.push(desktop::doctor_line());
+    checks.push(daemon_check());
     checks.push(("config".to_owned(), status));
     let ignored = if config.ignore.apps.is_empty() {
         "none".to_owned()
@@ -708,9 +709,28 @@ pub(crate) fn doctor_report() -> Result<(String, bool), String> {
         config.ignore.apps.join(", ")
     };
     checks.push(("ignored apps".to_owned(), Ok(ignored)));
+    Ok(render_report(&checks, backend::ACCESSIBILITY_REQUIREMENT))
+}
+
+/// The backend checks whose failure means the accessibility tree or synthetic input is out of
+/// reach. Only their failure earns the report's `hint:` line with the OS's accessibility
+/// requirement; a bad config or a missing font gets no AT-SPI advice.
+const ACCESSIBILITY_CHECKS: &[&str] = if cfg!(target_os = "linux") {
+    &["AT-SPI bus", "accessibility switch", "toolkits"]
+} else if cfg!(target_os = "macos") {
+    &["Accessibility", "Synthetic input"]
+} else if cfg!(target_os = "windows") {
+    &["UI Automation", "Elevation"]
+} else {
+    &[]
+};
+
+/// The doctor report of `checks` and whether one failed. The `hint:` line with `requirement`
+/// follows only when an [`ACCESSIBILITY_CHECKS`] check failed without saying it already.
+fn render_report(checks: &[(String, Result<String, String>)], requirement: &str) -> (String, bool) {
     let mut out = format!("platform: {}\n", backend::TARGET_OS);
     let mut failed = false;
-    for (name, result) in &checks {
+    for (name, result) in checks {
         let (mark, text) = match result {
             Ok(detail) => ("ok  ", detail),
             Err(problem) => {
@@ -720,10 +740,138 @@ pub(crate) fn doctor_report() -> Result<(String, bool), String> {
         };
         let _ = writeln!(out, "[{mark}] {name}: {text}");
     }
-    if failed {
-        let _ = writeln!(out, "hint: {}", backend::ACCESSIBILITY_REQUIREMENT);
+    let accessibility_failed = checks.iter().any(|(name, result)| {
+        ACCESSIBILITY_CHECKS.contains(&name.as_str())
+            && result
+                .as_ref()
+                .is_err_and(|problem| !problem.contains(requirement))
+    });
+    if accessibility_failed {
+        let _ = writeln!(out, "hint: {requirement}");
     }
-    Ok((out, failed))
+    (out, failed)
+}
+
+/// How to start the daemon on this OS, for the doctor's `daemon` line.
+const START_DAEMON: &str = if cfg!(target_os = "linux") {
+    "`nomouse launch`"
+} else if cfg!(target_os = "macos") {
+    "`open -a nomouse`"
+} else {
+    "`nomouse daemon`"
+};
+
+/// How to replace a running daemon with this build, for the doctor's `daemon` line (where
+/// the command socket lets `nomouse doctor` see the daemon's version).
+#[cfg(unix)]
+const RESTART_DAEMON: &str = if cfg!(target_os = "linux") {
+    "`nomouse quit && nomouse launch`"
+} else if cfg!(target_os = "macos") {
+    "`nomouse quit && open -a nomouse`"
+} else {
+    "`nomouse quit && nomouse daemon`"
+};
+
+/// Whether another process holds the daemon's single-instance lock.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DaemonLock {
+    /// Nobody holds it (or the lock file does not exist).
+    Free,
+    /// A daemon holds it; the pid it recorded, when readable.
+    Held(Option<u32>),
+    /// The lock could not be checked.
+    Unknown(String),
+}
+
+/// Probes the single-instance lock at `path` with a shared lock, which fails while a daemon
+/// holds its exclusive one (and is released at once otherwise).
+fn daemon_lock(path: &std::path::Path) -> DaemonLock {
+    let Ok(file) = std::fs::File::open(path) else {
+        return DaemonLock::Free;
+    };
+    match file.try_lock_shared() {
+        Ok(()) => DaemonLock::Free,
+        Err(std::fs::TryLockError::WouldBlock) => DaemonLock::Held(
+            std::fs::read_to_string(path)
+                .ok()
+                .and_then(|text| text.trim().parse().ok()),
+        ),
+        Err(std::fs::TryLockError::Error(error)) => {
+            DaemonLock::Unknown(format!("cannot check {}: {error}", path.display()))
+        }
+    }
+}
+
+/// ` (pid N)` when the pid is known.
+fn pid_note(pid: Option<u32>) -> String {
+    pid.map_or_else(String::new, |pid| format!(" (pid {pid})"))
+}
+
+/// The doctor's `daemon` line: whether a daemon runs, its pid and version, and a version
+/// other than this command's `cli` version (a daemon left running across an update) as a
+/// failure with the restart command. `lock` says whether a daemon that does not answer on the
+/// command socket still holds the single-instance lock (stuck, or still in its setup).
+#[cfg(unix)]
+fn daemon_status(info: &ipc::DaemonInfo, cli: &str, lock: &DaemonLock) -> Result<String, String> {
+    let lock_pid = match lock {
+        DaemonLock::Held(pid) => *pid,
+        DaemonLock::Free | DaemonLock::Unknown(_) => None,
+    };
+    match info {
+        ipc::DaemonInfo::NotRunning => match lock {
+            DaemonLock::Free => Ok(format!("not running; start it with {START_DAEMON}")),
+            DaemonLock::Held(pid) => Err(format!(
+                "a daemon{} holds the single-instance lock but does not answer on the command \
+                 socket: it is still in its setup (finish the window it shows) or stuck; stop \
+                 it{} and start it with {START_DAEMON}",
+                pid_note(*pid),
+                pid.map_or_else(String::new, |pid| format!(" with `kill {pid}`"))
+            )),
+            DaemonLock::Unknown(why) => Err(format!("no daemon answers, and {why}")),
+        },
+        ipc::DaemonInfo::Running { pid, version } if version == cli => {
+            Ok(format!("running (pid {pid}, nomouse {version})"))
+        }
+        ipc::DaemonInfo::Running { pid, version } => Err(format!(
+            "the running daemon (pid {pid}) is nomouse {version}, this command is nomouse \
+             {cli}; restart it with {RESTART_DAEMON}"
+        )),
+        ipc::DaemonInfo::Unversioned(why) => Err(format!(
+            "a daemon{} holds the command socket but did not report its version ({why}); \
+             daemons older than this command do that, so restart it with {RESTART_DAEMON}",
+            pid_note(lock_pid)
+        )),
+    }
+}
+
+/// The doctor's `daemon` check, asked over the command socket.
+#[cfg(unix)]
+fn daemon_check() -> (String, Result<String, String>) {
+    let info = ipc::current_path().map_or_else(
+        |error| ipc::DaemonInfo::Unversioned(format!("command socket: {error}")),
+        |path| ipc::daemon_info(&path),
+    );
+    let instance = daemon_lock(&lock::current_path());
+    (
+        "daemon".to_owned(),
+        daemon_status(&info, env!("CARGO_PKG_VERSION"), &instance),
+    )
+}
+
+/// The doctor's `daemon` check without a command socket: whether a daemon holds the
+/// single-instance lock. Its version cannot be asked here.
+#[cfg(not(unix))]
+fn daemon_check() -> (String, Result<String, String>) {
+    let status = match daemon_lock(&lock::current_path()) {
+        DaemonLock::Free => Ok(format!("not running; start it with {START_DAEMON}")),
+        DaemonLock::Held(pid) => Ok(format!(
+            "running{}; this build cannot ask it for its version, so after an update stop it \
+             and start it again",
+            pid_note(pid)
+        )),
+        DaemonLock::Unknown(why) => Err(why),
+    };
+    ("daemon".to_owned(), status)
 }
 
 fn run_command(command: Command, standalone: bool) -> Result<String, String> {
@@ -818,6 +966,116 @@ fn init_config(path: &std::path::Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn check(name: &str, result: Result<&str, &str>) -> (String, Result<String, String>) {
+        (
+            name.to_owned(),
+            result.map(ToOwned::to_owned).map_err(ToOwned::to_owned),
+        )
+    }
+
+    #[test]
+    fn a_config_or_font_failure_gets_no_accessibility_hint() {
+        let checks = [
+            check("label font", Err("no TrueType/OpenType font found")),
+            check("config", Err("bad key `foo`")),
+            check("ignored apps", Ok("none")),
+        ];
+        let (out, failed) = render_report(&checks, "AT-SPI must be running");
+        assert!(failed);
+        assert!(out.contains("[FAIL] config: bad key `foo`\n"), "{out}");
+        assert!(!out.contains("hint:"), "{out}");
+    }
+
+    #[test]
+    fn an_accessibility_failure_gets_the_hint_once() {
+        let Some(name) = ACCESSIBILITY_CHECKS.first() else {
+            return;
+        };
+        let (out, failed) = render_report(&[check(name, Err("off"))], "the requirement");
+        assert!(failed);
+        assert!(out.ends_with("hint: the requirement\n"), "{out}");
+        // A failure that already says the requirement does not repeat it.
+        let (out, _) = render_report(
+            &[check(name, Err("unreachable; the requirement"))],
+            "the requirement",
+        );
+        assert!(!out.contains("hint:"), "{out}");
+        let (out, failed) = render_report(&[check(name, Ok("on"))], "the requirement");
+        assert!(!failed && !out.contains("hint:"), "{out}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_daemon_line_flags_a_daemon_from_another_version() {
+        use ipc::DaemonInfo;
+        let running = |version: &str| DaemonInfo::Running {
+            pid: 42,
+            version: version.to_owned(),
+        };
+        let free = DaemonLock::Free;
+        assert_eq!(
+            daemon_status(&running("0.1.8"), "0.1.8", &free),
+            Ok("running (pid 42, nomouse 0.1.8)".to_owned())
+        );
+        let stale = daemon_status(&running("0.1.7"), "0.1.8", &free).unwrap_err();
+        assert!(
+            stale.contains("nomouse 0.1.7, this command is nomouse 0.1.8")
+                && stale.contains(RESTART_DAEMON),
+            "{stale}"
+        );
+        let held = DaemonLock::Held(Some(7));
+        let old =
+            daemon_status(&DaemonInfo::Unversioned("no".to_owned()), "0.1.8", &held).unwrap_err();
+        assert!(
+            old.contains("(pid 7)") && old.contains(RESTART_DAEMON),
+            "{old}"
+        );
+        let absent = daemon_status(&DaemonInfo::NotRunning, "0.1.8", &free).unwrap();
+        assert!(
+            absent.starts_with("not running; start it with "),
+            "{absent}"
+        );
+        // Holding the lock without a socket: a daemon stuck in (or still in) its setup.
+        let silent = daemon_status(&DaemonInfo::NotRunning, "0.1.8", &held).unwrap_err();
+        assert!(
+            silent.contains("(pid 7)") && silent.contains("`kill 7`"),
+            "{silent}"
+        );
+    }
+
+    #[test]
+    fn a_held_instance_lock_is_seen() {
+        let path = std::env::temp_dir().join(format!("nomouse-doctor-{}.lock", std::process::id()));
+        assert_eq!(daemon_lock(&path), DaemonLock::Free, "no lock file");
+        let held = lock::acquire(&path).unwrap();
+        let seen = daemon_lock(&path);
+        // Windows refuses reads of a locked range, so the pid stays unknown there.
+        if cfg!(windows) {
+            assert!(matches!(seen, DaemonLock::Held(_)), "{seen:?}");
+        } else {
+            assert_eq!(seen, DaemonLock::Held(Some(std::process::id())));
+        }
+        drop(held);
+        assert_eq!(daemon_lock(&path), DaemonLock::Free, "released");
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_daemon_line_reads_a_live_daemon() {
+        let path = std::env::temp_dir().join(format!("nomouse-doctor-{}.sock", std::process::id()));
+        let _server = ipc::Server::bind(&path).unwrap();
+        let info = ipc::daemon_info(&path);
+        assert_eq!(
+            daemon_status(&info, env!("CARGO_PKG_VERSION"), &DaemonLock::Free),
+            Ok(format!(
+                "running (pid {}, nomouse {})",
+                std::process::id(),
+                env!("CARGO_PKG_VERSION")
+            ))
+        );
+    }
 
     #[test]
     fn labels_with_explicit_alphabet() {

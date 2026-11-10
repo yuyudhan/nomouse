@@ -9,7 +9,8 @@
 //! is one line of at most [`MAX_REQUEST`] bytes (`hints click`, `continuous right-click`,
 //! `scroll`, `search`, `reload`); the daemon answers `ok` before it acts, or
 //! `error: <reason>`. `ping` is answered `ok` and does nothing: `nomouse launch` uses it to see
-//! that a daemon it started is up.
+//! that a daemon it started is up. `version` is answered `ok <pid> <version>` and does nothing:
+//! `nomouse doctor` uses it to tell a daemon left running from before an update.
 
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
@@ -35,6 +36,8 @@ const MAX_CLIENTS: usize = 8;
 const SOCKET: &str = "nomouse.sock";
 /// The request that only asks whether the daemon is up.
 const PING: &str = "ping";
+/// The request that asks the daemon who it is; answered `ok <pid> <version>`.
+const VERSION: &str = "version";
 
 /// Where the socket lives: `$XDG_RUNTIME_DIR`, else a private per-user directory in the temp
 /// dir, created (mode 0700) and checked by [`private_dir`].
@@ -221,6 +224,65 @@ pub(crate) fn ping(path: &Path) -> bool {
     BufReader::new(&stream).read_line(&mut reply).is_ok() && reply.trim_end() == "ok"
 }
 
+/// What the daemon on a socket says about itself, for `nomouse doctor`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DaemonInfo {
+    /// Nothing listens on the socket.
+    NotRunning,
+    /// A daemon answered `version`.
+    Running {
+        /// Its process id.
+        pid: u32,
+        /// Its version (`CARGO_PKG_VERSION`).
+        version: String,
+    },
+    /// Something listens but gave no version: a daemon from before the `version` request
+    /// (it answers `error: unknown request`), or one that does not answer at all.
+    Unversioned(String),
+}
+
+/// The `pid version` of a `version` reply line (`ok 4242 0.1.8`).
+fn parse_version_reply(reply: &str) -> Option<(u32, String)> {
+    let mut words = reply.trim_end().strip_prefix("ok ")?.split_whitespace();
+    let pid = words.next()?.parse().ok()?;
+    let version = words.next()?.to_owned();
+    words.next().is_none().then_some((pid, version))
+}
+
+/// Asks the daemon at `path` for its process id and version.
+pub(crate) fn daemon_info(path: &Path) -> DaemonInfo {
+    let mut stream = match UnixStream::connect(path) {
+        Ok(stream) => stream,
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::NotFound | ErrorKind::ConnectionRefused
+            ) =>
+        {
+            return DaemonInfo::NotRunning;
+        }
+        Err(error) => return DaemonInfo::Unversioned(format!("{}: {error}", path.display())),
+    };
+    let mut reply = String::new();
+    let exchanged = stream
+        .set_read_timeout(Some(TIMEOUT))
+        .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)))
+        .and_then(|()| writeln!(stream, "{VERSION}"))
+        .and_then(|()| BufReader::new(&stream).read_line(&mut reply));
+    match exchanged {
+        Ok(_) => parse_version_reply(&reply).map_or_else(
+            || {
+                DaemonInfo::Unversioned(format!(
+                    "it answered {:?} instead of its version",
+                    reply.trim_end()
+                ))
+            },
+            |(pid, version)| DaemonInfo::Running { pid, version },
+        ),
+        Err(error) => DaemonInfo::Unversioned(format!("it did not answer: {error}")),
+    }
+}
+
 /// The daemon's listening socket, served by a thread that acknowledges each request at once
 /// (so a bound key never waits on a running session); removed when dropped.
 #[derive(Debug)]
@@ -358,6 +420,15 @@ fn answer(stream: &UnixStream) -> Option<Request> {
     }
     if line.trim() == PING {
         let _ = writeln!(writer, "ok");
+        return None;
+    }
+    if line.trim() == VERSION {
+        let _ = writeln!(
+            writer,
+            "ok {} {}",
+            std::process::id(),
+            env!("CARGO_PKG_VERSION")
+        );
         return None;
     }
     match decode(line.trim()) {
@@ -505,6 +576,51 @@ mod tests {
         assert!(ping(&path));
         std::thread::sleep(Duration::from_millis(50));
         assert_eq!(server.poll(), None);
+    }
+
+    #[test]
+    fn version_is_answered_with_pid_and_version_and_queues_nothing() {
+        let path = scratch("version.sock");
+        assert_eq!(daemon_info(&path), DaemonInfo::NotRunning);
+        let server = Server::bind(&path).unwrap();
+        assert_eq!(
+            daemon_info(&path),
+            DaemonInfo::Running {
+                pid: std::process::id(),
+                version: env!("CARGO_PKG_VERSION").to_owned()
+            }
+        );
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(server.poll(), None);
+    }
+
+    #[test]
+    fn a_daemon_without_the_version_request_is_unversioned() {
+        // What nomouse 0.1.7 and older answer: `version` is an unknown request there.
+        let path = scratch("old.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let old = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
+            writeln!(&stream, "error: unknown request `{}`", line.trim()).unwrap();
+        });
+        assert_eq!(
+            daemon_info(&path),
+            DaemonInfo::Unversioned(
+                "it answered \"error: unknown request `version`\" instead of its version"
+                    .to_owned()
+            )
+        );
+        old.join().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            parse_version_reply("ok 42 0.1.8\n"),
+            Some((42, "0.1.8".to_owned()))
+        );
+        assert_eq!(parse_version_reply("ok"), None);
+        assert_eq!(parse_version_reply("ok x 0.1.8"), None);
+        assert_eq!(parse_version_reply("ok 42 0.1.8 extra"), None);
     }
 
     #[test]
