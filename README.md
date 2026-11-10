@@ -21,25 +21,34 @@ nomouse clicks it.
 curl -fsSL --retry 5 --retry-all-errors https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash
 ```
 
-One command for macOS (Apple silicon and Intel) and Linux (x86_64 and aarch64, X11 and Wayland).
-No sudo: it verifies the download's SHA-256, installs `nomouse.app` on macOS or the `nomouse`
-binary in `~/.local/bin` on Linux, and prints the next step for your system.
+One command for macOS 11+ (Apple silicon and Intel) and Linux (x86_64 and aarch64, glibc 2.35+,
+X11 and Wayland). No sudo: it verifies the download's SHA-256, installs `nomouse.app` on macOS
+or the `nomouse` binary in `~/.local/bin` on Linux, and prints the next step for your system.
 
-Debian and Ubuntu `.deb` packages, the Windows build, every installer option and building from
-source: [docs/install.md](docs/install.md).
+Debian and Ubuntu `.deb` packages, the Windows build (x86_64, and Windows 11 on ARM through
+emulation), every installer option: [docs/install.md](docs/install.md).
+
+From source, with Rust 1.95 or newer (`rustup update stable` first):
+`cargo install --locked --git https://github.com/yuyudhan/nomouse nomouse` (on Linux add
+`nomouse-settings` for the settings window). That installs only the command, without the macOS
+app or the Linux launcher entry; the prerequisites, and how to build the app, are in
+[Building from source](docs/install.md#building-from-source).
 
 ## First use, in 30 seconds
 
 1. **Start it and allow it.**
    - macOS: `open /Applications/nomouse.app`. Its keycap icon appears in the menu bar and a
      Welcome window asks for **Accessibility** (System Settings › Privacy & Security ›
-     Accessibility › switch on nomouse); it restarts itself once allowed.
+     Accessibility, called Device Control and Data Access on macOS 27 › switch on nomouse); it
+     restarts itself once allowed. Until releases are Developer ID signed, macOS asks again
+     after every update ([why, and the steps](docs/install.md#updating)).
    - Linux X11: `nomouse setup`, then pick **nomouse** in the app launcher (Super, type
      `nomouse`): it starts the daemon and opens its settings. `nomouse` in a terminal works too.
    - Linux Wayland: bind the modes in your compositor, e.g. Sway:
      `bindsym Ctrl+space exec nomouse hints` and `exec nomouse daemon`
      ([Hyprland, KDE](docs/install.md#linux-wayland)).
-2. **Press `ctrl+space`.** Yellow labels appear on everything clickable in the focused window.
+2. **Press `ctrl+space`.** Yellow labels appear on everything clickable in the focused window,
+   each in the middle of its element.
 3. **Type a label** (`dh`): nomouse clicks that element. Escape cancels.
 4. **Scroll**: `ctrl+alt+space`, then `j` `k` to scroll, `gg` / `G` for top and bottom.
 5. **Search**: `ctrl+alt+/`, type part of a button's text, Enter clicks the best match.
@@ -152,7 +161,7 @@ curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.
 ```
 
 Removes the app or binary and keeps your config (add `--purge` to delete it too). On macOS,
-also remove nomouse from Privacy & Security › Accessibility.
+also remove nomouse's Accessibility entry: `tccutil reset Accessibility com.yuyudhan.nomouse`.
 
 ## Troubleshooting
 
@@ -161,7 +170,8 @@ the fix for anything missing.
 
 | Symptom | Fix |
 |---------|-----|
-| macOS: `ctrl+space` does nothing | allow nomouse in Privacy & Security › Accessibility; if you use several keyboard layouts, macOS owns `ctrl+space`: free it or pick another hotkey |
+| macOS: `ctrl+space` does nothing | allow nomouse in Privacy & Security › Accessibility (Device Control and Data Access on macOS 27); if you use several keyboard layouts, macOS owns `ctrl+space`: free it or pick another hotkey |
+| macOS: switched on, but nomouse still asks (after an update) | click **Open System Settings** in its Welcome window and switch the new entry on; [by hand](docs/install.md#allowing-nomouse-again-after-an-update-macos) |
 | No labels in Chrome, Slack, VS Code | macOS: list them in `macos.enhanced_ui_apps`; Linux: start them with `--force-renderer-accessibility` |
 | No labels in Qt apps on Linux | `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` in your session |
 | Wayland: the hotkey does nothing | Wayland has no global hotkeys for apps: bind `nomouse hints` in your compositor |
@@ -181,7 +191,7 @@ More in [docs/troubleshooting.md](docs/troubleshooting.md); each compositor in
 ## Contributing
 
 ```sh
-rustup show && cargo install just taplo-cli typos-cli cargo-deny --locked
+rustup toolchain install && cargo install just taplo-cli typos-cli cargo-deny --locked
 just install-hooks
 just check && just test
 ```

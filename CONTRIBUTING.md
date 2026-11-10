@@ -5,10 +5,18 @@ and pull request to it.
 
 ## Setup
 
-    rustup show                       # installs the pinned toolchain and targets
+    rustup toolchain install          # the toolchain and targets pinned in rust-toolchain.toml
     cargo install just taplo-cli typos-cli cargo-deny --locked
     # plus shellcheck (apt install shellcheck / brew install shellcheck)
     just install-hooks                # pre-commit, commit-msg and pre-push hooks; safe to rerun
+
+`rust-toolchain.toml` pins the toolchain CI uses and the standard libraries of the three
+targets `just check` lints (`x86_64-unknown-linux-gnu`, `x86_64-pc-windows-gnu`,
+`aarch64-apple-darwin`). rustup 1.28 and later install it with `rustup toolchain install`
+(`rustup show` only reports it). The declared minimum, `rust-version` in `Cargo.toml`, is 1.95:
+kbvm, the Linux keymap reader, needs it. CI's `msrv` job checks the workspace with exactly that
+version on Linux, macOS and Windows; raise both together when a dependency needs more. Building
+prerequisites per OS are in [docs/install.md](docs/install.md#build-prerequisites).
 
 ## Git hooks
 
@@ -78,9 +86,11 @@ The tag push runs `.github/workflows/release.yml`:
 | Job | Builds |
 |-----|--------|
 | Linux (ubuntu-22.04, glibc 2.35) | `nomouse-x86_64-unknown-linux-gnu.tar.gz`, `nomouse-aarch64-unknown-linux-gnu.tar.gz` (built on an arm64 runner: the settings window links GTK 4), `nomouse_amd64.deb`, `nomouse_arm64.deb` (cargo-deb) |
-| macOS | arm64 and x86_64 joined with `lipo` into `nomouse-universal-apple-darwin.tar.gz`; the same binary in `nomouse.app` (`scripts/release/app.sh`) as `nomouse-universal-apple-darwin.app.zip` and in the disk image `nomouse-universal-apple-darwin.dmg` (`scripts/release/dmg.sh`); `scripts/test-app.sh` checks the bundle, the image and the cask |
-| Windows | `nomouse-x86_64-pc-windows-msvc.zip` |
+| macOS | arm64 and x86_64 built for macOS 11.0 (`MACOSX_DEPLOYMENT_TARGET`, minos checked), joined with `lipo` into `nomouse-universal-apple-darwin.tar.gz`; the same binary in `nomouse.app` (`scripts/release/app.sh`) as `nomouse-universal-apple-darwin.app.zip` and in the disk image `nomouse-universal-apple-darwin.dmg` (`scripts/release/dmg.sh`); `scripts/test-app.sh` checks the bundle, the image and the cask; `scripts/release/signature.sh` reports `developer-id` or `ad-hoc` |
+| macOS smoke | the universal tarball (`--version`, `doctor`) and the `.app.zip` bundle (codesign verify, `--version`) on `macos-15` (arm64) and `macos-15-intel` |
+| Windows | `nomouse-x86_64-pc-windows-msvc.zip`, with the C runtime linked statically (`+crt-static`; `build.sh` fails if the exe still imports `VCRUNTIME140.dll`) |
 | Assemble | `install.sh`, `install.ps1`, `nomouse.rb` (Homebrew formula from `packaging/homebrew/`), `nomouse-app.rb` (the cask, when the disk image is there), a `.sha256` per asset and `SHA256SUMS`; tests `install.sh` against the built archive, then creates the GitHub release with the changelog section as notes |
+| Homebrew | on a tag, `scripts/release/publish-homebrew.sh` writes `Formula/nomouse.rb` and `Casks/nomouse.rb` to `yuyudhan/homebrew-tap`, checks them (`brew style`, `brew audit --strict --online`, installs and uninstalls both) and pushes; a dry run publishes to a local copy of the tap instead |
 
 Asset names carry no version, so `releases/latest/download/<asset>` always resolves. Each build
 job smoke-tests `nomouse --version` against the workspace version, and a tag that does not match
@@ -92,11 +102,23 @@ no release. `just release-dry-run` does this machine's Linux architecture locall
 `cargo-deb`, `libgtk-4-dev` and `libadwaita-1-dev`).
 
 Homebrew: `nomouse.rb` (the formula, the bare command line) and `nomouse-app.rb` (the cask,
-`nomouse.app` from the disk image) are attached to every release; publishing them means copying
-them to the tap repository `yuyudhan/homebrew-tap` as `Formula/nomouse.rb` and
-`Casks/nomouse.rb`. Homebrew reads casks only from a tap, so check one there: `brew style
---cask` and `brew audit --cask --strict` on `<tap>/nomouse`, then `brew install --cask` and
-`brew uninstall --cask`.
+`nomouse.app` from the disk image) are attached to every release, and the `homebrew` job
+publishes them to the tap `yuyudhan/homebrew-tap` as `Formula/nomouse.rb` and
+`Casks/nomouse.rb`. It needs the repository secret `HOMEBREW_TAP_TOKEN`, a fine-grained token
+with Contents read and write on `yuyudhan/homebrew-tap`; without it the job fails with an error
+saying so, and the GitHub release itself is unaffected. From a machine where `gh` is logged in,
+`scripts/release/publish-homebrew.sh X.Y.Z <release assets dir>` publishes the same files (add
+`--no-install` where nomouse is installed and running: the cask's install test would quit it).
+Homebrew 7 loads casks only from a trusted tap, and the formula and the cask share the name
+`nomouse`, so a check by hand is:
+
+    brew tap yuyudhan/tap
+    brew trust --tap yuyudhan/tap
+    brew install --cask yuyudhan/tap/nomouse      # nomouse.app
+    brew install --formula yuyudhan/tap/nomouse   # the command line only
+
+While releases are ad-hoc signed, the cask clears the quarantine flag, and macOS asks for
+Accessibility again after each `brew upgrade`.
 
 ### macOS signing and notarization
 
@@ -105,7 +127,9 @@ signatures only. That is enough for the installer: curl sets no quarantine flag,
 does not stop it. A download through a browser is quarantined and blocked, and macOS ties the
 Accessibility grant to the code signature: an ad-hoc signature's designated requirement is its
 code hash, so the grant survives rebuilding the same binary (`scripts/test-app.sh` checks that)
-but not an update.
+but not an update. Until the secrets below exist, every release run posts an "ad-hoc signed
+release" warning annotation, the installer resets the stale Accessibility entry on update, and
+users switch nomouse on again after each update.
 
 Developer ID signing needs the owner's Apple Developer Program membership and these repository
 secrets:
@@ -125,3 +149,6 @@ notarizes and staples the disk image; and the job fails unless
 `spctl --assess --type open --context context:primary-signature` accepts the image. A manual
 run (`gh workflow run release.yml --ref nightly`) exercises all of it without a release. The
 bare binary in the tarball stays ad-hoc signed (a bare binary cannot be stapled).
+`signing.sh` refuses a `MACOS_SIGN_IDENTITY` that is not `Developer ID Application: …`, and with
+one `signature.sh` requires a team-based designated requirement (`anchor apple generic` and
+`certificate leaf[subject.OU]`), which is what keeps the grant across updates.

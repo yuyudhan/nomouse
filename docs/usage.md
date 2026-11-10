@@ -25,7 +25,8 @@ pauses and resumes nomouse, starts each mode and opens the settings.
 ## Hints: click anything
 
 Press `ctrl+space`. Every clickable element in the focused window (buttons, links, tabs, menu
-items, text fields, checkboxes) gets a label of one or two letters from the home row.
+items, text fields, checkboxes) gets a label of one or two letters from the home row, in the
+middle of the element (kept on screen when the element reaches past its edge).
 
 | Key | Effect |
 |-----|--------|
@@ -139,13 +140,13 @@ while paused or unable to run). Its menu:
 | Item | Does |
 |------|------|
 | `nomouse 0.1.4: on` | the state: on, paused, or why it cannot run |
-| `Accessibility: allowed` | the permission; while it is missing, `Accessibility: not allowed. Allow…` asks for it and opens its Settings pane |
+| `Accessibility: allowed` | the permission; while it is missing, `Accessibility: not allowed. Allow…` removes a stale entry left by an older version, asks for it and opens its Settings pane (Privacy & Security › Accessibility, Device Control and Data Access on macOS 27) |
 | Pause nomouse / Resume nomouse | release the hotkeys until resumed |
 | Show Hints, Continuous Hints, Scroll, Search | start the mode; the hotkey in effect is shown at the right |
 | Settings… (`cmd+,`) | the settings window |
 | Run doctor… | `nomouse doctor`'s report in a window, with a Copy button |
 | Start at login | registers nomouse.app as a login item (System Settings › General › Login Items) |
-| Check for updates… | asks GitHub for the latest release; when it is newer, the item opens its download page (installing stays with `install.sh` or Homebrew) |
+| Check for updates… | asks GitHub for the latest release; when it is newer, the item opens its release page. Install it with the one-line install (`curl -fsSL --retry 5 --retry-all-errors https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh \| bash`) rather than the `.dmg` there, which a browser quarantines; then allow nomouse again ([why](install.md#updating)) |
 | About nomouse, Quit nomouse (`cmd+q`) | |
 
 The settings window has these pages:
@@ -167,7 +168,10 @@ meanwhile shows up in the open window; an invalid edit is named on the page and 
 settings stay in effect.
 
 On Linux the tray icon's menu and `nomouse-settings` do the same (see the
-[README](../README.md#menu-bar-and-settings)).
+[README](../README.md#menu-bar-and-settings)); their update notification names the one-line
+install. Start at login there writes an XDG autostart entry; on Sway, Hyprland and i3, which
+ignore those, the Start at login row shows the config line to add instead
+([install.md](install.md#linux-x11)).
 
 ## Commands
 
@@ -188,7 +192,7 @@ daemon, the mode runs in the command's own process.
 | `nomouse setup` | walk through the permissions nomouse needs, ask the system, wait for them |
 | `nomouse launch [--doctor]` | Linux, what the app launcher runs: start the daemon unless it runs and open the settings window (without it: notify the state and hotkeys); `--doctor` opens `nomouse doctor` in a terminal |
 | `nomouse-settings [--page <page>]` | Linux, the settings window, on `general`, `hotkeys`, `labels`, `appearance`, `scroll`, `search`, `ignored`, `advanced` or `doctor`; a second start raises the open window |
-| `nomouse doctor` | check the session, accessibility, input and config, and print the fix for anything missing |
+| `nomouse doctor` | check the session, accessibility, input, the running daemon (pid and version) and the config, and print the fix for anything missing |
 | `nomouse config init` / `path` / `show` / `check [FILE]` | [configuration](configuration.md) helpers |
 | `nomouse labels COUNT [--alphabet LETTERS]` | print the labels COUNT elements would get |
 | `nomouse --version` | print the version |

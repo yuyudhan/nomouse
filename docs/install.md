@@ -1,6 +1,7 @@
 # Installing nomouse
 
 - [The one-line install](#the-one-line-install)
+- [Requirements](#requirements)
 - [macOS](#macos)
 - [Linux X11](#linux-x11)
 - [Linux Wayland](#linux-wayland)
@@ -27,7 +28,7 @@ drop `--retry-all-errors` there.
 | System | What you get |
 |--------|--------------|
 | macOS 11+, Apple silicon and Intel | `nomouse.app` in `/Applications` (`~/Applications` when `/Applications` is not writable), and a `nomouse` command in `~/.local/bin` that runs the app's binary |
-| Linux x86_64 and aarch64 | the `nomouse` and `nomouse-settings` (the settings window) binaries in `~/.local/bin`, and nomouse in the app launcher: the desktop entry `io.github.yuyudhan.nomouse.desktop` in `~/.local/share/applications` with its icons, and the tray icons, in `~/.local/share/icons/hicolor` |
+| Linux x86_64 and aarch64, glibc 2.35+ | the `nomouse` and `nomouse-settings` (the settings window) binaries in `~/.local/bin`, and nomouse in the app launcher: the desktop entry `io.github.yuyudhan.nomouse.desktop` in `~/.local/share/applications` with its icons, and the tray icons, in `~/.local/share/icons/hicolor` |
 
 If `~/.local/bin` is not on your `PATH`, the installer says so and gives the line to add to
 `~/.profile` or `~/.zshrc`. The settings window needs GTK 4 (4.6 or later) and libadwaita (1.1
@@ -43,6 +44,32 @@ does it in one step), then:
 bash nomouse-release/install.sh --from nomouse-release
 ```
 
+## Requirements
+
+| System | Needs |
+|--------|-------|
+| macOS | macOS 11 or later, Apple silicon or Intel (one universal build). Every release runs it on macOS 15 on Apple silicon and on Intel; macOS 11 to 14 are built for but not tested |
+| Linux | x86_64 or aarch64 with glibc 2.35 or later: Ubuntu 22.04, Debian 12, Fedora 36, RHEL 10 or newer. X11, or Wayland on Sway, Hyprland or KDE Plasma ([GNOME on Wayland is not supported](#linux-wayland)) |
+| Windows | Windows 10 or 11 on x86_64, or Windows 11 on ARM (it runs the x86_64 build under x64 emulation). No Visual C++ runtime needed |
+
+The Linux installer checks the C library before it downloads anything. It stops, and points
+at [Building from source](#building-from-source), on:
+
+- glibc older than 2.35 (Ubuntu 20.04, Debian 11, RHEL 8 and 9, Amazon Linux 2);
+- musl systems (Alpine, Void musl);
+- NixOS and Guix, which keep no glibc loader at `/lib64/ld-linux-x86-64.so.2`
+  (`/lib/ld-linux-aarch64.so.1` on aarch64). On NixOS, turning on nix-ld
+  (`programs.nix-ld.enable = true;` in `configuration.nix`, then `sudo nixos-rebuild switch`)
+  provides that loader and lets the installer go ahead; if the installer's test run of
+  `nomouse --version` then names a missing library, add it to `programs.nix-ld.libraries`.
+
+It also runs the downloaded `nomouse --version` once before it replaces anything, so a build
+that cannot start on your system fails the install with the loader's error and leaves the old
+copy as it was.
+
+Not supported: Windows 10 on ARM (it has no x64 emulation), 32-bit Windows, 32-bit ARM and
+other CPUs on Linux. Build from source there if Rust supports the system.
+
 ## macOS
 
 1. Run the one-line install above.
@@ -51,27 +78,36 @@ bash nomouse-release/install.sh --from nomouse-release
 3. Grant Accessibility. nomouse reads buttons and links through the macOS accessibility API and
    clicks through it, which needs one permission:
    1. On its first start a Welcome window explains this; **Open System Settings** opens
-      **Privacy & Security › Accessibility**.
+      **System Settings › Privacy & Security › Accessibility**. macOS 27 and later call this
+      pane **Device Control and Data Access**; it is the same list.
    2. Switch on **nomouse** in the list (unlock with your password if asked).
    3. nomouse notices the switch within a second and restarts by itself. No logout needed.
 
-   Input Monitoring and Screen Recording are not needed.
+   Input Monitoring and Screen Recording are not needed. After every update macOS asks for
+   this once more, see [Updating](#updating).
 4. Press `ctrl+space` in any app. Labels appear; type one to click.
 5. Start at login: **Start at login** in the menu bar icon's menu (or on the settings
    window's General page); it appears under **System Settings › General › Login Items**.
 
-The release builds are not notarized by Apple yet. The installer removes the quarantine flag so
-Gatekeeper does not block the first start. If you downloaded `nomouse.app` or the `.dmg` in a
-browser instead, remove it yourself once:
+The release builds are ad-hoc signed, not notarized by Apple yet. The one-line install
+removes the quarantine flag, so Gatekeeper does not block the first start. If you downloaded
+`nomouse-universal-apple-darwin.app.zip` or the `.dmg` in a browser instead, macOS says
+"Apple could not verify nomouse is free of malware" (older versions: "nomouse.app is damaged"
+or "the developer cannot be verified"). Clear the flag once:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/nomouse.app
 ```
 
+or open it once, then click **Open Anyway** in System Settings › Privacy & Security (macOS 15
+and later have no right-click › Open for this). The one-line install is the easier way.
+
 You can run `nomouse setup` in a terminal instead of opening the app: it walks through the same
 permission. A permission granted to the app belongs to the app; when you run the `nomouse`
-command from a terminal, macOS asks on behalf of the terminal instead, so grant it there too or
-start the app.
+command from a terminal, macOS asks on behalf of the terminal instead. So `nomouse doctor` run
+in Terminal checks the terminal's grant and says so ("this terminal (Apple_Terminal) is not
+trusted … nomouse.app has its own grant"); the app's own status is in its menu, and **Run
+doctor…** there checks the app.
 
 ## Linux X11
 
@@ -83,8 +119,16 @@ start the app.
    the labels. (`nomouse` in a terminal starts the daemon too.) Right-click the entry for
    **nomouse doctor**, which opens the doctor's report in a terminal.
 4. Start at login: the settings window's **General › Start at login**, or the tray menu's
-   **Start at login** (an XDG autostart entry, `~/.config/autostart/nomouse.desktop`). In i3,
-   `exec nomouse daemon` in its config works too.
+   **Start at login** (an XDG autostart entry, `~/.config/autostart/nomouse.desktop`). Desktops
+   such as GNOME, KDE, Xfce, Cinnamon and MATE read that entry; Sway, Hyprland and i3 do not,
+   so there it takes one line in the compositor's config (the settings window and the tray
+   show the line with the full path of your `nomouse`):
+
+   | Compositor | Config file | Line |
+   |------------|-------------|------|
+   | Sway | `~/.config/sway/config` | `exec nomouse daemon` |
+   | Hyprland | `~/.config/hypr/hyprland.conf` | `exec-once = nomouse daemon` |
+   | i3 | `~/.config/i3/config` | `exec --no-startup-id nomouse daemon` |
 
 The tray icon (the nomouse label in the panel) has the menu: on/off, Pause, each mode, Settings…,
 Run doctor…, Start at login, Check for updates…, About and Quit. KDE, Xfce, waybar and most
@@ -170,6 +214,16 @@ ship with every release:
 irm https://github.com/yuyudhan/nomouse/releases/latest/download/install.ps1 | iex
 ```
 
+- **Windows 10 and 11 on x86_64**: supported. `nomouse.exe` links the C runtime statically
+  (0.1.8 and later), so it needs no Visual C++ Redistributable.
+- **Windows 11 on ARM**: the installer installs the x86_64 build and says
+  `Windows on ARM: nomouse runs under x64 emulation`.
+- **Windows 10 on ARM and 32-bit Windows**: refused by the installer; Windows 10 on ARM cannot
+  run x64 programs.
+
+The installer runs the new `nomouse.exe --version` before it replaces an existing install, so a
+build that cannot start leaves the old one in place.
+
 ## Installer options
 
 Options go after `bash -s --` when the script is piped:
@@ -196,8 +250,45 @@ curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.
 
 ## Updating
 
-Run the one-line install again. It replaces the binary (or the app) in place; a running daemon
-keeps working until you restart it. Your config is never touched.
+Run the one-line install again. Your config is never touched.
+
+- **macOS**: the installer quits the running nomouse, replaces the app and starts the new
+  one. Releases are not Developer ID signed yet, so macOS ties the Accessibility grant to each
+  version's own signature: the installer removes the old entry, and you switch nomouse on once
+  more (the Welcome window appears and opens the pane; see the steps below).
+- **Linux**: the installer replaces the binaries; a running daemon keeps working until you
+  restart it with `nomouse quit && nomouse launch`.
+
+`nomouse doctor`'s `daemon` line shows what runs: `running (pid 4242, nomouse 0.1.8)`, or a
+FAIL with the restart command while a daemon from before the update still runs.
+
+The menu's **Check for updates…** says when a newer release is out. On macOS it opens the
+release page; install with the one-line install rather than the `.dmg` or `.app.zip` there,
+which a browser quarantines (see [macOS](#macos)).
+
+### Allowing nomouse again after an update (macOS)
+
+Until releases are signed with an Apple Developer ID, every new version needs the grant once
+more, also after `just app` or any rebuild of a different version:
+
+1. Open the new app: `open /Applications/nomouse.app` (the installer already did if nomouse
+   was running). The Welcome window, or the dimmed menu bar icon's
+   **Accessibility: not allowed. Allow…**, offers **Open System Settings**.
+2. Click it. nomouse removes the old entry, macOS adds the new copy switched off, and the pane
+   opens: **System Settings › Privacy & Security › Accessibility** (macOS 27 and later:
+   **Device Control and Data Access**).
+3. Switch **nomouse** on. nomouse restarts by itself within a second or two.
+
+If the list still shows nomouse switched on and nomouse keeps waiting, that switch belongs to
+the old version. Remove it by hand in Terminal, then start the app and switch it on again:
+
+```sh
+nomouse quit
+tccutil reset Accessibility com.yuyudhan.nomouse
+open /Applications/nomouse.app
+```
+
+Or, in the pane, select nomouse, click **−**, then **+** and pick `/Applications/nomouse.app`.
 
 ## Uninstalling
 
@@ -208,16 +299,110 @@ curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.
 This removes `~/.local/bin/nomouse`, on Linux `nomouse-settings`, the app launcher entry and its
 icons, the tray icons and the start-at-login entry, and on macOS
 `nomouse.app` (only when it is nomouse's bundle, `com.yuyudhan.nomouse`). Add `--purge` to
-delete `~/.config/nomouse` too. On macOS, also remove
-nomouse from **Privacy & Security › Accessibility** and from **Login Items**.
+delete `~/.config/nomouse` too. On macOS, also remove nomouse from **Login Items** and its
+Accessibility entry, in the pane or with `tccutil reset Accessibility com.yuyudhan.nomouse`.
 
 ## Building from source
 
+For systems the release builds do not cover (older glibc, musl, NixOS without nix-ld, other
+CPUs) or to run the latest `nightly`. The one-line install is easier where it works: a source
+build has no app launcher entry or icons on Linux and, from `cargo install`, no `nomouse.app`
+on macOS.
+
+### Rust 1.95 or newer, from rustup
+
+nomouse needs Rust 1.95 or newer. Distribution packages of Rust are often older (check with
+`rustc --version`); they fail with `nomouse requires rustc 1.95` or
+``feature `edition2024` is required``. Use [rustup](https://rustup.rs):
+
 ```sh
-git clone https://github.com/yuyudhan/nomouse && cd nomouse
-cargo build --release -p nomouse     # the Rust toolchain from rust-toolchain.toml
-./target/release/nomouse doctor
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o rustup-init.sh
+sh rustup-init.sh -y
+. "$HOME/.cargo/env"
 ```
 
-`just app` builds `target/app/nomouse.app` on macOS. The build and test commands are in
+Already have rustup? Update first:
+
+```sh
+rustup update stable
+```
+
+### Build prerequisites
+
+A C compiler and linker, and on Linux the GTK 4 and libadwaita development files for the
+settings window (`nomouse-settings`):
+
+| System | Command |
+|--------|---------|
+| Debian, Ubuntu | `sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev` |
+| Fedora | `sudo dnf install gcc pkgconf-pkg-config gtk4-devel libadwaita-devel` |
+| Arch | `sudo pacman -S --needed base-devel gtk4 libadwaita` |
+| openSUSE | `sudo zypper install gcc pkgconf gtk4-devel libadwaita-devel` |
+| macOS | `xcode-select --install` (the Command Line Tools) |
+| Windows | the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with "Desktop development with C++", which rustup offers to install |
+
+Without them the build stops with ``linker `cc` not found`` (no C compiler),
+`xcrun: error: invalid active developer path` (no Command Line Tools on macOS) or a
+`pkg-config` error naming `gtk4` or `libadwaita-1` (Linux, the settings window).
+
+### With `cargo install`
+
+```sh
+cargo install --locked --git https://github.com/yuyudhan/nomouse nomouse
+```
+
+On Linux, add the settings window:
+
+```sh
+cargo install --locked --git https://github.com/yuyudhan/nomouse nomouse nomouse-settings
+```
+
+- `--locked` builds with the repository's `Cargo.lock`. Without it cargo picks the newest
+  version of every dependency, which may need a newer Rust than yours.
+- The package name is required: the repository has two programs, and without one cargo stops
+  with `multiple packages with binaries found: nomouse, nomouse-settings`.
+- `cargo install` builds with your default toolchain (the repository's pinned one applies only
+  inside a clone). Below 1.95 it stops at once with `cannot install package nomouse …, it
+  requires rustc 1.95 or newer`; run `rustup update stable`.
+- It builds the tip of `nightly`. For a release, add its tag, for example `--tag v0.1.7`
+  (every tag is on the [releases](https://github.com/yuyudhan/nomouse/releases) page).
+- It installs to `~/.cargo/bin`. On Linux run `nomouse setup` next, as for the
+  [X11](#linux-x11) or [Wayland](#linux-wayland) install. On macOS this is the bare command
+  without the menu bar app, so the Accessibility grant goes to the terminal you run it from;
+  build the app as below instead.
+
+### From a clone
+
+```sh
+git clone https://github.com/yuyudhan/nomouse && cd nomouse
+rustup toolchain install
+```
+
+`rustup toolchain install` installs the toolchain pinned in `rust-toolchain.toml` (rustup 1.28
+and later no longer do that in `rustup show`), with the standard libraries for the cross
+targets `just check` lints. To skip that download, build with your own stable Rust (1.95 or
+newer) by adding `+stable` after `cargo`:
+`cargo +stable build --release --locked -p nomouse`.
+
+Linux, with the app launcher entry, icons and settings window installed as the one-line install
+does, from the build:
+
+```sh
+cargo build --release --locked -p nomouse -p nomouse-settings
+target="$(rustc -vV | sed -n 's/^host: //p')"
+scripts/release/package.sh "$target" target/release/nomouse target/dist
+bash scripts/install.sh --from target/dist
+```
+
+macOS, as `nomouse.app` in `/Applications` (an update over an installed copy needs the grant
+again, see [Updating](#updating)):
+
+```sh
+just app
+bash scripts/install.sh --from target/app
+```
+
+Windows: `cargo build --release --locked -p nomouse`, then run `target\release\nomouse.exe`.
+
+Check the result with `nomouse doctor`. The build and test commands are in
 [CONTRIBUTING.md](../CONTRIBUTING.md).

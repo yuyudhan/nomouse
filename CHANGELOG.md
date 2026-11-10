@@ -7,12 +7,47 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Added
+
+- `nomouse doctor` has a `daemon` line: `running (pid N, nomouse V)`, or a FAIL with the restart
+  command when the running daemon is another version (one left running across an update), when
+  it is too old to say its version, or when it holds the single-instance lock without answering
+  (still in its setup, or stuck).
+- macOS: `nomouse doctor` says whose Accessibility grant it checked ("this terminal
+  (Apple_Terminal)" or "nomouse.app"): run from a terminal, macOS attributes the check to the
+  terminal, and the app has a grant of its own. A new `Secure input` line names the app holding
+  secure input (a password field, Terminal's Secure Keyboard Entry), during which macOS sends
+  nomouse no keys.
+- Linux: Start at login on Sway, Hyprland and i3, which ignore XDG autostart entries, shows the
+  config line to add (`exec nomouse daemon`, `exec-once = nomouse daemon`,
+  `exec --no-startup-id nomouse daemon`, with the full path) in the settings window, and the
+  tray's Start at login sends it as a notification.
+- Releases run the shipped macOS tarball and app on macOS 15 on Apple silicon and on Intel.
+- docs/install.md: the requirements of each build, and "Building from source" with the Rust
+  version, the prerequisites for each OS, the supported `cargo install` command and how to
+  install a build from a clone.
+
 ### Changed
 
-- macOS: hint labels sit in the middle of their element (centred on both axes, also when the
-  label is larger than the element) instead of at its top-left corner, and stay fully on the
-  screen holding the element's centre. The placement lives in `nomouse-core`
-  (`placement::label_bounds`) so every backend can share it.
+- Hint labels sit in the middle of their element (centred on both axes, also when the label
+  is larger than the element) instead of at its top-left corner, and stay fully on the screen
+  holding the element's centre: macOS, and Linux on X11 and Wayland (Windows already centred
+  them). Search mode's box still starts at its element's left edge and grows to the right. The
+  placement lives in `nomouse-core` (`placement::label_bounds`) so every backend shares it.
+- The minimum Rust version is 1.95 (`rust-version`, was 1.89, which could not build the Linux
+  keymap reader kbvm). An older toolchain now stops at once with cargo's `requires rustc 1.95`
+  instead of failing in a dependency; `rustup update stable` fixes it. CI checks the workspace
+  with exactly 1.95 on Linux, macOS and Windows.
+- macOS builds target macOS 11.0 explicitly (the x86_64 slice used to say 10.12).
+- Windows: `nomouse.exe` links the C runtime statically, so it needs no Visual C++
+  Redistributable.
+- `install.ps1` accepts Windows 11 on ARM (nomouse runs under x64 emulation) and says so;
+  Windows 10 on ARM and 32-bit Windows are refused with the reason.
+- The doctor's accessibility `hint:` paragraph appears only when an accessibility check failed,
+  not under a bad config or a missing font.
+- Linux: the tray's "update available" notification names the one-line install command.
+- Releases: `MACOS_SIGN_IDENTITY` must be a `Developer ID Application` identity, and a run
+  without the signing secrets warns that the release is ad-hoc signed.
 
 ### Fixed
 
@@ -23,6 +58,26 @@ the release's section; add entries under Unreleased as changes land.
   permission, "Open System Settings" now clears its old entry (`tccutil reset Accessibility
   com.yuyudhan.nomouse`) before macOS's prompt adds the running copy, so switching it on works.
   The texts also name the pane's macOS 27 title, Device Control and Data Access.
+- macOS: installing over a running nomouse left the old copy running with a grant that no
+  longer applied. `install.sh` now quits the running copy, replaces the app, removes the stale
+  Accessibility entry when the signature changed, starts the new copy, and says that macOS asks
+  for Accessibility once more after every update until releases are Developer ID signed. Its
+  next steps name the pane Device Control and Data Access on macOS 27 and later.
+- Linux: `install.sh` reported success with a binary that could not start on glibc older than
+  2.35, on musl (Alpine, Void) and on NixOS or Guix. It now checks the C library before
+  downloading and stops with the reason and a link to building from source (on NixOS: turn on
+  nix-ld), and on every OS it runs the new `nomouse --version` before replacing anything, so a
+  build that cannot start fails the install and leaves the old copy in place.
+- Windows: when the Visual C++ runtime is missing (builds up to 0.1.7), `install.ps1` stops with
+  its download link instead of installing a `nomouse.exe` that cannot start, and the new exe is
+  run before an existing install is replaced.
+- Linux: label fonts are also found through fontconfig (`fc-match sans:bold`), in `fonts` under
+  `$XDG_DATA_DIRS`, `~/.local/share/fonts` and `~/.fonts`, and the no-font error lists every
+  folder searched and names your distribution's package.
+- Docs: the contributor setup says `rustup toolchain install` (rustup 1.28 and later no longer
+  install the pinned toolchain in `rustup show`).
+- `scripts/test-app.sh` failed now and then although the bundle was right: `grep -q` under
+  `pipefail` could kill `codesign` with SIGPIPE. It now reads the whole output first.
 
 ## [0.1.7] - 2026-11-09
 
