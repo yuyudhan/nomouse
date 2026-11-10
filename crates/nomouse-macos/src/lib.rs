@@ -40,8 +40,8 @@ use nomouse_core::{Config, Platform, PlatformError};
 pub const TARGET_OS: &str = "macos";
 
 /// What the user must do so nomouse can read the accessibility tree on this OS.
-pub const ACCESSIBILITY_REQUIREMENT: &str =
-    "Grant nomouse Accessibility access in System Settings > Privacy & Security > Accessibility.";
+pub const ACCESSIBILITY_REQUIREMENT: &str = "Grant nomouse Accessibility access in System \
+    Settings > Privacy & Security > Accessibility (Device Control and Data Access on macOS 27).";
 
 /// Creates the macOS backend. Call on the main thread; shows the Accessibility prompt when
 /// trust is missing.

@@ -10,8 +10,9 @@ pub const ACCESSIBILITY: Permission = Permission {
     name: "Accessibility",
     why: "nomouse reads the buttons, links and fields of the app in front, catches its hotkeys \
           and clicks for you. macOS allows that only to apps you trust with Accessibility.",
-    how: "In System Settings > Privacy & Security > Accessibility, turn nomouse on. If it is not \
-          in the list, add it with the + button.",
+    how: "In System Settings > Privacy & Security > Accessibility (Device Control and Data \
+          Access on macOS 27 and later), turn nomouse on. If it is not in the list, add it with \
+          the + button.",
     required: true,
 };
 
@@ -69,17 +70,64 @@ pub struct Dialog {
     pub buttons: Vec<&'static str>,
 }
 
+/// What asking macOS for Accessibility takes, behind a trait so the order of the steps is
+/// tested without touching the real permission.
+pub trait TrustSystem {
+    /// Whether this process is trusted for Accessibility now.
+    fn trusted(&mut self) -> bool;
+    /// The bundle identifier macOS checks this process's grant against: the app's own, when it
+    /// was opened as an app. `None` when a terminal started it (the terminal's grant covers it)
+    /// or it runs outside a bundle.
+    fn own_app_id(&mut self) -> Option<String>;
+    /// Deletes the Accessibility entry of `bundle_id` from the list (`tccutil reset`).
+    ///
+    /// # Errors
+    /// What went wrong, for the log.
+    fn reset(&mut self, bundle_id: &str) -> Result<(), String>;
+    /// Shows macOS's prompt, which adds the running copy to the list, switched off.
+    fn prompt(&mut self);
+    /// Opens the Accessibility pane.
+    ///
+    /// # Errors
+    /// Worded for the user.
+    fn open_settings(&mut self) -> Result<(), String>;
+}
+
+/// Asks for Accessibility and opens its pane.
+///
+/// An untrusted app's old entry is deleted first. macOS keys the grant to the code signature
+/// that was allowed, and an ad-hoc signed nomouse has a new one with every version: after an
+/// update the list still shows nomouse switched on while macOS refuses the new copy ("Failed to
+/// match existing code requirement"), and switching it off and on keeps the old signature.
+/// Without the old entry, the prompt adds the running copy, so the switch the user turns on is
+/// the one macOS checks.
+///
+/// # Errors
+/// When the pane cannot be opened.
+pub fn ask_for_accessibility(system: &mut dyn TrustSystem) -> Result<(), String> {
+    if !system.trusted() {
+        if let Some(id) = system.own_app_id()
+            && let Err(error) = system.reset(&id)
+        {
+            tracing::warn!("cannot clear the old Accessibility entry of {id}: {error}");
+        }
+        system.prompt();
+    }
+    system.open_settings()
+}
+
 #[cfg(target_os = "macos")]
-pub use live::TrustProbe;
+pub use live::{MacTrust, TrustProbe};
 
 #[cfg(target_os = "macos")]
 mod live {
+    use std::io::IsTerminal as _;
     use std::process::Command;
 
     use nomouse_core::setup::{Permission, Probe};
-    use nomouse_sys_macos::ax;
+    use nomouse_sys_macos::{app, ax};
 
-    use super::ACCESSIBILITY_SETTINGS;
+    use super::{ACCESSIBILITY_SETTINGS, TrustSystem, ask_for_accessibility};
 
     /// Accessibility trust of this process.
     #[derive(Debug, Default)]
@@ -93,7 +141,48 @@ mod live {
         /// Asks with macOS's own prompt, which also adds nomouse to the Accessibility list so
         /// the user only flips its switch, then opens that pane.
         fn request(&mut self, _permission: &Permission) -> Result<(), String> {
+            ask_for_accessibility(&mut MacTrust)
+        }
+    }
+
+    /// The real permission, `tccutil` and System Settings.
+    #[derive(Debug, Default)]
+    pub struct MacTrust;
+
+    impl TrustSystem for MacTrust {
+        fn trusted(&mut self) -> bool {
+            ax::is_process_trusted(false)
+        }
+
+        fn own_app_id(&mut self) -> Option<String> {
+            if std::io::stderr().is_terminal() {
+                return None;
+            }
+            app::own_bundle_id()
+        }
+
+        fn reset(&mut self, bundle_id: &str) -> Result<(), String> {
+            let output = Command::new("/usr/bin/tccutil")
+                .args(["reset", "Accessibility", bundle_id])
+                .output()
+                .map_err(|error| format!("cannot run tccutil: {error}"))?;
+            if output.status.success() {
+                tracing::info!("cleared the Accessibility entry of {bundle_id}");
+                Ok(())
+            } else {
+                Err(format!(
+                    "tccutil failed ({}): {}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ))
+            }
+        }
+
+        fn prompt(&mut self) {
             ax::is_process_trusted(true);
+        }
+
+        fn open_settings(&mut self) -> Result<(), String> {
             let status = Command::new("/usr/bin/open")
                 .arg(ACCESSIBILITY_SETTINGS)
                 .status()
@@ -145,5 +234,87 @@ mod tests {
         ] {
             assert_eq!(dialog(&step), None);
         }
+    }
+
+    /// Records what [`ask_for_accessibility`] did, in order.
+    #[derive(Default)]
+    struct FakeTrust {
+        trusted: bool,
+        app_id: Option<&'static str>,
+        reset_fails: bool,
+        calls: Vec<String>,
+    }
+
+    impl TrustSystem for FakeTrust {
+        fn trusted(&mut self) -> bool {
+            self.trusted
+        }
+
+        fn own_app_id(&mut self) -> Option<String> {
+            self.app_id.map(str::to_owned)
+        }
+
+        fn reset(&mut self, bundle_id: &str) -> Result<(), String> {
+            self.calls.push(format!("reset {bundle_id}"));
+            if self.reset_fails {
+                Err("tccutil failed".to_owned())
+            } else {
+                Ok(())
+            }
+        }
+
+        fn prompt(&mut self) {
+            self.calls.push("prompt".to_owned());
+        }
+
+        fn open_settings(&mut self) -> Result<(), String> {
+            self.calls.push("open".to_owned());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_untrusted_app_clears_its_old_entry_before_the_prompt_adds_this_copy() {
+        let mut system = FakeTrust {
+            app_id: Some("com.yuyudhan.nomouse"),
+            ..FakeTrust::default()
+        };
+        assert_eq!(ask_for_accessibility(&mut system), Ok(()));
+        assert_eq!(
+            system.calls,
+            vec!["reset com.yuyudhan.nomouse", "prompt", "open"]
+        );
+    }
+
+    #[test]
+    fn a_failed_reset_still_prompts_and_opens_the_pane() {
+        let mut system = FakeTrust {
+            app_id: Some("com.yuyudhan.nomouse"),
+            reset_fails: true,
+            ..FakeTrust::default()
+        };
+        assert_eq!(ask_for_accessibility(&mut system), Ok(()));
+        assert_eq!(
+            system.calls,
+            vec!["reset com.yuyudhan.nomouse", "prompt", "open"]
+        );
+    }
+
+    #[test]
+    fn without_an_own_app_identity_nothing_is_reset() {
+        let mut system = FakeTrust::default();
+        assert_eq!(ask_for_accessibility(&mut system), Ok(()));
+        assert_eq!(system.calls, vec!["prompt", "open"]);
+    }
+
+    #[test]
+    fn a_trusted_app_keeps_its_grant_and_only_opens_the_pane() {
+        let mut system = FakeTrust {
+            trusted: true,
+            app_id: Some("com.yuyudhan.nomouse"),
+            ..FakeTrust::default()
+        };
+        assert_eq!(ask_for_accessibility(&mut system), Ok(()));
+        assert_eq!(system.calls, vec!["open"]);
     }
 }

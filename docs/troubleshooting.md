@@ -48,8 +48,13 @@ again. If it keeps failing, a proxy is rewriting downloads.
    [config](configuration.md#hotkeys-the-global-shortcuts).
 
 **nomouse is switched on in Accessibility but still not trusted**
-A rebuilt or reinstalled app with a different signature is a different app to macOS. Remove
-nomouse from the list with `-`, add `/Applications/nomouse.app` again with `+`, and start it.
+macOS ties the grant to the signature that was allowed, and a rebuilt, reinstalled or updated
+app has a new one, so the switch belongs to the old copy; switching it off and on does not
+help. Click **Open System Settings** in nomouse's Welcome window or menu: it removes the old
+entry and lists the running copy, switched off; switch it on. By hand: `tccutil reset
+Accessibility com.yuyudhan.nomouse` (or remove nomouse with `-`), then open
+`/Applications/nomouse.app` and switch it on. On macOS 27 the pane is **Privacy & Security ›
+Device Control and Data Access**.
 
 **"nomouse.app is damaged" or "cannot be opened because the developer cannot be verified"**
 The app was downloaded in a browser, which adds a quarantine flag, and the release is not

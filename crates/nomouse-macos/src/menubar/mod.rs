@@ -13,7 +13,6 @@ mod welcome;
 mod window;
 
 use std::collections::VecDeque;
-use std::process::Command as Process;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
@@ -33,7 +32,7 @@ pub use welcome::Onboarding;
 use window::{General, Handled, Outcome, SettingsWindow};
 
 use crate::keys;
-use crate::setup::ACCESSIBILITY_SETTINGS;
+use crate::setup::{MacTrust, ask_for_accessibility};
 use crate::shortcuts;
 
 /// The menu bar template image: black on transparent, drawn at 36 px for 18 points.
@@ -125,12 +124,8 @@ fn start_at_login() -> Option<bool> {
 
 /// Asks for Accessibility with macOS's prompt (which lists nomouse) and opens its pane.
 fn open_accessibility() {
-    ax::is_process_trusted(true);
-    if let Err(error) = Process::new("/usr/bin/open")
-        .arg(ACCESSIBILITY_SETTINGS)
-        .status()
-    {
-        tracing::warn!("cannot open System Settings: {error}");
+    if let Err(error) = ask_for_accessibility(&mut MacTrust) {
+        tracing::warn!("{error}");
     }
 }
 

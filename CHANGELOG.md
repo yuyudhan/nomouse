@@ -7,6 +7,16 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: after an update, System Settings kept showing nomouse switched on under Accessibility
+  while macOS refused the new copy, and the Welcome window kept waiting. macOS ties the grant to
+  the signature that was allowed, an ad-hoc signed nomouse has a new one with every version, and
+  switching it off and on keeps the old one. When nomouse runs as the app without the
+  permission, "Open System Settings" now clears its old entry (`tccutil reset Accessibility
+  com.yuyudhan.nomouse`) before macOS's prompt adds the running copy, so switching it on works.
+  The texts also name the pane's macOS 27 title, Device Control and Data Access.
+
 ## [0.1.7] - 2026-11-09
 
 ### Fixed

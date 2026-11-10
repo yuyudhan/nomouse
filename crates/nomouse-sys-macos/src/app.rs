@@ -9,7 +9,7 @@ use objc2_app_kit::{
     NSWorkspace,
 };
 use objc2_core_foundation::{CFRunLoop, kCFRunLoopDefaultMode};
-use objc2_foundation::{NSArray, NSDate, NSDefaultRunLoopMode, NSProcessInfo, NSString};
+use objc2_foundation::{NSArray, NSBundle, NSDate, NSDefaultRunLoopMode, NSProcessInfo, NSString};
 
 use crate::types::ScreenFrame;
 
@@ -142,6 +142,13 @@ pub fn frontmost_pid() -> Option<i32> {
 pub fn bundle_id(pid: i32) -> Option<String> {
     NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
         .and_then(|app| app.bundleIdentifier())
+        .map(|id| id.to_string())
+}
+
+/// This process's own bundle identifier, when it runs from an app bundle.
+pub fn own_bundle_id() -> Option<String> {
+    NSBundle::mainBundle()
+        .bundleIdentifier()
         .map(|id| id.to_string())
 }
 
