@@ -218,15 +218,15 @@ mod live {
 
     use super::{ACCESSIBILITY_SETTINGS, GrantHolder, TrustSystem, ask_for_accessibility};
 
-    /// Whose grant this process's trust checks measure: a terminal on stderr means macOS
-    /// attributes the process to that terminal.
+    /// Whose grant this process's trust checks measure. macOS attributes a process to the
+    /// terminal app that started it, even with its output piped, so a terminal on stderr or a
+    /// `TERM_PROGRAM` set by one means the terminal's grant.
     pub fn grant_holder() -> GrantHolder {
-        if std::io::stderr().is_terminal() {
-            GrantHolder::Terminal(
-                std::env::var("TERM_PROGRAM")
-                    .ok()
-                    .filter(|name| !name.is_empty()),
-            )
+        let term_program = std::env::var("TERM_PROGRAM")
+            .ok()
+            .filter(|name| !name.is_empty());
+        if term_program.is_some() || std::io::stderr().is_terminal() {
+            GrantHolder::Terminal(term_program)
         } else if app::own_bundle_id().is_some() {
             GrantHolder::App
         } else {
