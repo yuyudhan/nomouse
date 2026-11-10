@@ -11,7 +11,7 @@ use nomouse_core::setup::{Outcome, Permission, Presenter, Setup, Step, guide};
 use crate::backend;
 
 /// How long the flow waits for each grant after asking.
-const GRANT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const GRANT_TIMEOUT: Duration = Duration::from_mins(10);
 
 /// The text a terminal shows for `step`, or `None` for a repeated wait.
 pub(crate) fn describe(step: &Step) -> Option<String> {
