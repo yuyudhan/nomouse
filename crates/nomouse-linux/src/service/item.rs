@@ -170,7 +170,7 @@ mod tests {
     fn status_and_tooltip_follow_the_state() {
         let on = MenuState {
             active: true,
-            hotkeys: Some(HotkeysConfig::default()),
+            hotkeys: Some(HotkeysConfig::defaults(Flavour::Release)),
             ..MenuState::default()
         };
         assert_eq!(status(&on), "Active");
