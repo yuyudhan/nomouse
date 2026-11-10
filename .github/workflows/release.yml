@@ -156,9 +156,9 @@ jobs:
                   path: dist/*
                   if-no-files-found: error
 
-    # The shipped macOS assets on the oldest hosted macOS and on GitHub's Intel runner, as an
-    # x86_64 Mac runs them. Older macOS (11 and later is the build's minos, which build.sh
-    # checks) has no hosted runner.
+    # The shipped macOS assets on the oldest hosted arm64 macOS and on GitHub's Intel runner, as
+    # an x86_64 Mac runs them (macos-13 and macos-14 are retired). Older macOS (11 and later is
+    # the build's minos, which build.sh checks) has no hosted runner.
     macos-smoke:
         name: macOS smoke test (${{ matrix.runner }})
         needs: [version, macos]
@@ -168,7 +168,7 @@ jobs:
                 include:
                     - runner: macos-15-intel
                       arch: x86_64
-                    - runner: macos-14
+                    - runner: macos-15
                       arch: arm64
         runs-on: ${{ matrix.runner }}
         steps:
