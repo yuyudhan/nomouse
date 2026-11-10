@@ -1,8 +1,10 @@
 # End-to-end test of install.ps1 against a local release directory holding
 # nomouse-x86_64-pc-windows-msvc.zip and its .sha256 (as scripts/release/package.sh writes them):
 # serves it over HTTP on 127.0.0.1 and installs, runs, uninstalls and refuses a bad checksum, with
-# USERPROFILE, LOCALAPPDATA and APPDATA pointed at a throwaway directory. The mirror of
-# scripts/test-install.sh for Windows.
+# USERPROFILE, LOCALAPPDATA and APPDATA pointed at a throwaway directory. It also checks the
+# processor gate (ARM64 accepted on Windows 11 with an emulation note, x86 refused) and that a PC
+# without the Visual C++ runtime gets the redistributable fix instead of a broken install. The
+# mirror of scripts/test-install.sh for Windows.
 #
 # install.ps1 edits the user PATH in the registry; the harness saves it first and restores it on
 # exit, and checks that the install added its folder and the uninstall removed it.
@@ -42,15 +44,33 @@ function Write-Fail([string]$Message) {
     $script:Failures++
 }
 
-# Runs install.ps1 in a fresh pwsh whose profile directories all live in the temp home.
-function Invoke-Installer([string]$Base, [string[]]$Arguments) {
+# Runs install.ps1 in a fresh pwsh whose profile directories all live in the temp home, with the
+# extra environment in $Environment (restored afterwards, so this process keeps its own).
+function Invoke-Installer([string]$Base, [string[]]$Arguments, [hashtable]$Environment = @{}) {
     $env:USERPROFILE = $TestHome
     $env:LOCALAPPDATA = Join-Path $TestHome "AppData\Local"
     $env:APPDATA = Join-Path $TestHome "AppData\Roaming"
     $env:NOMOUSE_INSTALL_BASE = $Base
     Remove-Item Env:NOMOUSE_INSTALL_DIR -ErrorAction SilentlyContinue
-    $output = & pwsh -NoProfile -NonInteractive -File $Installer @Arguments 2>&1 | Out-String
-    return [pscustomobject]@{ Code = $LASTEXITCODE; Output = $output }
+    $saved = @{}
+    foreach ($name in $Environment.Keys) {
+        $saved[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+        [Environment]::SetEnvironmentVariable($name, $Environment[$name], "Process")
+    }
+    try {
+        $output = & pwsh -NoProfile -NonInteractive -File $Installer @Arguments 2>&1 | Out-String
+        $code = $LASTEXITCODE
+    } finally {
+        foreach ($name in $saved.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $saved[$name], "Process")
+        }
+    }
+    return [pscustomobject]@{ Code = $code; Output = $output }
+}
+
+# Removes an install left by a case, so the next case starts from nothing.
+function Invoke-Uninstall {
+    Invoke-Installer $base @("-Uninstall") | Out-Null
 }
 
 try {
@@ -113,6 +133,59 @@ try {
     } else {
         Write-Fail "wrong checksum (exit $($result.Code)): $($result.Output)"
     }
+
+    # 6. Windows on ARM: accepted with an emulation note on Windows 11 (build 22000+), refused with
+    #    the reason on older builds. The runner's real build decides which one applies.
+    $build = [Environment]::OSVersion.Version.Build
+    $arm = @{ PROCESSOR_ARCHITECTURE = "ARM64"; PROCESSOR_ARCHITEW6432 = $null }
+    $result = Invoke-Installer $base @() $arm
+    if ($build -ge 22000) {
+        if ($result.Code -eq 0 -and $result.Output -match "runs under x64 emulation" -and (Test-Path $exe)) {
+            Write-Pass "PROCESSOR_ARCHITECTURE=ARM64 on build $build installs with the x64 emulation note"
+        } else {
+            Write-Fail "ARM64 on build $build (exit $($result.Code)): $($result.Output)"
+        }
+    } elseif ($result.Code -ne 0 -and $result.Output -match "from Windows 11 on" -and -not (Test-Path $exe)) {
+        Write-Pass "PROCESSOR_ARCHITECTURE=ARM64 on build $build (before Windows 11) is refused with the reason"
+    } else {
+        Write-Fail "ARM64 on build $build (exit $($result.Code)): $($result.Output)"
+    }
+    Invoke-Uninstall
+
+    # 7. 32-bit Windows is refused and nothing is installed.
+    $x86 = @{ PROCESSOR_ARCHITECTURE = "x86"; PROCESSOR_ARCHITEW6432 = $null }
+    $result = Invoke-Installer $base @() $x86
+    if ($result.Code -ne 0 -and $result.Output -match "64-bit x86_64 Windows build only; this Windows is x86" -and -not (Test-Path $exe)) {
+        Write-Pass "PROCESSOR_ARCHITECTURE=x86 is refused and installs nothing"
+    } else {
+        Write-Fail "x86 (exit $($result.Code)): $($result.Output)"
+    }
+    Invoke-Uninstall
+
+    # 8. No Visual C++ runtime on the PC (NOMOUSE_SYSTEM_DIR is an empty folder): a build that
+    #    imports VCRUNTIME140.dll is refused with the redistributable link before anything is
+    #    installed; a statically linked build installs regardless.
+    $noRuntime = Join-Path $Work "empty-system32"
+    New-Item -ItemType Directory -Path $noRuntime -Force | Out-Null
+    $zipDir = Join-Path $Work "archive"
+    Expand-Archive -Path (Join-Path $Dist $Archive) -DestinationPath $zipDir -Force
+    $packaged = Join-Path $zipDir "nomouse-x86_64-pc-windows-msvc\nomouse.exe"
+    $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($packaged))
+    $dynamic = $text -match "(?i)vcruntime140(_1)?\.dll"
+    $result = Invoke-Installer $base @() @{ NOMOUSE_SYSTEM_DIR = $noRuntime }
+    if ($dynamic) {
+        if ($result.Code -ne 0 -and $result.Output -match "Visual C\+\+ 2015-2022 Redistributable" -and
+            $result.Output -match "aka\.ms/vs/17/release/vc_redist\.x64\.exe" -and -not (Test-Path $exe)) {
+            Write-Pass "a build importing VCRUNTIME140.dll on a PC without it is refused with the redistributable link"
+        } else {
+            Write-Fail "missing VC++ runtime, dynamic build (exit $($result.Code)): $($result.Output)"
+        }
+    } elseif ($result.Code -eq 0 -and (Test-Path $exe)) {
+        Write-Pass "a statically linked build installs on a PC without the Visual C++ runtime"
+    } else {
+        Write-Fail "missing VC++ runtime, static build (exit $($result.Code)): $($result.Output)"
+    }
+    Invoke-Uninstall
 } finally {
     if ($null -ne $Server) {
         Stop-Process -Id $Server.Id -Force -ErrorAction SilentlyContinue

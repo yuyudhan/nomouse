@@ -2,9 +2,11 @@
 # Published with every GitHub release as releases/latest/download/install.ps1; README.md#install
 # has the one-line PowerShell command.
 #
-# It downloads nomouse-x86_64-pc-windows-msvc.zip, checks it against the release's .sha256, puts
-# nomouse.exe in %LOCALAPPDATA%\Programs\nomouse (or $env:NOMOUSE_INSTALL_DIR) and adds that
-# folder to the user's PATH.
+# It downloads nomouse-x86_64-pc-windows-msvc.zip, checks it against the release's .sha256, checks
+# that the nomouse.exe inside starts on this PC, puts it in %LOCALAPPDATA%\Programs\nomouse (or
+# $env:NOMOUSE_INSTALL_DIR) and adds that folder to the user's PATH. Any failure before the copy
+# leaves an existing install untouched. 64-bit x86 Windows runs the build natively; Windows 11 on
+# ARM runs it under x64 emulation.
 #
 # Parameters (when run as a file):
 #   -Version X.Y.Z   Install that release instead of the latest.
@@ -13,6 +15,8 @@
 # Environment:
 #   NOMOUSE_INSTALL_DIR    Install folder.
 #   NOMOUSE_INSTALL_BASE   URL of the directory holding the release assets, overriding GitHub.
+#   NOMOUSE_SYSTEM_DIR     Folder searched for the Visual C++ runtime DLLs instead of the 64-bit
+#                          System32 (scripts/test-install.ps1 points it at an empty folder).
 [CmdletBinding()]
 param(
     [string]$Version = "",
@@ -67,10 +71,80 @@ function Invoke-Download([string]$Url, [string]$OutFile) {
     }
 }
 
-function Install-Nomouse {
-    if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64" -and $env:PROCESSOR_ARCHITEW6432 -ne "AMD64") {
-        throw "nomouse ships an x86_64 Windows build only (this is $env:PROCESSOR_ARCHITECTURE)"
+# STATUS_DLL_NOT_FOUND and STATUS_INVALID_IMAGE_FORMAT as signed process exit codes.
+$StatusDllNotFound = -1073741515
+$StatusInvalidImageFormat = -1073741701
+$VcRedistUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+
+# The x86_64 build runs natively on AMD64 and under x64 emulation on Windows 11 on ARM (build
+# 22000+); Windows 10 on ARM emulates only 32-bit x86, and 32-bit Windows cannot run it at all.
+function Assert-SupportedArchitecture {
+    # A 32-bit PowerShell on 64-bit Windows reports x86 and keeps the OS's own in ARCHITEW6432.
+    $arch = $env:PROCESSOR_ARCHITECTURE
+    if ($env:PROCESSOR_ARCHITEW6432) {
+        $arch = $env:PROCESSOR_ARCHITEW6432
     }
+    switch ($arch) {
+        "AMD64" {
+            return
+        }
+        "ARM64" {
+            $build = [Environment]::OSVersion.Version.Build
+            if ($build -lt 22000) {
+                throw "nomouse ships an x86_64 build, which Windows on ARM runs under x64 emulation from Windows 11 on; this is Windows build $build (Windows 10 on ARM has no x64 emulation)"
+            }
+            Write-Status "Windows on ARM: nomouse runs under x64 emulation"
+        }
+        default {
+            throw "nomouse ships a 64-bit x86_64 Windows build only; this Windows is $arch"
+        }
+    }
+}
+
+function Get-SystemDir {
+    if ($env:NOMOUSE_SYSTEM_DIR) {
+        return $env:NOMOUSE_SYSTEM_DIR
+    }
+    # The x64 exe loads from the 64-bit System32, which a 32-bit PowerShell sees as Sysnative.
+    $native = Join-Path $env:SystemRoot "Sysnative"
+    if (Test-Path $native) {
+        return $native
+    }
+    return Join-Path $env:SystemRoot "System32"
+}
+
+# A build linked against the dynamic Visual C++ runtime imports VCRUNTIME140*.dll, which a clean
+# Windows lacks until the Visual C++ 2015-2022 Redistributable is installed; starting such an exe
+# there pops a system error dialog. Refuse with the fix instead, before touching the install.
+function Assert-VcRuntime([string]$Exe) {
+    $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($Exe))
+    $imports = @([regex]::Matches($text, "(?i)vcruntime140(_1)?\.dll") |
+        ForEach-Object { $_.Value.ToUpperInvariant() } | Sort-Object -Unique)
+    $systemDir = Get-SystemDir
+    $missing = @($imports | Where-Object { -not (Test-Path (Join-Path $systemDir $_)) })
+    if ($missing.Count -gt 0) {
+        throw "nomouse.exe needs the Microsoft Visual C++ 2015-2022 Redistributable (x64), which this PC lacks ($($missing -join ', ') is not in $systemDir). Install it from $VcRedistUrl and run this installer again; nothing was installed."
+    }
+}
+
+# Runs `nomouse.exe --version` and returns its output, or explains why the exe does not start.
+function Get-NomouseVersion([string]$Exe) {
+    $output = (& $Exe --version | Out-String).Trim()
+    $code = $LASTEXITCODE
+    if ($code -eq 0) {
+        return $output
+    }
+    $hint = ""
+    if ($code -eq $StatusDllNotFound) {
+        $hint = ": Windows could not find a DLL it needs; install the Microsoft Visual C++ 2015-2022 Redistributable (x64) from $VcRedistUrl and run this installer again"
+    } elseif ($code -eq $StatusInvalidImageFormat) {
+        $hint = ": a DLL it loads is built for another processor; repair the Microsoft Visual C++ 2015-2022 Redistributable (x64) from $VcRedistUrl"
+    }
+    throw "nomouse.exe from $Archive does not start (exit code $code)$hint. Nothing was installed. Output: $output"
+}
+
+function Install-Nomouse {
+    Assert-SupportedArchitecture
     if ($env:NOMOUSE_INSTALL_BASE) {
         $base = $env:NOMOUSE_INSTALL_BASE.TrimEnd("/")
     } elseif ($Version) {
@@ -99,6 +173,8 @@ function Install-Nomouse {
         if (-not (Test-Path $exe)) {
             throw "archive has no nomouse-$Target\nomouse.exe"
         }
+        Assert-VcRuntime $exe
+        $installed = Get-NomouseVersion $exe
 
         $dir = Get-InstallDir
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -118,7 +194,7 @@ function Install-Nomouse {
             Write-Status "added $dir to your user PATH (open a new terminal to use it)"
         }
         $env:Path = "$dir;$env:Path"
-        Write-Status "installed $(& $dest --version) to $dest"
+        Write-Status "installed $installed to $dest"
         Write-Status "next: nomouse doctor"
     } finally {
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
