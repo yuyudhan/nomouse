@@ -1,6 +1,6 @@
 # Homebrew cask for nomouse.app, rendered by scripts/release/homebrew.sh for every release that
-# has the disk image and attached to it as nomouse-app.rb. To publish, copy it into the tap
-# repository as Casks/nomouse.rb (yuyudhan/homebrew-tap); then: brew install --cask
+# has the disk image, attached to it as nomouse-app.rb and published to yuyudhan/homebrew-tap as
+# Casks/nomouse.rb by scripts/release/publish-homebrew.sh: brew install --cask
 # yuyudhan/tap/nomouse. The formula (Formula/nomouse.rb) stays for the bare command line.
 cask "nomouse" do
   version "@VERSION@"
@@ -11,10 +11,16 @@ cask "nomouse" do
   desc "Keyboard-driven clicking via the accessibility tree"
   homepage "https://github.com/yuyudhan/nomouse"
 
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
   depends_on :macos
 
   app "nomouse.app"
 
+@QUARANTINE@
   uninstall quit: "@BUNDLE_ID@"
 
   zap trash: "~/.config/nomouse"
@@ -23,5 +29,6 @@ cask "nomouse" do
     Start nomouse.app once: it explains the Accessibility permission, opens
     System Settings > Privacy & Security > Accessibility and starts itself again
     once the switch is on.
+@SIGNING_CAVEAT@
   EOS
 end

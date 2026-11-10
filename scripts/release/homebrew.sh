@@ -9,6 +9,11 @@
 #
 # Environment:
 #   NOMOUSE_BUNDLE_ID         the app's bundle identifier (default com.yuyudhan.nomouse)
+#   NOMOUSE_MACOS_SIGNING     how the disk image's nomouse.app is signed, as
+#                             scripts/release/signature.sh reports it: "ad-hoc" (the default)
+#                             or "developer-id". An ad-hoc cask clears the download quarantine
+#                             (Gatekeeper refuses an app that is not notarized) and says that
+#                             macOS asks for Accessibility again after every upgrade.
 set -euo pipefail
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
@@ -40,10 +45,45 @@ echo "homebrew: ${dist}/nomouse.rb" >&2
 
 dmg_sum="${dist}/nomouse-universal-apple-darwin.dmg.sha256"
 if [ -f "$dmg_sum" ]; then
-    cask="$(<"${root}/packaging/homebrew/nomouse-app.rb.in")"
-    cask="${cask//@VERSION@/${version}}"
-    cask="${cask//@SHA256_DMG@/$(cut -d ' ' -f 1 <"$dmg_sum")}"
-    cask="${cask//@BUNDLE_ID@/${NOMOUSE_BUNDLE_ID:-com.yuyudhan.nomouse}}"
-    printf '%s\n' "$cask" >"${dist}/nomouse-app.rb"
-    echo "homebrew: ${dist}/nomouse-app.rb" >&2
+    signing="${NOMOUSE_MACOS_SIGNING:-ad-hoc}"
+    case "$signing" in
+    ad-hoc)
+        quarantine='  # This build is ad-hoc signed, not notarized, so Gatekeeper would refuse to open it after a
+  # download. Clearing the quarantine flag is the same as approving it once in System Settings.
+  postflight_steps do
+    run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/nomouse.app"]
+  end
+'
+        caveat='
+    This build is ad-hoc signed, not notarized by Apple; Homebrew cleared the
+    download quarantine so it opens. macOS ties the Accessibility grant to the
+    signature, so after every upgrade switch nomouse on again in
+    System Settings > Privacy & Security > Accessibility.'
+        ;;
+    developer-id)
+        quarantine=""
+        caveat=""
+        ;;
+    *)
+        echo "homebrew: NOMOUSE_MACOS_SIGNING is '${signing}', expected ad-hoc or developer-id" >&2
+        exit 1
+        ;;
+    esac
+    # The marker lines are replaced whole (an empty block drops the line), line by line rather
+    # than with ${var//pattern/replacement}, whose quoting differs between bash 3.2 and 5.2.
+    {
+        while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+            @QUARANTINE@) [ -z "$quarantine" ] || printf '%s\n' "$quarantine" ;;
+            @SIGNING_CAVEAT@) [ -z "$caveat" ] || printf '%s\n' "$caveat" ;;
+            *)
+                line="${line//@VERSION@/${version}}"
+                line="${line//@SHA256_DMG@/$(cut -d ' ' -f 1 <"$dmg_sum")}"
+                line="${line//@BUNDLE_ID@/${NOMOUSE_BUNDLE_ID:-com.yuyudhan.nomouse}}"
+                printf '%s\n' "$line"
+                ;;
+            esac
+        done <"${root}/packaging/homebrew/nomouse-app.rb.in"
+    } >"${dist}/nomouse-app.rb"
+    echo "homebrew: ${dist}/nomouse-app.rb (${signing})" >&2
 fi
