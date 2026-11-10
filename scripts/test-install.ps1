@@ -44,28 +44,29 @@ function Write-Fail([string]$Message) {
     $script:Failures++
 }
 
-# Runs install.ps1 in a fresh pwsh whose profile directories all live in the temp home, with the
-# extra environment in $Environment (restored afterwards, so this process keeps its own).
+# Runs install.ps1 in a fresh pwsh whose profile directories all live in the temp home. Extra
+# variables in $Environment (a $null value removes one) are set inside that pwsh just before
+# install.ps1 runs, so the harness's own environment never changes.
 function Invoke-Installer([string]$Base, [string[]]$Arguments, [hashtable]$Environment = @{}) {
     $env:USERPROFILE = $TestHome
     $env:LOCALAPPDATA = Join-Path $TestHome "AppData\Local"
     $env:APPDATA = Join-Path $TestHome "AppData\Roaming"
     $env:NOMOUSE_INSTALL_BASE = $Base
     Remove-Item Env:NOMOUSE_INSTALL_DIR -ErrorAction SilentlyContinue
-    $saved = @{}
-    foreach ($name in $Environment.Keys) {
-        $saved[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
-        [Environment]::SetEnvironmentVariable($name, $Environment[$name], "Process")
-    }
-    try {
+    if ($Environment.Count -eq 0) {
         $output = & pwsh -NoProfile -NonInteractive -File $Installer @Arguments 2>&1 | Out-String
-        $code = $LASTEXITCODE
-    } finally {
-        foreach ($name in $saved.Keys) {
-            [Environment]::SetEnvironmentVariable($name, $saved[$name], "Process")
+    } else {
+        $lines = foreach ($name in $Environment.Keys) {
+            if ($null -eq $Environment[$name]) {
+                "Remove-Item Env:$name -ErrorAction SilentlyContinue"
+            } else {
+                "`$env:$name = '$($Environment[$name] -replace "'", "''")'"
+            }
         }
+        $command = (@($lines) + "& '$($Installer -replace "'", "''")' $($Arguments -join ' ')") -join "; "
+        $output = & pwsh -NoProfile -NonInteractive -Command $command 2>&1 | Out-String
     }
-    return [pscustomobject]@{ Code = $code; Output = $output }
+    return [pscustomobject]@{ Code = $LASTEXITCODE; Output = $output }
 }
 
 # Removes an install left by a case, so the next case starts from nothing.
