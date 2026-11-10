@@ -156,3 +156,15 @@ pub fn can_listen_events() -> bool {
 pub fn can_post_events() -> bool {
     objc2_core_graphics::CGPreflightPostEventAccess()
 }
+
+#[link(name = "Carbon", kind = "framework")]
+unsafe extern "C" {
+    fn IsSecureEventInputEnabled() -> u8;
+}
+
+/// Whether some app holds secure event input (a password field, Terminal's Secure Keyboard
+/// Entry). While it is on, macOS delivers no key events to event taps, so hotkeys do nothing.
+pub fn secure_input_enabled() -> bool {
+    // SAFETY: no arguments; reads the session's secure input state and returns a Boolean.
+    unsafe { IsSecureEventInputEnabled() != 0 }
+}

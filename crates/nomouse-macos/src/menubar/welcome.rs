@@ -2,7 +2,6 @@
 //! shows its menu bar item and a Welcome window that explains the permission, opens its
 //! settings pane and follows the grant, instead of a row of alerts.
 
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use nomouse_core::setup::{Presenter, Step};
@@ -12,7 +11,7 @@ use nomouse_sys_macos::ui::status::{MenuLine, StatusItem};
 use nomouse_sys_macos::ui::{self, UiEvent, panels};
 
 use super::MENU_ICON;
-use crate::setup::{ACCESSIBILITY_SETTINGS, dialog};
+use crate::setup::{MacTrust, ask_for_accessibility, dialog};
 
 /// "Open System Settings".
 const OPEN: isize = 80;
@@ -161,7 +160,10 @@ impl Presenter for Onboarding {
             Step::Requested(permission) | Step::Waiting(permission) => {
                 self.note(
                     &format!(
-                        "Waiting for {}: {}\n\nnomouse starts by itself once you allow it.",
+                        "Waiting for {}: {}\n\nIf nomouse was already switched on, that switch \
+                         belonged to an older copy of nomouse and macOS ignores it, so nomouse \
+                         replaced it: switch nomouse on now.\n\nnomouse starts by itself once \
+                         you allow it.",
                         permission.name, permission.how
                     ),
                     Tone::Warning,
@@ -196,11 +198,8 @@ impl Presenter for Onboarding {
     fn wait(&mut self, duration: Duration) {
         match self.pump(duration) {
             Some(Pick::Open) => {
-                if let Err(error) = Command::new("/usr/bin/open")
-                    .arg(ACCESSIBILITY_SETTINGS)
-                    .status()
-                {
-                    tracing::warn!("cannot open System Settings: {error}");
+                if let Err(error) = ask_for_accessibility(&mut MacTrust) {
+                    tracing::warn!("{error}");
                 }
             }
             Some(Pick::Quit) => quit(),

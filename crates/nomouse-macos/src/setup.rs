@@ -16,7 +16,10 @@ pub const ACCESSIBILITY: Permission = Permission {
     required: true,
 };
 
-/// System Settings' Accessibility pane.
+/// System Settings' Accessibility pane. The legacy pane id still opens it on macOS 27: the
+/// Privacy & Security extension declares `legacyBundleIdentifier` `com.apple.preference.security`
+/// and handles the `Privacy_Accessibility` anchor (its list is titled Device Control and Data
+/// Access there).
 pub const ACCESSIBILITY_SETTINGS: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
 
@@ -116,8 +119,94 @@ pub fn ask_for_accessibility(system: &mut dyn TrustSystem) -> Result<(), String>
     system.open_settings()
 }
 
+/// Whose Accessibility grant a trust check in this process measures. macOS attributes a process
+/// started from a terminal to that terminal, so its check says nothing about nomouse.app.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GrantHolder {
+    /// nomouse.app opened as an app: its own entry in the list.
+    App,
+    /// A terminal started this process; its name from `TERM_PROGRAM`, when set.
+    Terminal(Option<String>),
+    /// A nomouse binary outside the app, started without a terminal (launchd, a script).
+    Binary,
+}
+
+/// The doctor's Accessibility line: who was checked, and what to do when it is not trusted.
+///
+/// # Errors
+/// The problem and its fix when `holder` is not trusted.
+pub fn accessibility_check(trusted: bool, holder: &GrantHolder) -> Result<String, String> {
+    let requirement = crate::ACCESSIBILITY_REQUIREMENT;
+    match (holder, trusted) {
+        (GrantHolder::App, true) => Ok("nomouse.app is trusted".to_owned()),
+        (GrantHolder::App, false) => Err(format!(
+            "nomouse.app is not trusted. {requirement} If nomouse is already switched on there, \
+             that switch is for an older copy: choose Open System Settings in nomouse's menu or \
+             Welcome window, which replaces it, then switch nomouse on."
+        )),
+        (GrantHolder::Terminal(name), true) => Ok(format!(
+            "{} is trusted, so a nomouse started from it works. nomouse.app has its own grant; \
+             its menu shows it.",
+            terminal(name.as_deref())
+        )),
+        (GrantHolder::Terminal(name), false) => Err(format!(
+            "{} is not trusted, which matters only for a nomouse started from it. nomouse.app \
+             has its own grant: open /Applications/nomouse.app and its menu shows whether it is \
+             allowed. To run nomouse from this terminal, allow the terminal in the same list and \
+             open it again.",
+            terminal(name.as_deref())
+        )),
+        (GrantHolder::Binary, true) => Ok("this nomouse binary is trusted".to_owned()),
+        (GrantHolder::Binary, false) => Err(format!(
+            "this nomouse binary is not trusted. {requirement} Add the binary with + (a rebuilt \
+             binary needs adding again), or run nomouse.app instead."
+        )),
+    }
+}
+
+fn terminal(name: Option<&str>) -> String {
+    name.map_or_else(
+        || "this terminal".to_owned(),
+        |name| format!("this terminal ({name})"),
+    )
+}
+
+/// The pid of the process holding secure event input, from `ioreg -l -w 0 -d 1` output
+/// (`"kCGSSessionSecureInputPID"=<pid>` in `IOConsoleUsers`; absent while nobody holds it).
+pub fn secure_input_pid(ioreg: &str) -> Option<i32> {
+    let key = "\"kCGSSessionSecureInputPID\"=";
+    let start = ioreg.find(key)? + key.len();
+    let digits: String = ioreg[start..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok().filter(|pid| *pid > 0)
+}
+
+/// The doctor's secure input line; `holder` is the pid and app name holding it, when known.
+///
+/// # Errors
+/// When secure input is on: who holds it and how to release it.
+pub fn secure_input_check(
+    on: bool,
+    holder: Option<(i32, Option<String>)>,
+) -> Result<String, String> {
+    if !on {
+        return Ok("off".to_owned());
+    }
+    let by = match holder {
+        Some((pid, Some(name))) => format!(", held by {name} (pid {pid})"),
+        Some((pid, None)) => format!(", held by pid {pid}"),
+        None => String::new(),
+    };
+    Err(format!(
+        "on{by}: while it is on, macOS sends no keys to nomouse, so its hotkeys do nothing. Leave \
+         the password field, or turn off Secure Keyboard Entry in Terminal's or iTerm2's menu."
+    ))
+}
+
 #[cfg(target_os = "macos")]
-pub use live::{MacTrust, TrustProbe};
+pub use live::{MacTrust, TrustProbe, grant_holder};
 
 #[cfg(target_os = "macos")]
 mod live {
@@ -127,7 +216,23 @@ mod live {
     use nomouse_core::setup::{Permission, Probe};
     use nomouse_sys_macos::{app, ax};
 
-    use super::{ACCESSIBILITY_SETTINGS, TrustSystem, ask_for_accessibility};
+    use super::{ACCESSIBILITY_SETTINGS, GrantHolder, TrustSystem, ask_for_accessibility};
+
+    /// Whose grant this process's trust checks measure: a terminal on stderr means macOS
+    /// attributes the process to that terminal.
+    pub fn grant_holder() -> GrantHolder {
+        if std::io::stderr().is_terminal() {
+            GrantHolder::Terminal(
+                std::env::var("TERM_PROGRAM")
+                    .ok()
+                    .filter(|name| !name.is_empty()),
+            )
+        } else if app::own_bundle_id().is_some() {
+            GrantHolder::App
+        } else {
+            GrantHolder::Binary
+        }
+    }
 
     /// Accessibility trust of this process.
     #[derive(Debug, Default)]
@@ -155,10 +260,11 @@ mod live {
         }
 
         fn own_app_id(&mut self) -> Option<String> {
-            if std::io::stderr().is_terminal() {
-                return None;
+            if grant_holder() == GrantHolder::App {
+                app::own_bundle_id()
+            } else {
+                None
             }
-            app::own_bundle_id()
         }
 
         fn reset(&mut self, bundle_id: &str) -> Result<(), String> {
@@ -316,5 +422,44 @@ mod tests {
         };
         assert_eq!(ask_for_accessibility(&mut system), Ok(()));
         assert_eq!(system.calls, vec!["open"]);
+    }
+
+    #[test]
+    fn the_accessibility_line_names_whose_grant_it_checked() {
+        let terminal = GrantHolder::Terminal(Some("Apple_Terminal".to_owned()));
+        let untrusted = accessibility_check(false, &terminal).unwrap_err();
+        assert!(untrusted.starts_with("this terminal (Apple_Terminal) is not trusted"));
+        assert!(untrusted.contains("nomouse.app has its own grant"));
+        let trusted = accessibility_check(true, &GrantHolder::Terminal(None)).unwrap();
+        assert!(trusted.starts_with("this terminal is trusted"));
+        assert_eq!(
+            accessibility_check(true, &GrantHolder::App),
+            Ok("nomouse.app is trusted".to_owned())
+        );
+        let app = accessibility_check(false, &GrantHolder::App).unwrap_err();
+        assert!(app.contains("older copy"));
+        assert!(app.contains("Device Control and Data Access"));
+        let binary = accessibility_check(false, &GrantHolder::Binary).unwrap_err();
+        assert!(binary.starts_with("this nomouse binary is not trusted"));
+    }
+
+    #[test]
+    fn the_secure_input_holder_is_read_from_the_console_session() {
+        let held = r#"| "IOConsoleUsers" = ({"kCGSSessionSecureInputPID"=4242,"kCGSSessionUserIDKey"=503})"#;
+        assert_eq!(secure_input_pid(held), Some(4242));
+        let free =
+            r#"| "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes,"kCGSSessionUserIDKey"=503})"#;
+        assert_eq!(secure_input_pid(free), None);
+        assert_eq!(secure_input_pid(r#""kCGSSessionSecureInputPID"=0"#), None);
+    }
+
+    #[test]
+    fn secure_input_on_names_its_holder_and_the_way_out() {
+        assert_eq!(secure_input_check(false, None), Ok("off".to_owned()));
+        let held = secure_input_check(true, Some((4242, Some("Terminal".to_owned())))).unwrap_err();
+        assert!(held.starts_with("on, held by Terminal (pid 4242):"));
+        assert!(held.contains("Secure Keyboard Entry"));
+        let unknown = secure_input_check(true, None).unwrap_err();
+        assert!(unknown.starts_with("on: "));
     }
 }

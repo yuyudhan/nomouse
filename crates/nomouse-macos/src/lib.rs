@@ -94,13 +94,7 @@ pub fn doctor(config: &Config) -> Vec<(String, Result<String, String>)> {
     let trusted = ax::is_process_trusted(false);
     checks.push((
         "Accessibility".to_owned(),
-        if trusted {
-            Ok("this process is trusted".to_owned())
-        } else {
-            Err(format!(
-                "not trusted. {ACCESSIBILITY_REQUIREMENT} Then restart nomouse."
-            ))
-        },
+        setup::accessibility_check(trusted, &setup::grant_holder()),
     ));
     checks.push((
         "Synthetic input".to_owned(),
@@ -118,6 +112,12 @@ pub fn doctor(config: &Config) -> Vec<(String, Result<String, String>)> {
         "not granted (not needed: the keyboard tap runs under Accessibility)"
     };
     checks.push(("Input Monitoring".to_owned(), Ok(listen.to_owned())));
+    let on = input::secure_input_enabled();
+    let holder = if on { secure_input_holder() } else { None };
+    checks.push((
+        "Secure input".to_owned(),
+        setup::secure_input_check(on, holder),
+    ));
     let apps = &config.macos.enhanced_ui_apps;
     checks.push((
         "Chromium/Electron opt-in".to_owned(),
@@ -128,6 +128,18 @@ pub fn doctor(config: &Config) -> Vec<(String, Result<String, String>)> {
         }),
     ));
     checks
+}
+
+/// The pid and app name holding secure event input, from the console session in the I/O
+/// Registry; `None` when `ioreg` fails or does not name it.
+#[cfg(target_os = "macos")]
+fn secure_input_holder() -> Option<(i32, Option<String>)> {
+    let output = std::process::Command::new("/usr/sbin/ioreg")
+        .args(["-l", "-w", "0", "-d", "1"])
+        .output()
+        .ok()?;
+    let pid = setup::secure_input_pid(&String::from_utf8_lossy(&output.stdout))?;
+    Some((pid, nomouse_sys_macos::app::process_name(pid)))
 }
 
 /// Environment checks for `nomouse doctor`; on other systems, one failing check.
