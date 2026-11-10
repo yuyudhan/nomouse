@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-10
+
 ### Added
 
 - Development builds run beside the installed nomouse. A debug build (`cargo run`, `just dev`)
