@@ -5,7 +5,7 @@
 //! a size of `px` makes ascent plus descent span `px` pixels, so labels keep the same height
 //! whatever the font's units per em.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
@@ -223,21 +223,87 @@ impl LabelFont {
 }
 
 /// System font directories searched for a label font on this OS.
-pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
-    let mut dirs = Vec::new();
+pub fn system_font_dirs() -> Vec<PathBuf> {
     if cfg!(windows) {
         let windir = std::env::var_os("WINDIR")
             .filter(|dir| !dir.is_empty())
-            .map_or_else(|| "C:\\Windows".into(), std::path::PathBuf::from);
-        dirs.push(windir.join("Fonts"));
+            .map_or_else(|| "C:\\Windows".into(), PathBuf::from);
+        vec![windir.join("Fonts")]
     } else if cfg!(target_os = "macos") {
-        dirs.push("/System/Library/Fonts".into());
-        dirs.push("/Library/Fonts".into());
+        vec!["/System/Library/Fonts".into(), "/Library/Fonts".into()]
     } else {
-        dirs.push("/usr/share/fonts".into());
-        dirs.push("/usr/local/share/fonts".into());
+        freedesktop_font_dirs(|name| std::env::var(name).ok())
+    }
+}
+
+/// The font directories of a freedesktop (Linux, BSD) system for the environment `env`, in
+/// search order: `fonts` under every `$XDG_DATA_DIRS` entry (default `/usr/local/share` and
+/// `/usr/share`), then `/usr/share/fonts` and `/usr/local/share/fonts` when that list left them
+/// out, then the user's `$XDG_DATA_HOME/fonts` (default `~/.local/share/fonts`) and `~/.fonts`.
+/// Relative entries are ignored, as the XDG base directory spec says; duplicates appear once.
+pub fn freedesktop_font_dirs(env: impl Fn(&str) -> Option<String>) -> Vec<PathBuf> {
+    let get = |name: &str| env(name).filter(|value| !value.is_empty());
+    let home = get("HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute());
+    let data_dirs =
+        get("XDG_DATA_DIRS").unwrap_or_else(|| "/usr/local/share:/usr/share".to_owned());
+    let data_home = get("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| home.as_ref().map(|home| home.join(".local").join("share")));
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let candidates = data_dirs
+        .split(':')
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join("fonts"))
+        .chain(["/usr/share/fonts", "/usr/local/share/fonts"].map(PathBuf::from))
+        .chain(data_home.map(|dir| dir.join("fonts")))
+        .chain(home.map(|home| home.join(".fonts")));
+    for dir in candidates {
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
     }
     dirs
+}
+
+/// Whether `path` names a font file the label renderer reads (`.ttf` or `.otf`).
+pub fn is_font_file(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf"))
+}
+
+/// The first font file under `dirs`, searched in order and up to four levels deep: in each
+/// directory (entries sorted by name) a file whose name contains `Bold`, else any font file,
+/// else the subdirectories.
+pub fn find_font_file(dirs: &[PathBuf]) -> Option<PathBuf> {
+    fn find_in(dir: &Path, depth: usize) -> Option<PathBuf> {
+        let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+            .ok()?
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        entries.sort();
+        let is_bold = |path: &&PathBuf| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().contains("Bold"))
+        };
+        let fonts = || entries.iter().filter(|path| is_font_file(path));
+        fonts()
+            .find(is_bold)
+            .or_else(|| fonts().next())
+            .cloned()
+            .or_else(|| {
+                let deeper = depth.checked_sub(1)?;
+                entries
+                    .iter()
+                    .filter(|path| path.is_dir())
+                    .find_map(|path| find_in(path, deeper))
+            })
+    }
+    dirs.iter().find_map(|dir| find_in(dir, 4))
 }
 
 #[cfg(test)]
@@ -332,5 +398,87 @@ mod tests {
         };
         assert!(solid(255, 0), "first glyph red");
         assert!(solid(0, 255), "second glyph blue");
+    }
+
+    /// An environment lookup over `pairs`.
+    #[cfg(unix)]
+    fn env(pairs: &[(&str, String)]) -> impl Fn(&str) -> Option<String> {
+        let pairs: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), value.clone()))
+            .collect();
+        move |name| {
+            pairs
+                .iter()
+                .find(|(known, _)| known == name)
+                .map(|(_, value)| value.clone())
+        }
+    }
+
+    // `:`-separated absolute paths: freedesktop systems only.
+    #[cfg(unix)]
+    #[test]
+    fn freedesktop_dirs_follow_xdg_data_dirs_then_the_user_dirs() {
+        let root = std::env::temp_dir().join(format!("nomouse-fontdirs-{}", std::process::id()));
+        let (nix, share, home) = (root.join("nix"), root.join("share"), root.join("home"));
+        let data_dirs = format!("{}:relative/dir:{}", nix.display(), share.display());
+        let dirs = freedesktop_font_dirs(env(&[
+            ("XDG_DATA_DIRS", data_dirs),
+            ("HOME", home.display().to_string()),
+        ]));
+        assert_eq!(
+            dirs,
+            vec![
+                nix.join("fonts"),
+                share.join("fonts"),
+                PathBuf::from("/usr/share/fonts"),
+                PathBuf::from("/usr/local/share/fonts"),
+                home.join(".local/share/fonts"),
+                home.join(".fonts"),
+            ]
+        );
+        // Defaults: the spec's XDG_DATA_DIRS, no duplicates; XDG_DATA_HOME replaces ~/.local/share.
+        let data_home = root.join("data");
+        assert_eq!(
+            freedesktop_font_dirs(env(&[
+                ("HOME", home.display().to_string()),
+                ("XDG_DATA_HOME", data_home.display().to_string()),
+            ])),
+            vec![
+                PathBuf::from("/usr/local/share/fonts"),
+                PathBuf::from("/usr/share/fonts"),
+                data_home.join("fonts"),
+                home.join(".fonts"),
+            ]
+        );
+        assert_eq!(
+            freedesktop_font_dirs(env(&[])),
+            vec![
+                PathBuf::from("/usr/local/share/fonts"),
+                PathBuf::from("/usr/share/fonts"),
+            ]
+        );
+    }
+
+    #[test]
+    fn find_font_file_takes_the_first_dir_and_prefers_bold() {
+        let root = std::env::temp_dir().join(format!("nomouse-findfont-{}", std::process::id()));
+        let (empty, user, system) = (root.join("empty"), root.join("user"), root.join("system"));
+        let nested = user.join("dejavu");
+        for dir in [&empty, &nested, &system] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(empty.join("readme.txt"), "").unwrap();
+        std::fs::write(nested.join("DejaVuSans.ttf"), "").unwrap();
+        std::fs::write(nested.join("DejaVuSans-Bold.ttf"), "").unwrap();
+        std::fs::write(system.join("Other.otf"), "").unwrap();
+        let found = find_font_file(&[root.join("missing"), empty.clone(), user, system.clone()]);
+        assert_eq!(found, Some(nested.join("DejaVuSans-Bold.ttf")));
+        assert_eq!(
+            find_font_file(&[empty, system.clone()]),
+            Some(system.join("Other.otf"))
+        );
+        assert_eq!(find_font_file(&[root.join("missing")]), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

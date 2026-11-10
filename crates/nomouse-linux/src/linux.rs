@@ -12,7 +12,7 @@ use nomouse_core::config::Appearance;
 use crate::a11y::{AtspiSource, ScanLimits, bus};
 use crate::appearance::Themed;
 use crate::session::DisplayServer;
-use crate::x11::render::{Renderer, Style, find_font};
+use crate::x11::render::{Renderer, Style, find_font, no_font_message};
 use crate::x11::{self, X11};
 
 /// Timeout of one AT-SPI call: a hung application must not freeze hint mode.
@@ -268,7 +268,7 @@ fn check_font(config: &Config) -> Result<String, String> {
     Style::from_config(&config.overlay, Appearance::Light).map_err(|e| e.to_string())?;
     find_font()
         .map(|path| path.display().to_string())
-        .ok_or_else(|| "no TrueType font under /usr/share/fonts".to_owned())
+        .ok_or_else(no_font_message)
 }
 
 /// The `nomouse doctor` checks for this session: `(name, Ok(detail) | Err(problem))`.

@@ -1,15 +1,18 @@
 //! Label rendering: glyph outlines from the shared `nomouse_core::glyph` rasteriser (skrifa)
 //! filled as tiny-skia paths, converted to X's premultiplied BGRA byte order.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 use nomouse_core::config::{Appearance, OverlayConfig};
-use nomouse_core::glyph::LabelFont;
+use nomouse_core::glyph::{LabelFont, find_font_file, is_font_file, system_font_dirs};
+use nomouse_core::placement::label_bounds;
 use nomouse_core::search::search_box_anchor;
 use nomouse_core::{Frame, PlatformError, Rect};
 use tiny_skia::{Color, Paint, Pixmap, Transform};
 
-/// Bold sans fonts tried first; any TrueType font under the system font directories after.
+/// Bold sans fonts tried first; then fontconfig's choice; then any font under the font
+/// directories ([`system_font_dirs`]).
 const FONT_CANDIDATES: [&str; 6] = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
@@ -18,7 +21,6 @@ const FONT_CANDIDATES: [&str; 6] = [
     "/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf",
     "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
 ];
-const FONT_DIRS: [&str; 2] = ["/usr/share/fonts", "/usr/local/share/fonts"];
 
 /// Thickness in pixels of the outline drawn around the active scroll area.
 const OUTLINE: u32 = 3;
@@ -81,43 +83,94 @@ pub(crate) struct Renderer {
     style: Style,
 }
 
-fn find_font_in(dir: &Path, depth: usize) -> Option<PathBuf> {
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
-        .ok()?
-        .flatten()
-        .map(|entry| entry.path())
-        .collect();
-    entries.sort();
-    let is_ttf = |path: &PathBuf| path.extension().is_some_and(|ext| ext == "ttf");
-    let is_bold = |path: &PathBuf| {
-        path.file_name()
-            .is_some_and(|name| name.to_string_lossy().contains("Bold"))
-    };
-    entries
-        .iter()
-        .find(|p| is_ttf(p) && is_bold(p))
-        .or_else(|| entries.iter().find(|p| is_ttf(p)))
-        .cloned()
-        .or_else(|| {
-            let deeper = depth.checked_sub(1)?;
-            entries
-                .iter()
-                .filter(|p| p.is_dir())
-                .find_map(|p| find_font_in(p, deeper))
-        })
+/// The font fontconfig picks for bold sans (`fc-match -f '%{file}' sans:bold`), when
+/// fontconfig is installed and names a TrueType/OpenType file that exists. Fontconfig knows
+/// fonts in places no fixed list covers (NixOS profiles, `fonts.conf` additions).
+fn fc_match() -> Option<PathBuf> {
+    let output = Command::new("fc-match")
+        .args(["-f", "%{file}", "sans:bold"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    (is_font_file(&path) && path.is_file()).then_some(path)
 }
 
-/// Locates a usable font file.
-pub(crate) fn find_font() -> Option<PathBuf> {
-    FONT_CANDIDATES
+/// The label font: the first of `candidates` that exists, else `fontconfig`'s answer, else
+/// the first font file under `dirs`.
+fn find_font_with(
+    candidates: &[PathBuf],
+    fontconfig: impl FnOnce() -> Option<PathBuf>,
+    dirs: &[PathBuf],
+) -> Option<PathBuf> {
+    candidates
         .iter()
-        .map(PathBuf::from)
         .find(|path| path.is_file())
-        .or_else(|| {
-            FONT_DIRS
-                .iter()
-                .find_map(|dir| find_font_in(Path::new(dir), 4))
+        .cloned()
+        .or_else(fontconfig)
+        .or_else(|| find_font_file(dirs))
+}
+
+/// Locates a usable font file: [`FONT_CANDIDATES`], then `fc-match`, then
+/// [`system_font_dirs`].
+pub(crate) fn find_font() -> Option<PathBuf> {
+    let candidates = FONT_CANDIDATES.map(PathBuf::from);
+    find_font_with(&candidates, fc_match, &system_font_dirs())
+}
+
+/// How to install `DejaVu Sans` on the distribution an `/etc/os-release` text describes (its
+/// `ID`, then each `ID_LIKE` entry).
+pub(crate) fn font_install_hint(os_release: &str) -> &'static str {
+    let field = |key: &str| {
+        os_release.lines().find_map(|line| {
+            let value = line.trim().strip_prefix(key)?.strip_prefix('=')?;
+            Some(value.trim().trim_matches(['"', '\'']).to_ascii_lowercase())
         })
+    };
+    let id = field("ID").unwrap_or_default();
+    let like = field("ID_LIKE").unwrap_or_default();
+    std::iter::once(id.as_str())
+        .chain(like.split_whitespace())
+        .find_map(|distro| match distro {
+            "debian" | "ubuntu" => {
+                Some("install DejaVu Sans: `sudo apt install fonts-dejavu-core`")
+            }
+            "fedora" | "rhel" | "centos" => {
+                Some("install DejaVu Sans: `sudo dnf install dejavu-sans-fonts`")
+            }
+            "arch" => Some("install DejaVu Sans: `sudo pacman -S ttf-dejavu`"),
+            "opensuse" | "suse" => Some("install DejaVu Sans: `sudo zypper install dejavu-fonts`"),
+            "alpine" => Some("install DejaVu Sans: `sudo apk add font-dejavu`"),
+            "void" => Some("install DejaVu Sans: `sudo xbps-install dejavu-fonts-ttf`"),
+            "gentoo" => Some("install DejaVu Sans: `sudo emerge media-fonts/dejavu`"),
+            "nixos" => Some(
+                "install DejaVu Sans: add `pkgs.dejavu_fonts` to `fonts.packages` in \
+                 configuration.nix",
+            ),
+            _ => None,
+        })
+        .unwrap_or("install the DejaVu Sans font with your package manager")
+}
+
+/// What to say when [`find_font`] finds nothing: where it looked and how to install a font
+/// on this distribution.
+pub(crate) fn no_font_message() -> String {
+    let os_release = std::fs::read_to_string("/etc/os-release")
+        .or_else(|_| std::fs::read_to_string("/usr/lib/os-release"))
+        .unwrap_or_default();
+    let dirs: Vec<String> = system_font_dirs()
+        .iter()
+        .map(|dir| dir.display().to_string())
+        .collect();
+    format!(
+        "no TrueType/OpenType font found (fontconfig's `fc-match sans:bold`, then {}); {}",
+        dirs.join(", "),
+        font_install_hint(&os_release)
+    )
 }
 
 fn paint(rgb: [u8; 3], opacity: f32) -> Paint<'static> {
@@ -129,24 +182,13 @@ fn paint(rgb: [u8; 3], opacity: f32) -> Paint<'static> {
     paint
 }
 
-/// Places a span of `size` starting at `start` inside `lo..lo + span`.
-fn place(start: i64, size: u32, lo: i32, span: u32) -> i32 {
-    let max = i64::from(lo) + i64::from(span) - i64::from(size);
-    i32::try_from(start.min(max).max(i64::from(lo))).unwrap_or(lo)
-}
-
 impl Renderer {
     /// Loads the font and keeps `style`.
     ///
     /// # Errors
     /// [`PlatformError::Backend`] when no TrueType font is installed.
     pub(crate) fn new(style: Style) -> Result<Self, PlatformError> {
-        let path = find_font().ok_or_else(|| {
-            PlatformError::Backend(
-                "no TrueType font found under /usr/share/fonts (install fonts-dejavu-core)"
-                    .to_owned(),
-            )
-        })?;
+        let path = find_font().ok_or_else(|| PlatformError::Backend(no_font_message()))?;
         let font =
             LabelFont::from_file(&path).map_err(|e| PlatformError::Backend(e.to_string()))?;
         tracing::debug!("label font {}", path.display());
@@ -159,9 +201,9 @@ impl Renderer {
     }
 
     /// Renders `text` (shown uppercase) for an element at `anchor`, with the first `typed`
-    /// characters in the typed colour, placed at the element's left edge, vertically centred,
-    /// and kept inside `area` (the monitor). A `focused` label swaps the background and text
-    /// colours, so the highlighted hint stands out.
+    /// characters in the typed colour, centred on the element and kept inside `area` (the
+    /// monitor; [`label_bounds`]). A `focused` label swaps the background and text colours,
+    /// so the highlighted hint stands out.
     pub(crate) fn label(
         &self,
         text: &str,
@@ -170,6 +212,25 @@ impl Renderer {
         anchor: Rect,
         area: Rect,
     ) -> Option<Label> {
+        let (width, height, pixels) = self.draw(text, typed, focused)?;
+        let bounds = label_bounds(anchor, width, height, area);
+        Some(Label { bounds, pixels })
+    }
+
+    /// Renders the search box `text` (all of it in the typed colour) starting at the 1-pixel
+    /// `marker` from [`search_box_anchor`], vertically centred on it and kept inside `area`:
+    /// the box grows to the right as the query grows instead of staying centred.
+    pub(crate) fn search_box(&self, text: &str, marker: Rect, area: Rect) -> Option<Label> {
+        let (width, height, pixels) = self.draw(text, text.chars().count(), false)?;
+        // Centring on a span as wide as the box that starts at the marker puts the box's left
+        // edge on the marker.
+        let start = Rect::new(marker.x, marker.y, width, marker.height);
+        let bounds = label_bounds(start, width, height, area);
+        Some(Label { bounds, pixels })
+    }
+
+    /// Draws `text` as a label: `(width, height, premultiplied BGRA pixels)`.
+    fn draw(&self, text: &str, typed: usize, focused: bool) -> Option<(u32, u32, Vec<u8>)> {
         let px = self.style.font_px;
         let metrics = self.font.line(px);
         let upper: Vec<char> = text.chars().flat_map(char::to_uppercase).collect();
@@ -210,24 +271,12 @@ impl Renderer {
                 paint(rgb, opacity)
             });
 
-        let center_y = i64::from(anchor.y) + i64::from(anchor.height) / 2;
-        let bounds = Rect::new(
-            place(i64::from(anchor.x), width, area.x, area.width),
-            place(
-                center_y - i64::from(height) / 2,
-                height,
-                area.y,
-                area.height,
-            ),
-            width,
-            height,
-        );
         let pixels = pixmap
             .pixels()
             .iter()
             .flat_map(|p| [p.blue(), p.green(), p.red(), p.alpha()])
             .collect();
-        Some(Label { bounds, pixels })
+        Some((width, height, pixels))
     }
 
     /// Solid strips in the label background colour framing `rect`, clipped to `area` (one
@@ -297,8 +346,8 @@ impl Renderer {
             let index = best_area.unwrap_or(0);
             let area = areas.get(index).unwrap_or(first_area);
             let text = format!("/{query}");
-            let anchor = search_box_anchor(*area);
-            if let Some(label) = self.label(&text, text.chars().count(), false, anchor, *area) {
+            let marker = search_box_anchor(*area);
+            if let Some(label) = self.search_box(&text, marker, *area) {
                 per_area[index].push(label);
             }
         }
@@ -310,6 +359,79 @@ impl Renderer {
 mod tests {
     use super::*;
 
+    #[test]
+    fn font_search_order_is_candidates_fontconfig_then_xdg_and_user_dirs() {
+        let root = std::env::temp_dir().join(format!("nomouse-render-font-{}", std::process::id()));
+        let (home, system) = (root.join("home"), root.join("system"));
+        let user_fonts = home.join(".local/share/fonts");
+        std::fs::create_dir_all(&user_fonts).unwrap();
+        std::fs::create_dir_all(&system).unwrap();
+        let user_font = user_fonts.join("Inter-Bold.otf");
+        std::fs::write(&user_font, "").unwrap();
+        // The machine's own /usr/share/fonts stays out: only the temporary tree counts.
+        let dirs: Vec<PathBuf> = nomouse_core::glyph::freedesktop_font_dirs(|name| match name {
+            "HOME" => Some(home.display().to_string()),
+            "XDG_DATA_DIRS" => Some(system.display().to_string()),
+            _ => None,
+        })
+        .into_iter()
+        .filter(|dir| dir.starts_with(&root))
+        .collect();
+        assert_eq!(
+            dirs,
+            [
+                system.join("fonts"),
+                user_fonts.clone(),
+                home.join(".fonts")
+            ]
+        );
+        let missing = [root.join("missing/DejaVuSans-Bold.ttf")];
+        // Only in ~/.local/share/fonts, no fontconfig: still found.
+        assert_eq!(
+            find_font_with(&missing, || None, &dirs),
+            Some(user_font.clone())
+        );
+        // A font in an XDG_DATA_DIRS entry comes before the user's.
+        std::fs::create_dir_all(system.join("fonts")).unwrap();
+        let system_font = system.join("fonts").join("Sans.ttf");
+        std::fs::write(&system_font, "").unwrap();
+        assert_eq!(
+            find_font_with(&missing, || None, &dirs),
+            Some(system_font.clone())
+        );
+        // fontconfig's answer comes before the directory walk; a fixed candidate before both.
+        let chosen = root.join("fc.ttf");
+        assert_eq!(
+            find_font_with(&missing, || Some(chosen.clone()), &dirs),
+            Some(chosen)
+        );
+        assert_eq!(
+            find_font_with(std::slice::from_ref(&system_font), || None, &[]),
+            Some(system_font)
+        );
+        assert_eq!(find_font_with(&missing, || None, &[]), None);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_font_hint_names_the_distributions_package() {
+        let hint = |text: &str| font_install_hint(text);
+        assert!(hint("ID=ubuntu\nID_LIKE=debian\n").contains("fonts-dejavu-core"));
+        assert!(hint("ID=fedora\n").contains("dejavu-sans-fonts"));
+        assert!(hint("ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\n").contains("dnf"));
+        assert!(hint("ID=endeavouros\nID_LIKE=arch\n").contains("ttf-dejavu"));
+        assert!(hint("ID=arch\n").contains("pacman"));
+        assert!(hint("ID=nixos\n").contains("fonts.packages"));
+        assert!(hint("ID=opensuse-tumbleweed\nID_LIKE=\"opensuse suse\"\n").contains("zypper"));
+        assert!(hint("ID=alpine\n").contains("apk add font-dejavu"));
+        assert_eq!(
+            hint(""),
+            "install the DejaVu Sans font with your package manager"
+        );
+        // VERSION_ID and ID_LIKE are not ID.
+        assert!(hint("VERSION_ID=12\nID_LIKE=debian\n").contains("apt"));
+    }
+
     fn style() -> Style {
         Style::from_config(&OverlayConfig::default(), Appearance::Light).unwrap()
     }
@@ -320,13 +442,6 @@ mod tests {
         assert_eq!(style.background, [0xff, 0xd7, 0x5f]);
         assert!((style.opacity - 0.95).abs() < 1e-6);
         assert!(style.font_px > 17.0);
-    }
-
-    #[test]
-    fn placement_clamps_to_area() {
-        assert_eq!(place(790, 30, 0, 800), 770);
-        assert_eq!(place(-5, 30, 0, 800), 0);
-        assert_eq!(place(100, 30, 1920, 800), 1920);
     }
 
     #[test]
@@ -409,6 +524,41 @@ mod tests {
         assert_eq!(fill(&per_area[1][0]), opaque.foreground);
         assert_eq!(fill(&per_area[1][1]), opaque.background);
         assert_eq!(renderer.frame(&frame, &[]), Vec::<Vec<Label>>::new());
+    }
+
+    #[test]
+    fn hints_are_centred_and_the_search_box_starts_at_its_marker() {
+        if find_font().is_none() {
+            return;
+        }
+        let renderer = Renderer::new(style()).unwrap();
+        let area = Rect::new(0, 0, 800, 600);
+        let element = Rect::new(100, 100, 200, 50);
+        let hint = renderer.label("as", 0, false, element, area).unwrap();
+        let (width, height) = (hint.bounds.width, hint.bounds.height);
+        assert_eq!(hint.bounds, label_bounds(element, width, height, area));
+        let centre = |start: i32, size: u32| i64::from(start) * 2 + i64::from(size);
+        assert!((centre(hint.bounds.x, width) - centre(100, 200)).abs() <= 1);
+        assert!((centre(hint.bounds.y, height) - centre(100, 50)).abs() <= 1);
+        // A hint at the monitor's right edge stays inside it.
+        let edge = renderer
+            .label("as", 0, false, Rect::new(795, 10, 5, 20), area)
+            .unwrap();
+        assert_eq!(i64::from(edge.bounds.x) + i64::from(edge.bounds.width), 800);
+
+        let marker = search_box_anchor(area);
+        let short = renderer.search_box("/a", marker, area).unwrap();
+        let long = renderer
+            .search_box("/a longer query", marker, area)
+            .unwrap();
+        assert_eq!(
+            short.bounds.x, marker.x,
+            "left edge on the marker, not centred"
+        );
+        assert_eq!(long.bounds.x, marker.x, "it grows to the right");
+        assert!(long.bounds.width > short.bounds.width);
+        let marker_centre = centre(marker.y, marker.height);
+        assert!((centre(short.bounds.y, short.bounds.height) - marker_centre).abs() <= 1);
     }
 
     #[test]
