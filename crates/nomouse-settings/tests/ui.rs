@@ -75,7 +75,9 @@ mod linux {
 
     /// Runs the test in a child process whose `XDG_CONFIG_HOME` (and `HOME`) is a temporary
     /// directory: the window, the config file and the autostart entry all stay in it. (Edition
-    /// 2024 makes changing this process's environment unsafe.)
+    /// 2024 makes changing this process's environment unsafe.) The child claims a Sway session
+    /// (`XDG_CURRENT_DESKTOP=sway`, no compositor sockets), so the General page must show the
+    /// Sway config line under "Start at login".
     pub(super) fn run() -> Result<(), String> {
         if std::env::var_os(CHILD).is_some() {
             return drive();
@@ -88,7 +90,12 @@ mod linux {
         child
             .env(CHILD, "1")
             .env("XDG_CONFIG_HOME", root.join("config"))
-            .env("HOME", &root);
+            .env("HOME", &root)
+            .env("XDG_CURRENT_DESKTOP", "sway")
+            .env_remove("SWAYSOCK")
+            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+            .env_remove("I3SOCK")
+            .env_remove("DESKTOP_SESSION");
         // GTK tries `$XDG_RUNTIME_DIR/wayland-0` even when WAYLAND_DISPLAY is unset: with only
         // DISPLAY given (a private Xvfb), pin X11 so the window never opens on the desktop.
         if std::env::var_os("WAYLAND_DISPLAY").is_none_or(|value| value.is_empty()) {
@@ -126,6 +133,8 @@ mod linux {
         note("an edit on disk refreshed the widgets");
         pages(&ui)?;
         note("every page shown");
+        start_at_login_on_sway(&ui)?;
+        note("start at login: the Sway config line is shown");
         reset(&ui, &path)?;
         note("reset dialog: Reset restored the defaults");
         let about = ui.show_about();
@@ -285,6 +294,21 @@ mod linux {
         ensure(
             iterate_until(Duration::from_secs(5), || step.value_as_int() == 7),
             "the Step spin button follows the file",
+        )
+    }
+
+    fn start_at_login_on_sway(ui: &SettingsWindow) -> Result<(), String> {
+        let subtitle = ui
+            .pages
+            .general
+            .autostart_row
+            .subtitle()
+            .unwrap_or_default();
+        let program = nomouse_settings::launch::nomouse_program();
+        let line = format!("exec {} daemon", program.display());
+        ensure(
+            subtitle.contains(&line) && subtitle.contains("~/.config/sway/config"),
+            &format!("the Start at login row names `{line}`; it says {subtitle:?}"),
         )
     }
 

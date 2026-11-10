@@ -136,12 +136,19 @@ mod linux {
             None
         }
 
+        /// Switches the autostart entry; switched on in Sway, Hyprland or i3 (which ignore the
+        /// entry) a notification gives the config line that does start the daemon there.
         fn toggle_start_at_login(&self, service: &Service) -> Option<Request> {
             let path = self.autostart.as_deref()?;
             let on = !autostart::is_enabled(path);
             let program = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("nomouse"));
             match autostart::set(path, on, &program) {
-                Ok(()) => service.update(|state| state.start_at_login = Some(on)),
+                Ok(()) => {
+                    service.update(|state| state.start_at_login = Some(on));
+                    if let Some(session) = autostart::TilingSession::current().filter(|_| on) {
+                        service.notify("Start at login needs one line", &session.advice(&program));
+                    }
+                }
                 Err(error) => {
                     tracing::warn!("start at login: {}: {error}", path.display());
                     service.notify(
@@ -192,8 +199,10 @@ mod linux {
                 Ok(status) => {
                     let body = match &status {
                         UpdateStatus::Available { latest, .. } => format!(
-                            "Pick the menu item to read what changed; run the installer again to update. {}",
-                            release_url(&latest.to_string())
+                            "Pick the menu item to read what changed ({}). Update with your \
+                             package manager, or run the installer again: {}",
+                            release_url(&latest.to_string()),
+                            update::INSTALL_COMMAND
                         ),
                         UpdateStatus::UpToDate(_) => String::new(),
                     };

@@ -1,7 +1,7 @@
 //! Start at login on Linux: an XDG autostart entry (`~/.config/autostart/nomouse.desktop`)
 //! that runs `nomouse daemon` when the desktop session starts. GNOME, KDE, Xfce, Cinnamon and
-//! MATE read it; tiling compositors (Sway, Hyprland, i3) start the daemon from their own config
-//! instead.
+//! MATE read it; tiling compositors (Sway, Hyprland, i3) do not, so on those
+//! [`TilingSession`] names the line to add to their own config instead.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -92,6 +92,105 @@ pub fn set(path: &Path, enabled: bool, program: &Path) -> io::Result<()> {
     }
 }
 
+/// A window manager that ignores XDG autostart entries and starts programs from its own
+/// config file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TilingSession {
+    /// Sway (`~/.config/sway/config`).
+    Sway,
+    /// Hyprland (`~/.config/hypr/hyprland.conf`).
+    Hyprland,
+    /// i3 (`~/.config/i3/config`).
+    I3,
+}
+
+impl TilingSession {
+    /// The session in the environment `env`: the compositor's own socket variable
+    /// (`SWAYSOCK`, `HYPRLAND_INSTANCE_SIGNATURE`, `I3SOCK`; Sway sets `I3SOCK` too, so it is
+    /// asked first), else an `XDG_CURRENT_DESKTOP` entry or `DESKTOP_SESSION` naming one.
+    pub fn detect(env: impl Fn(&str) -> Option<String>) -> Option<Self> {
+        let get = |name: &str| env(name).filter(|value| !value.is_empty());
+        if get("SWAYSOCK").is_some() {
+            return Some(Self::Sway);
+        }
+        if get("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
+            return Some(Self::Hyprland);
+        }
+        if get("I3SOCK").is_some() {
+            return Some(Self::I3);
+        }
+        let desktop = get("XDG_CURRENT_DESKTOP").unwrap_or_default();
+        let session = get("DESKTOP_SESSION").unwrap_or_default();
+        desktop
+            .split(':')
+            .chain(std::iter::once(session.as_str()))
+            .find_map(|name| match name.to_ascii_lowercase().as_str() {
+                "sway" => Some(Self::Sway),
+                "hyprland" => Some(Self::Hyprland),
+                "i3" => Some(Self::I3),
+                _ => None,
+            })
+    }
+
+    /// The session of this process's environment.
+    pub fn current() -> Option<Self> {
+        Self::detect(|name| std::env::var(name).ok())
+    }
+
+    /// The window manager's name.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Sway => "Sway",
+            Self::Hyprland => "Hyprland",
+            Self::I3 => "i3",
+        }
+    }
+
+    /// Its default config file.
+    pub const fn config_file(self) -> &'static str {
+        match self {
+            Self::Sway => "~/.config/sway/config",
+            Self::Hyprland => "~/.config/hypr/hyprland.conf",
+            Self::I3 => "~/.config/i3/config",
+        }
+    }
+
+    /// The config line that starts `program daemon` when the session starts (the command
+    /// runs through `sh -c`, so `program` is shell-quoted when it needs it).
+    pub fn start_line(self, program: &Path) -> String {
+        let command = format!("{} daemon", shell_word(program));
+        match self {
+            Self::Sway => format!("exec {command}"),
+            Self::Hyprland => format!("exec-once = {command}"),
+            Self::I3 => format!("exec --no-startup-id {command}"),
+        }
+    }
+
+    /// What the "Start at login" switch says on this session: the entry is not read here, and
+    /// the line that does the job.
+    pub fn advice(self, program: &Path) -> String {
+        format!(
+            "{} does not read login autostart entries: add `{}` to {}",
+            self.name(),
+            self.start_line(program),
+            self.config_file()
+        )
+    }
+}
+
+/// Single-quotes `program` for `sh` when it holds anything but plain path characters.
+fn shell_word(program: &Path) -> String {
+    let text = program.to_string_lossy();
+    if text
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "/._-+@%=:,".contains(c))
+    {
+        text.into_owned()
+    } else {
+        format!("'{}'", text.replace('\'', r"'\''"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +259,68 @@ mod tests {
         assert!(!is_enabled(&path));
         assert_eq!(exec_word(Path::new("/usr/bin/nomouse")), "/usr/bin/nomouse");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn tiling_sessions_get_their_config_line() {
+        fn detect(pairs: &[(&str, &str)]) -> Option<TilingSession> {
+            TilingSession::detect(|name| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| (*value).to_owned())
+            })
+        }
+        assert_eq!(
+            detect(&[("XDG_CURRENT_DESKTOP", "sway")]),
+            Some(TilingSession::Sway)
+        );
+        // Sway also sets I3SOCK.
+        assert_eq!(
+            detect(&[("I3SOCK", "/run/i3"), ("SWAYSOCK", "/run/sway")]),
+            Some(TilingSession::Sway)
+        );
+        assert_eq!(
+            detect(&[("HYPRLAND_INSTANCE_SIGNATURE", "abc")]),
+            Some(TilingSession::Hyprland)
+        );
+        assert_eq!(
+            detect(&[("XDG_CURRENT_DESKTOP", "Hyprland")]),
+            Some(TilingSession::Hyprland)
+        );
+        assert_eq!(detect(&[("I3SOCK", "/run/i3")]), Some(TilingSession::I3));
+        assert_eq!(
+            detect(&[("DESKTOP_SESSION", "i3")]),
+            Some(TilingSession::I3)
+        );
+        assert_eq!(detect(&[("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")]), None);
+        assert_eq!(
+            detect(&[("XDG_CURRENT_DESKTOP", "KDE"), ("SWAYSOCK", "")]),
+            None
+        );
+        assert_eq!(detect(&[]), None);
+
+        let program = Path::new("/home/ann/.local/bin/nomouse");
+        assert_eq!(
+            TilingSession::Sway.start_line(program),
+            "exec /home/ann/.local/bin/nomouse daemon"
+        );
+        assert_eq!(
+            TilingSession::Hyprland.start_line(program),
+            "exec-once = /home/ann/.local/bin/nomouse daemon"
+        );
+        assert_eq!(
+            TilingSession::I3.start_line(program),
+            "exec --no-startup-id /home/ann/.local/bin/nomouse daemon"
+        );
+        assert_eq!(
+            TilingSession::Sway.start_line(Path::new("/opt/ann's apps/nomouse")),
+            r"exec '/opt/ann'\''s apps/nomouse' daemon"
+        );
+        assert_eq!(
+            TilingSession::Sway.advice(program),
+            "Sway does not read login autostart entries: add \
+             `exec /home/ann/.local/bin/nomouse daemon` to ~/.config/sway/config"
+        );
     }
 }

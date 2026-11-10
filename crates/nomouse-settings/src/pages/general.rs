@@ -6,7 +6,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gio, glib};
 use nomouse_core::update::{UpdateStatus, release_url};
-use nomouse_linux::autostart;
+use nomouse_linux::autostart::{self, TilingSession};
 
 use crate::args::Page;
 use crate::daemon::{self, DaemonStatus};
@@ -25,6 +25,9 @@ pub struct GeneralPage {
     pub enabled: gtk::Switch,
     /// "Start at login".
     pub autostart: gtk::Switch,
+    /// The "Start at login" row; on Sway, Hyprland and i3 its subtitle is the config line
+    /// that starts the daemon, since they ignore the autostart entry.
+    pub autostart_row: adw::ActionRow,
     status_row: adw::ActionRow,
     start: gtk::Button,
     update_row: adw::ActionRow,
@@ -57,7 +60,7 @@ impl GeneralPage {
         let session_group = widgets::group("Session", "");
         let (autostart_row, autostart) = widgets::switch_row(
             "Start at login",
-            "Run the daemon when you log in to the desktop",
+            &autostart_subtitle(TilingSession::current()),
         );
         session_group.add(&autostart_row);
         page.add(&session_group);
@@ -77,6 +80,7 @@ impl GeneralPage {
             page,
             enabled,
             autostart,
+            autostart_row,
             status_row,
             start,
             update_row,
@@ -203,5 +207,33 @@ impl GeneralPage {
                 }
             }
         });
+    }
+}
+
+/// The "Start at login" row's subtitle: what the switch does, or on a tiling session that
+/// ignores autostart entries, the line to put in its config instead.
+fn autostart_subtitle(session: Option<TilingSession>) -> String {
+    session.map_or_else(
+        || "Run the daemon when you log in to the desktop".to_owned(),
+        |session| session.advice(&launch::nomouse_program()),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tiling_sessions_show_the_config_line_under_start_at_login() {
+        assert_eq!(
+            autostart_subtitle(None),
+            "Run the daemon when you log in to the desktop"
+        );
+        let program = launch::nomouse_program();
+        assert_eq!(
+            autostart_subtitle(Some(TilingSession::Sway)),
+            TilingSession::Sway.advice(&program)
+        );
+        assert!(autostart_subtitle(Some(TilingSession::Hyprland)).contains("exec-once = "));
     }
 }
