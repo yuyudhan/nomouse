@@ -275,11 +275,11 @@ jobs:
     # Formula/nomouse.rb and Casks/nomouse.rb in yuyudhan/homebrew-tap, after the GitHub release
     # exists: publish-homebrew.sh audits and installs the cask and the formula from the new tap
     # commit before it pushes. HOMEBREW_TAP_TOKEN: a fine-grained token with Contents read and
-    # write on yuyudhan/homebrew-tap (CONTRIBUTING.md#releases); without it the job fails and
-    # says so. A dry run publishes to a local copy of the tap with `brew style` only (its
-    # version has no release to install from).
+    # write on yuyudhan/homebrew-tap (CONTRIBUTING.md#releases); without it the job skips with
+    # a notice saying so, and the release stays green. A dry run publishes to a local copy of
+    # the tap with `brew style` only (its version has no release to install from).
     homebrew:
-        name: Homebrew tap${{ github.ref_type == 'tag' && '' || ' (dry run)' }}
+        name: ${{ github.ref_type == 'tag' && 'Homebrew tap' || 'Homebrew tap (dry run)' }}
         needs: [version, assemble]
         runs-on: macos-latest
         steps:
@@ -292,7 +292,13 @@ jobs:
               if: github.ref_type == 'tag'
               env:
                   GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-              run: scripts/release/publish-homebrew.sh "${{ needs.version.outputs.version }}" dist
+                  VERSION: ${{ needs.version.outputs.version }}
+              run: |
+                  if [ -z "$GH_TOKEN" ]; then
+                      echo "::notice title=Homebrew tap skipped::The HOMEBREW_TAP_TOKEN secret is not set, so the tap was not updated. Add a fine-grained token with Contents read and write on yuyudhan/homebrew-tap as that repository secret, or publish from a machine with gh logged in: scripts/release/publish-homebrew.sh ${VERSION} <release assets>"
+                      exit 0
+                  fi
+                  scripts/release/publish-homebrew.sh "$VERSION" dist
             - name: Publish to a local copy of the tap
               if: github.ref_type != 'tag'
               run: |

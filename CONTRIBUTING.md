@@ -136,8 +136,8 @@ Homebrew: `nomouse.rb` (the formula, the bare command line) and `nomouse-app.rb`
 `nomouse.app` from the disk image) are attached to every release, and the `homebrew` job
 publishes them to the tap `yuyudhan/homebrew-tap` as `Formula/nomouse.rb` and
 `Casks/nomouse.rb`. It needs the repository secret `HOMEBREW_TAP_TOKEN`, a fine-grained token
-with Contents read and write on `yuyudhan/homebrew-tap`; without it the job fails with an error
-saying so, and the GitHub release itself is unaffected. From a machine where `gh` is logged in,
+with Contents read and write on `yuyudhan/homebrew-tap`; without it the job skips with a notice
+saying so and ends green, and the GitHub release itself is unaffected. From a machine where `gh` is logged in,
 `scripts/release/publish-homebrew.sh X.Y.Z <release assets dir>` publishes the same files (add
 `--no-install` where nomouse is installed and running: the cask's install test would quit it).
 Homebrew 7 loads casks only from a trusted tap, and the formula and the cask share the name

@@ -42,5 +42,6 @@ browser marks the download as quarantined and macOS refuses to open it. If you d
 clear the flag once with "xattr -dr com.apple.quarantine /Applications/nomouse.app", or open it
 and click **Open Anyway** in System Settings › Privacy & Security. After an update, switch
 nomouse on again in the Accessibility pane. Windows, Homebrew and every other way:
-[docs/install.md](https://github.com/yuyudhan/nomouse/blob/main/docs/install.md).
 EOF
+# The release's own tag: main holds only the README, so a main link would 404.
+printf '[docs/install.md](https://github.com/yuyudhan/nomouse/blob/v%s/docs/install.md).\n' "$version"
