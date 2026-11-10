@@ -13,6 +13,13 @@ NOMOUSE_LOG=debug nomouse hints --standalone
 
 ## The install
 
+**The install "worked" but nothing was installed (the old one-liner)**
+Before 0.1.8 the one-line install piped curl straight into bash. When the download failed (a
+404, a proxy, a cut connection), curl printed an error, bash ran an empty script and the command
+exited 0 with nothing installed. Use the current
+[one-line install](install.md#the-one-line-install): it saves `install.sh` first and runs it
+only when the download worked, so a failed download stops with curl's error and a non-zero exit.
+
 **`curl: (35) error:0A000126:SSL routines::unexpected eof while reading`**
 The network cut the connection during the TLS handshake, usually to GitHub's download host
 `release-assets.githubusercontent.com`; on some networks this happens to a third of

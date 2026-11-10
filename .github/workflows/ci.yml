@@ -72,6 +72,12 @@ jobs:
             - name: install.sh against a fake release
               if: runner.os != 'Windows'
               run: scripts/test-installer.sh
+            - name: The documented one-line install against a local server (404 fails)
+              if: runner.os != 'Windows'
+              run: scripts/test-install-command.sh
+            - name: just dev-config in a throwaway HOME
+              if: runner.os != 'Windows'
+              run: scripts/test-dev-config.sh
             - name: Homebrew formula and cask against a local tap
               if: runner.os != 'Windows'
               run: scripts/release/test-publish-homebrew.sh

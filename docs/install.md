@@ -15,8 +15,13 @@
 ## The one-line install
 
 ```sh
-curl -fsSL --retry 5 --retry-all-errors https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash
+curl -fsSLO --retry 5 --retry-all-errors https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash install.sh
 ```
+
+It saves `install.sh` in the current folder and runs it only when the download worked. Download
+first rather than piping curl into bash: a failed download piped into bash (a 404, a cut
+connection) runs an empty script and exits 0, so it looks like success with nothing installed.
+Saved to a file, a failed download stops the command with curl's error.
 
 The installer needs no sudo. It picks the build for your OS and CPU, downloads it from the latest
 [GitHub release](https://github.com/yuyudhan/nomouse/releases), checks it against the
@@ -226,10 +231,10 @@ build that cannot start leaves the old one in place.
 
 ## Installer options
 
-Options go after `bash -s --` when the script is piped:
+Options go after the script, once it is downloaded:
 
 ```sh
-curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash -s -- --version 0.1.0
+curl -fsSLO https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash install.sh --version 0.1.0
 ```
 
 | Option | Effect |
@@ -262,9 +267,10 @@ Run the one-line install again. Your config is never touched.
 `nomouse doctor`'s `daemon` line shows what runs: `running (pid 4242, nomouse 0.1.8)`, or a
 FAIL with the restart command while a daemon from before the update still runs.
 
-The menu's **Check for updates…** says when a newer release is out. On macOS it opens the
-release page; install with the one-line install rather than the `.dmg` or `.app.zip` there,
-which a browser quarantines (see [macOS](#macos)).
+The menu's **Check for updates…** says when a newer release is out. On macOS its window shows
+the one-line install and **Copy Install Command** puts it on the clipboard: paste it into
+Terminal. **Open Release Page** opens the release, but install with the one-line install rather
+than the `.dmg` or `.app.zip` there, which a browser quarantines (see [macOS](#macos)).
 
 ### Allowing nomouse again after an update (macOS)
 
@@ -293,7 +299,7 @@ Or, in the pane, select nomouse, click **−**, then **+** and pick `/Applicatio
 ## Uninstalling
 
 ```sh
-curl -fsSL https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash -s -- --uninstall
+curl -fsSLO https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash install.sh --uninstall
 ```
 
 This removes `~/.local/bin/nomouse`, on Linux `nomouse-settings`, the app launcher entry and its

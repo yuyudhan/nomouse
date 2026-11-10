@@ -58,6 +58,29 @@ enum Click {
     Copy(String),
     /// Open the address in the browser.
     OpenUrl(String),
+    /// Put the installer one-liner on the clipboard and say so in a result window.
+    CopyInstallCommand,
+}
+
+/// What the update window says when a newer release is out, above the one-liner.
+const UPDATE_MESSAGE: &str = "Copy the install command, paste it into Terminal and press \
+     Return. A .dmg or .app.zip downloaded from the release page is quarantined by the \
+     browser and macOS refuses to open it; the installer is not.";
+
+/// The result window that confirms the one-liner is on the clipboard.
+const COPIED_TITLE: &str = "Install command copied";
+const COPIED_MESSAGE: &str = "Paste it into Terminal and press Return. The installer quits \
+     nomouse, installs the new version and starts it; then switch nomouse on again in the \
+     Accessibility pane.";
+
+/// The update window's buttons when `latest` (`0.1.8`) is out: the installer one-liner first,
+/// then the release page and Later.
+fn update_buttons(latest: &str) -> Vec<(&'static str, Click)> {
+    vec![
+        ("Copy Install Command", Click::CopyInstallCommand),
+        ("Open Release Page", Click::OpenUrl(release_url(latest))),
+        ("Later", Click::Close),
+    ]
 }
 
 /// A result window on screen and what each of its buttons does.
@@ -415,6 +438,16 @@ impl MenuBar {
             Some(Click::OpenUrl(url)) => {
                 panels::open_url(url);
             }
+            Some(Click::CopyInstallCommand) => {
+                panels::copy(update::INSTALL_COMMAND);
+                self.notify(
+                    COPIED_TITLE,
+                    COPIED_MESSAGE,
+                    Some(update::INSTALL_COMMAND),
+                    vec![("OK", Click::Close)],
+                    false,
+                );
+            }
             Some(Click::Close) | None => {}
         }
         true
@@ -488,15 +521,9 @@ impl MenuBar {
         match answer {
             Ok(status @ UpdateStatus::Available { latest, .. }) => self.notify(
                 &status.message(),
-                "Download it from its release page, or run the installer again.",
-                None,
-                vec![
-                    (
-                        "Open Release Page",
-                        Click::OpenUrl(release_url(&latest.to_string())),
-                    ),
-                    ("Later", Click::Close),
-                ],
+                UPDATE_MESSAGE,
+                Some(update::INSTALL_COMMAND),
+                update_buttons(&latest.to_string()),
                 false,
             ),
             Ok(status @ UpdateStatus::UpToDate(_)) => {
@@ -735,5 +762,28 @@ mod tests {
             &lines[1],
             MenuLine::Item { tag: 0, enabled: false, title, .. } if title == "Accessibility: allowed"
         ));
+    }
+
+    #[test]
+    fn an_available_update_offers_the_install_command_and_the_release_page() {
+        let buttons = update_buttons("0.1.8");
+        assert_eq!(
+            buttons,
+            [
+                ("Copy Install Command", Click::CopyInstallCommand),
+                (
+                    "Open Release Page",
+                    Click::OpenUrl(
+                        "https://github.com/yuyudhan/nomouse/releases/tag/v0.1.8".to_owned()
+                    )
+                ),
+                ("Later", Click::Close),
+            ]
+        );
+        assert!(buttons.len() <= NOTICE_BUTTONS);
+        assert!(UPDATE_MESSAGE.contains("paste it into Terminal"));
+        assert!(UPDATE_MESSAGE.contains("quarantined"));
+        assert_eq!(COPIED_TITLE, "Install command copied");
+        assert!(COPIED_MESSAGE.starts_with("Paste it into Terminal"));
     }
 }

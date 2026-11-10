@@ -14,9 +14,11 @@ pub const LATEST_URL: &str = "https://github.com/yuyudhan/nomouse/releases/lates
 /// The installer one-liner (macOS and Linux) that installs or updates to the newest release.
 /// Until releases are Developer-ID signed, this is the update path to offer on macOS: the
 /// installer clears the download quarantine that makes Gatekeeper refuse a browser-downloaded
-/// `.dmg` or `.app.zip`.
-pub const INSTALL_COMMAND: &str = "curl -fsSL --retry 5 --retry-all-errors \
-     https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash";
+/// `.dmg` or `.app.zip`. It downloads `install.sh` first and runs it only when the download
+/// worked: piped into `bash`, a failed download (a 404, a cut connection) would run an empty
+/// script and report success with nothing installed.
+pub const INSTALL_COMMAND: &str = "curl -fsSLO --retry 5 --retry-all-errors \
+     https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash install.sh";
 
 /// Where the release notes of `version` (`0.1.3`) are.
 pub fn release_url(version: &str) -> String {
@@ -180,12 +182,32 @@ mod tests {
     }
 
     #[test]
-    fn the_install_command_fetches_the_latest_installer() {
+    fn the_install_command_downloads_the_latest_installer_then_runs_it() {
         assert_eq!(
             INSTALL_COMMAND,
-            "curl -fsSL --retry 5 --retry-all-errors \
-             https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh | bash"
+            "curl -fsSLO --retry 5 --retry-all-errors \
+             https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh \
+             && bash install.sh"
         );
         assert!(INSTALL_COMMAND.contains(&format!("{LATEST_URL}/download/install.sh")));
+        assert!(!INSTALL_COMMAND.contains('|'), "never piped into a shell");
+    }
+
+    /// The one line under "The one-line install" in docs/install.md, which the README shows and
+    /// scripts/release/notes.sh puts in the release notes.
+    fn documented_one_liner() -> Option<&'static str> {
+        let install = include_str!("../../../docs/install.md");
+        let section = install.split("\n## The one-line install\n").nth(1)?;
+        let block = section.split("```sh\n").nth(1)?;
+        block.split("\n```").next()
+    }
+
+    #[test]
+    fn the_install_command_is_the_documented_one_and_in_the_release_notes() {
+        assert_eq!(documented_one_liner(), Some(INSTALL_COMMAND));
+        assert!(include_str!("../../../README.md").contains(&format!("\n{INSTALL_COMMAND}\n")));
+        let notes = include_str!("../../../scripts/release/notes.sh");
+        assert!(notes.contains("## The one-line install"));
+        assert!(notes.contains("## Install or update"));
     }
 }

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Installs, updates or uninstalls nomouse on macOS and Linux, without sudo. Published with every
-# GitHub release as releases/latest/download/install.sh; README.md#install has the one-line curl
-# command that pipes it into bash.
+# GitHub release as releases/latest/download/install.sh; README.md#install has the one-line
+# command that downloads it with curl, then runs it (`... -fsSLO .../install.sh && bash
+# install.sh`). Downloading first matters: piped into bash, a failed download (a 404, a cut
+# connection) runs an empty script and exits 0, so it looks like success with nothing installed.
 #
-# Piping is safe: all work happens in main, called on the last line, so bash has read the whole
-# script before anything runs. Options go after `bash -s --`.
+# Piping (the one-liner before 0.1.8) still works when the download does: all work happens in
+# main, called on the last line, so bash has read the whole script before anything runs.
+# Options go after the script (`bash install.sh --uninstall`; `bash -s --` when piped).
 #
 # What it installs, after checking each download against the release's .sha256 and running the
 # downloaded nomouse once (`--version`), so a build this system cannot start fails the install:
@@ -74,7 +77,7 @@ usage() {
     cat <<'EOF'
 Install, update or uninstall nomouse (macOS and Linux, no sudo).
 
-Options (after "bash -s --" when piped):
+Options (after "bash install.sh"; after "bash -s --" when piped):
   --version X.Y.Z    install that release instead of the latest
   --from DIR         install from a directory holding the release assets
   --uninstall        remove nomouse, keep the config

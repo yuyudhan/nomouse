@@ -18,8 +18,12 @@ the release's section; add entries under Unreleased as changes land.
   and `--version` says `(dev)`. `nomouse doctor`'s first line names the flavour and its config
   directory. Releases keep every path and id.
 - `just dev-config` installs `config/dev.example.toml`, every option with its values and effect
-  in comments, as the development build's config (an existing file is kept unless `--force`,
-  which backs it up first).
+  in comments, as the development build's config (an existing file is kept, with a message and
+  exit 0, unless `--force`, which backs it up first). `scripts/test-dev-config.sh` tests it.
+- macOS: when Check for updates… finds a newer release, its window shows the one-line install
+  and a **Copy Install Command** button that puts it on the clipboard and says so (paste it into
+  Terminal); **Open Release Page** stays. The release notes end with the one-line install and
+  the steps for a quarantined `.dmg` or `.app.zip`.
 - `nomouse doctor` has a `daemon` line: `running (pid N, nomouse V)`, or a FAIL with the restart
   command when the running daemon is another version (one left running across an update), when
   it is too old to say its version, or when it holds the single-instance lock without answering
@@ -63,6 +67,12 @@ the release's section; add entries under Unreleased as changes land.
   `nomouse.app` comes only from the release scripts, which pin `NOMOUSE_FLAVOUR=release`.
   `scripts/e2e-macos.sh --bin` tests a development build as well as a release one.
 - `macos.enhanced_ui_apps` rejects blank entries, as `ignore.apps` does.
+- The one-line install downloads `install.sh`, then runs it
+  (`curl -fsSLO … install.sh && bash install.sh`) instead of piping curl into bash: piped, a
+  failed download (a 404, a cut connection) ran an empty script and exited 0, so it looked like
+  success with nothing installed. Options go after the script (`bash install.sh --uninstall`).
+  `scripts/test-install-command.sh` runs the documented command against a local server: a 404
+  fails non-zero and runs nothing.
 
 ### Fixed
 
@@ -95,6 +105,10 @@ the release's section; add entries under Unreleased as changes land.
   `pipefail` could kill `codesign` with SIGPIPE. It now reads the whole output first.
 - `scripts/test-app.sh` built a dev binary (and so "nomouse Dev.app") when the shell exported
   `NOMOUSE_FLAVOUR=dev`; its build now pins `NOMOUSE_FLAVOUR=release`.
+- The Linux settings window UI test expected the release's continuous chord while test builds
+  are the dev flavour; it now expects the build's own default. `scripts/e2e-linux.sh`,
+  `e2e-desktop.sh`, `e2e-wayland.sh` and `screenshots-macos.sh` pin `NOMOUSE_FLAVOUR=release`,
+  since they check the release hotkeys, paths and bundle.
 
 ## [0.1.7] - 2026-11-09
 
