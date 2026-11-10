@@ -33,7 +33,7 @@
 #   NOMOUSE_INSTALL_BASE   URL of a directory holding the release assets, overriding GitHub
 #                          (for mirrors and for testing a locally built release).
 #   GH_TOKEN, GITHUB_TOKEN A GitHub token: downloads go through the GitHub API with it, which
-#                          also works while the repository is private.
+#                          avoids GitHub's limit on anonymous downloads.
 #   NOMOUSE_API_BASE       The GitHub API base URL for those downloads (default
 #                          https://api.github.com).
 set -euo pipefail
@@ -82,7 +82,7 @@ Options (after "bash -s --" when piped):
 
 Environment: NOMOUSE_INSTALL_DIR (default ~/.local/bin), NOMOUSE_APP_DIR (macOS, default
 /Applications), NOMOUSE_INSTALL_BASE (asset URL base), GH_TOKEN or GITHUB_TOKEN (download
-through the GitHub API, needed while the repository is private), NOMOUSE_API_BASE.
+through the GitHub API, avoids anonymous rate limits), NOMOUSE_API_BASE.
 EOF
 }
 
