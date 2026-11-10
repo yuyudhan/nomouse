@@ -5,6 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nomouse_core::config::Config;
+use nomouse_core::placement::label_bounds;
 use nomouse_core::reveal::settle;
 use nomouse_core::search::search_box_anchor;
 use nomouse_core::{
@@ -14,7 +15,7 @@ use nomouse_core::{
 use nomouse_sys_macos::app::{self, App};
 use nomouse_sys_macos::ax::{AxElement, is_process_trusted};
 use nomouse_sys_macos::input::{self, MouseEventKind};
-use nomouse_sys_macos::overlay::Overlay as Panels;
+use nomouse_sys_macos::overlay::{Overlay as Panels, label_sizer};
 use nomouse_sys_macos::tap::EventTap;
 use nomouse_sys_macos::{
     Button, KeyLayout, Label, LabelStyle, ModifierFlags, Outline, TapEvent, layout,
@@ -22,7 +23,7 @@ use nomouse_sys_macos::{
 
 use crate::ax_tree::{LiveTree, RootSet, frame_of, not_trusted, roots};
 use crate::geometry::{
-    clamp_into, lerp, screen_rect, to_panel, to_panel_rects, union, wheel_deltas,
+    label_corner, lerp, screen_rect, to_panel, to_panel_rects, union, wheel_deltas, whole_points,
 };
 use crate::keys::{chord, held, key_press, modifier_flags};
 use crate::roles::{PRESS, SHOW_MENU};
@@ -39,9 +40,6 @@ const DRAG_STEPS: i32 = 12;
 const INPUT_PAUSE: Duration = Duration::from_millis(8);
 /// Event flags for pointer input without modifier keys.
 const NO_FLAGS: ModifierFlags = modifier_flags(nomouse_core::Modifiers::NONE);
-/// Room kept for a label of an off-screen element pinned to the edge of its viewport, in
-/// points (two or three characters at the default size).
-const EDGE_LABEL_ROOM: (u32, u32) = (40, 20);
 /// How long a scroll into view may take before the action is given up.
 const REVEAL_TIMEOUT: Duration = Duration::from_millis(2000);
 /// How often the element's frame is re-read while it scrolls into view.
@@ -231,26 +229,29 @@ impl MacPlatform {
     fn present(&mut self, frame: &Frame<'_>) {
         let screens = self.app.screens();
         let typed_len = frame.typed.chars().count();
+        let size_of = label_sizer(&self.style);
         let mut labels: Vec<Label> = frame
             .hints
             .iter()
             .filter_map(|hint| {
-                let bounds = hint.element.bounds;
-                let mut corner = Point::new(bounds.x, bounds.y);
+                let text = hint.label.to_uppercase();
+                let (width, height) = whole_points(size_of(&text));
+                let mut target = hint.element.bounds;
                 // An off-screen element's label is pinned to the nearest edge of its viewport.
                 if let Some(entry) = usize::try_from(hint.element.id.0)
                     .ok()
                     .and_then(|index| self.snapshot.get(index))
                     .filter(|entry| entry.offscreen)
                 {
-                    corner = clamp_into(corner, entry.visible, EDGE_LABEL_ROOM);
+                    target = label_bounds(target, width, height, entry.visible);
                 }
+                let corner = label_corner(target, (width, height), &screens)?;
                 let anchor = to_panel(corner, &screens)?;
                 Some(Label {
                     screen: anchor.screen,
                     x: anchor.x,
                     y: anchor.y,
-                    text: hint.label.to_uppercase(),
+                    text,
                     typed: typed_len.min(hint.label.chars().count()),
                     focused: frame.focused == Some(hint.label.as_str()),
                 })

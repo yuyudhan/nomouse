@@ -6,6 +6,7 @@
 //! `NSScreen` frame is given in that space. Both are in points, so nomouse's [`Rect`]s on
 //! macOS are points too (the overlay draws at the screen's backing scale).
 
+use nomouse_core::placement::label_bounds;
 use nomouse_core::{Point, Rect};
 use nomouse_sys_macos::ScreenFrame;
 use num_traits::ToPrimitive;
@@ -25,6 +26,11 @@ fn to_u32(value: f64) -> u32 {
         .clamp(0.0, f64::from(u32::MAX))
         .to_u32()
         .unwrap_or(0)
+}
+
+/// A label box of (width, height) points in whole points, rounded up so it still fits.
+pub fn whole_points((width, height): (f64, f64)) -> (u32, u32) {
+    (to_u32(width.ceil()), to_u32(height.ceil()))
 }
 
 /// Builds a [`Rect`] from an Accessibility `AXPosition` and `AXSize`.
@@ -125,19 +131,18 @@ pub fn union(a: Rect, b: Rect) -> Rect {
     Rect::new(left, top, width, height)
 }
 
-/// `point` moved into `rect`, leaving `room` (width, height) before the right and bottom
-/// edges so a label drawn there stays inside; a `rect` smaller than `room` pins it to the
-/// top-left corner.
-pub fn clamp_into(point: Point, rect: Rect, room: (u32, u32)) -> Point {
-    let clamp = |value: i32, start: i32, length: u32, room: u32| {
-        let last = i64::from(start) + i64::from(length.saturating_sub(room));
-        let last = i32::try_from(last).unwrap_or(i32::MAX);
-        value.clamp(start, last.max(start))
-    };
-    Point::new(
-        clamp(point.x, rect.x, rect.width, room.0),
-        clamp(point.y, rect.y, rect.height, room.1),
-    )
+/// The global top-left corner of a label of `size` (width, height) for an element at
+/// `target`: centred on it and kept on the screen containing its centre. `screens` lists
+/// Cocoa frames with the primary screen first; `None` when no screen contains the centre.
+pub fn label_corner(target: Rect, size: (u32, u32), screens: &[ScreenFrame]) -> Option<Point> {
+    let primary = *screens.first()?;
+    let centre = target.center();
+    let screen = screens
+        .iter()
+        .map(|screen| screen_rect(*screen, primary))
+        .find(|screen| screen.contains(centre))?;
+    let placed = label_bounds(target, size.0, size.1, screen);
+    Some(Point::new(placed.x, placed.y))
 }
 
 /// The coordinate `step` of `steps` along the way from `from` to `to` (`step == steps` is
@@ -196,6 +201,12 @@ mod tests {
     #[test]
     fn rounds_ax_rects() {
         assert_eq!(ax_rect(10.4, 20.6, 30.5, -2.0), Rect::new(10, 21, 31, 0));
+    }
+
+    #[test]
+    fn label_boxes_round_up_to_whole_points() {
+        assert_eq!(whole_points((31.2, 19.0)), (32, 19));
+        assert_eq!(whole_points((-1.0, f64::NAN)), (0, 0));
     }
 
     #[test]
@@ -281,29 +292,37 @@ mod tests {
     }
 
     #[test]
-    fn points_clamp_inside_a_rect_with_room_for_a_label() {
-        let viewport = Rect::new(100, 50, 800, 600);
-        let room = (40, 20);
+    fn labels_are_centred_on_their_element_and_kept_on_its_screen() {
+        let screens = [PRIMARY, RIGHT, ABOVE];
+        let room = (30, 20);
+        // Centred on both axes, also when the label is larger than the element.
         assert_eq!(
-            clamp_into(Point::new(300, 200), viewport, room),
-            Point::new(300, 200)
+            label_corner(Rect::new(100, 200, 120, 40), room, &screens),
+            Some(Point::new(145, 210))
         );
         assert_eq!(
-            clamp_into(Point::new(300, -900), viewport, room),
-            Point::new(300, 50)
+            label_corner(Rect::new(500, 300, 10, 8), room, &screens),
+            Some(Point::new(490, 294))
+        );
+        // Against the primary's right edge, and on the right screen (top at y = -80).
+        assert_eq!(
+            label_corner(Rect::new(1430, 400, 8, 8), room, &screens),
+            Some(Point::new(1410, 394))
         );
         assert_eq!(
-            clamp_into(Point::new(950, 4000), viewport, room),
-            Point::new(860, 630)
+            label_corner(Rect::new(3345, -90, 10, 20), room, &screens),
+            Some(Point::new(3330, -80))
+        );
+        // An element straddling two screens is labelled on the one holding its centre.
+        assert_eq!(
+            label_corner(Rect::new(1400, 100, 100, 50), room, &screens),
+            Some(Point::new(1440, 115))
         );
         assert_eq!(
-            clamp_into(Point::new(0, 0), viewport, room),
-            Point::new(100, 50)
+            label_corner(Rect::new(-500, 2000, 10, 10), room, &screens),
+            None
         );
-        let tiny = Rect::new(5, 5, 10, 10);
-        assert_eq!(clamp_into(Point::new(90, 90), tiny, room), Point::new(5, 5));
-        let huge = Rect::new(i32::MAX - 10, 0, u32::MAX, 10);
-        assert_eq!(clamp_into(Point::new(i32::MAX, 5), huge, room).x, i32::MAX);
+        assert_eq!(label_corner(Rect::new(0, 0, 10, 10), room, &[]), None);
     }
 
     #[test]

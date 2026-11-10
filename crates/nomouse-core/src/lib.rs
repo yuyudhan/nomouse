@@ -11,6 +11,7 @@
 //! - [`session`]: one hint-mode activation, tying the above together.
 //! - [`search`]: fuzzy matching of a typed query against element names (search-by-text).
 //! - [`reveal`]: waiting for an element scrolled into view to come to rest.
+//! - [`placement`]: where a hint label goes, centred on its element and kept on screen.
 //! - [`setup`]: the guided first run that walks the user through missing permissions.
 //! - [`scroll`]: scroll mode's areas and keys.
 //! - [`apps`]: the focused window's application, for `ignore.apps`.
@@ -31,6 +32,7 @@ pub mod glyph;
 pub mod hints;
 pub mod hotkey;
 pub mod menu;
+pub mod placement;
 pub mod platform;
 pub mod reveal;
 pub mod scroll;

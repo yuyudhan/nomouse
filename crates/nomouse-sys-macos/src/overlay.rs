@@ -130,6 +130,26 @@ fn text_units(text: &str) -> CGFloat {
     CGFloat::from(u32::try_from(text.chars().count()).unwrap_or(u32::MAX))
 }
 
+/// Measures label boxes drawn with `style`: the returned function gives the width and height
+/// of the box a label with a given text is drawn in, in points (the font is looked up once).
+pub fn label_sizer(style: &LabelStyle) -> impl Fn(&str) -> (f64, f64) + use<> {
+    let (style, advance) = (*style, char_width(style.font_size));
+    move |text| box_size(advance, text, &style)
+}
+
+/// The box of a label with `text` whose characters advance by `advance` points.
+fn box_size(advance: f64, text: &str, style: &LabelStyle) -> (f64, f64) {
+    (
+        advance * text_units(text) + 2.0 * PAD_X,
+        line_height(style) + 2.0 * PAD_Y,
+    )
+}
+
+/// The height of a label's text line, in points.
+fn line_height(style: &LabelStyle) -> f64 {
+    (style.font_size * 1.25).ceil()
+}
+
 /// One label as a layer, its box sized to the text and kept inside an area of `width` by
 /// `height` points (a screen's panel, or a settings window's preview) drawn at `scale`.
 pub(crate) fn label_layer(
@@ -144,9 +164,8 @@ pub(crate) fn label_layer(
     let rest: String = label.text.chars().skip(label.typed).collect();
     let typed_width = advance * text_units(&typed);
     let rest_width = advance * text_units(&rest);
-    let line_height = (style.font_size * 1.25).ceil();
-    let box_width = typed_width + rest_width + 2.0 * PAD_X;
-    let box_height = line_height + 2.0 * PAD_Y;
+    let line_height = line_height(style);
+    let (box_width, box_height) = box_size(advance, &label.text, style);
     let x = label.x.clamp(0.0, (width - box_width).max(0.0));
     let y = (label.y - box_height).clamp(0.0, (height - box_height).max(0.0));
 

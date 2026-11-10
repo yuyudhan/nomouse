@@ -7,6 +7,13 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Changed
+
+- macOS: hint labels sit in the middle of their element (centred on both axes, also when the
+  label is larger than the element) instead of at its top-left corner, and stay fully on the
+  screen holding the element's centre. The placement lives in `nomouse-core`
+  (`placement::label_bounds`) so every backend can share it.
+
 ### Fixed
 
 - macOS: after an update, System Settings kept showing nomouse switched on under Accessibility
