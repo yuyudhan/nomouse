@@ -35,6 +35,12 @@ for name in MACOS_CERTIFICATE_PASSWORD MACOS_SIGN_IDENTITY; do
         exit 1
     fi
 done
+# Only a Developer ID Application identity can be notarized and gives the team-based
+# designated requirement that keeps the Accessibility grant across updates.
+if [[ "$MACOS_SIGN_IDENTITY" != "Developer ID Application: "* ]]; then
+    echo "signing: MACOS_SIGN_IDENTITY must be a \"Developer ID Application: Name (TEAMID)\" identity" >&2
+    exit 1
+fi
 
 keychain="${RUNNER_TEMP}/nomouse-signing.keychain-db"
 keychain_password="$(uuidgen)"
