@@ -6,13 +6,19 @@
 # Piping is safe: all work happens in main, called on the last line, so bash has read the whole
 # script before anything runs. Options go after `bash -s --`.
 #
-# What it installs, after checking each download against the release's .sha256:
+# What it installs, after checking each download against the release's .sha256 and running the
+# downloaded nomouse once (`--version`), so a build this system cannot start fails the install:
 #   macOS (Apple silicon and Intel): nomouse.app into /Applications (~/Applications when
 #     /Applications is not writable), quarantine removed, plus a `nomouse` command in
-#     ~/.local/bin that points into the app.
-#   Linux (x86_64, aarch64; X11 and Wayland): the `nomouse` binary into ~/.local/bin, plus the
-#     app launcher entry (GNOME: press Super, type nomouse) and its icons into
-#     ${XDG_DATA_HOME:-~/.local/share}/applications and .../icons/hicolor.
+#     ~/.local/bin that points into the app. Updating over an installed copy quits the running
+#     one first, starts the new one after, and, when the code signature changed (every release
+#     until they are Developer ID signed), removes the old copy's Accessibility entry, which
+#     macOS would otherwise keep showing switched on while ignoring it.
+#   Linux (x86_64, aarch64; X11 and Wayland; glibc 2.35 or later): the `nomouse` binary into
+#     ~/.local/bin, plus the app launcher entry (GNOME: press Super, type nomouse) and its icons
+#     into ${XDG_DATA_HOME:-~/.local/share}/applications and .../icons/hicolor. Systems the
+#     build cannot run on (an older glibc, musl, no glibc loader as on NixOS) are refused before
+#     anything is downloaded, with what to do instead.
 #
 # Options:
 #   --version X.Y.Z    Install that release instead of the latest.
@@ -45,6 +51,10 @@ tray_icons="symbolic/apps/${app_id}-symbolic.svg symbolic/apps/${app_id}-paused-
 # network that cuts connections (`curl: (35) ... unexpected eof while reading`) is retried too.
 net=(--fail --silent --show-error --location --connect-timeout 15 --retry 5 --retry-delay 2
     --speed-limit 1024 --speed-time 30)
+
+# The Linux release is built on Ubuntu 22.04, so it needs that glibc or a later one.
+min_glibc="2.35"
+source_build_url="https://github.com/${repo}/blob/nightly/docs/install.md#building-from-source"
 
 say() {
     printf 'nomouse: %s\n' "$*"
@@ -216,6 +226,90 @@ place_binary() {
     mv -f "$new" "$dest"
 }
 
+# The `--version` line of the downloaded program at $1, run before anything is replaced: a build
+# this system cannot start (too old a glibc, a missing library or loader) fails the install with
+# the loader's own message, HINT ($2, optional) after it, and leaves an installed copy as it was.
+runnable_version() {
+    local program="$1" hint="${2:-}" out status reason
+    out="$("$program" --version 2>"${work}/version.err")" || {
+        status=$?
+        reason="$(tr '\n' ' ' <"${work}/version.err" | sed 's/ *$//')"
+        [ -n "$reason" ] || reason="it exited with status ${status}"
+        fail "the downloaded nomouse does not run on this system (${reason}); nothing was installed${hint:+. ${hint}}"
+    }
+    printf '%s\n' "$out"
+}
+
+# True when glibc version $1 (MAJOR.MINOR) is $2 or later.
+version_at_least() {
+    local have_major="${1%%.*}" have_minor="${1#*.}" want_major="${2%%.*}" want_minor="${2#*.}"
+    have_minor="${have_minor%%.*}"
+    want_minor="${want_minor%%.*}"
+    [ "$have_major" -gt "$want_major" ] ||
+        { [ "$have_major" -eq "$want_major" ] && [ "$have_minor" -ge "$want_minor" ]; }
+}
+
+# ldd's --version text (glibc prints it on stdout, musl on stderr with status 1), or nothing
+# without ldd.
+ldd_version_text() {
+    command -v ldd >/dev/null 2>&1 || return 0
+    ldd --version 2>&1 || true
+}
+
+# This system's glibc version (MAJOR.MINOR), or nothing when neither getconf nor ldd names one
+# (musl, or a system without either).
+glibc_version() {
+    local out first
+    if out="$(getconf GNU_LIBC_VERSION 2>/dev/null)" && [[ "$out" =~ ^glibc\ ([0-9]+\.[0-9]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    # "ldd (GNU libc) 2.35", "ldd (Ubuntu GLIBC 2.35-0ubuntu3.8) 2.35".
+    out="$(ldd_version_text)"
+    first="${out%%$'\n'*}"
+    if [[ "$first" =~ ^ldd\ .*\)\ ([0-9]+\.[0-9]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    fi
+}
+
+# The program loader the glibc build of TARGET starts through.
+glibc_loader_for() {
+    case "$1" in
+    x86_64-*) echo /lib64/ld-linux-x86-64.so.2 ;;
+    aarch64-*) echo /lib/ld-linux-aarch64.so.1 ;;
+    esac
+}
+
+# True when this system's C library is musl: ldd says so, or ROOT has a musl loader and no glibc
+# one.
+musl_system() {
+    local root="$1" loader="$2" musl
+    [[ "$(ldd_version_text)" == *musl* ]] && return 0
+    [ -e "${root}${loader}" ] && return 1
+    for musl in "${root}"/lib/ld-musl-*; do
+        [ -e "$musl" ] && return 0
+    done
+    return 1
+}
+
+# Why the Linux build for TARGET cannot run on this system, or nothing when it can (or this
+# cannot tell; the downloaded binary's own --version run then has the last word). ROOT prefixes
+# the loader paths: "" for this system, a fake root in tests.
+linux_libc_problem() {
+    local target="$1" root="$2" loader have
+    loader="$(glibc_loader_for "$target")"
+    if musl_system "$root" "$loader"; then
+        echo "this system uses musl libc (Alpine, Void musl and others), and nomouse's Linux build needs glibc ${min_glibc} or later. Build nomouse from source instead: ${source_build_url}"
+    elif [ ! -e "${root}${loader}" ]; then
+        echo "this system has no glibc program loader at ${loader} (NixOS and Guix keep it elsewhere), so nomouse's Linux build cannot start. On NixOS turn on nix-ld (programs.nix-ld.enable = true) and run this installer again, or build nomouse from source: ${source_build_url}"
+    else
+        have="$(glibc_version)"
+        if [ -n "$have" ] && ! version_at_least "$have" "$min_glibc"; then
+            echo "nomouse's Linux build needs glibc ${min_glibc} or later (Ubuntu 22.04, Debian 12, Fedora 36, RHEL 10 or newer); this system has glibc ${have}. Build nomouse from source instead: ${source_build_url}"
+        fi
+    fi
+}
+
 # The shared libraries the program at $1 needs and this system lacks, one per line (ldd's
 # "not found" lines); nothing when all are there or ldd is missing.
 missing_libraries() {
@@ -261,8 +355,95 @@ app_dir() {
     fi
 }
 
+# Where macOS lists the apps allowed to control the computer, as System Settings names it:
+# macOS 27 renamed the Accessibility list "Device Control and Data Access".
+accessibility_pane() {
+    local major
+    major="$(sw_vers -productVersion 2>/dev/null || true)"
+    major="${major%%.*}"
+    if [[ "$major" =~ ^[0-9]+$ ]] && [ "$major" -ge 27 ]; then
+        echo "System Settings > Privacy & Security > Device Control and Data Access"
+    else
+        echo "System Settings > Privacy & Security > Accessibility"
+    fi
+}
+
+# The designated requirement of the app at $1, which macOS pins an Accessibility grant to (for
+# an ad-hoc signed build, its exact code hash), or nothing when it is unsigned.
+requirement_of() {
+    codesign -d -r- "$1" 2>/dev/null || true
+}
+
+# The process IDs of programs running from the app at $1, one per line: those whose command
+# line has the app's executable as a word.
+app_pids() {
+    local exe="$1/Contents/MacOS/nomouse" pid command
+    ps -axo pid=,command= | while read -r pid command; do
+        case " ${command} " in
+        *" ${exe} "*) echo "$pid" ;;
+        esac
+    done
+}
+
+# Quits the nomouse running from the app at $1, the copy an update replaces: asks it over its
+# command socket (`nomouse quit`), then, if it is still running after 5 s, terminates it.
+quit_app() {
+    local app="$1" _
+    "${app}/Contents/MacOS/nomouse" quit >/dev/null 2>&1 || true
+    for _ in $(seq 50); do
+        [ -n "$(app_pids "$app")" ] || return 0
+        sleep 0.1
+    done
+    app_pids "$app" | xargs kill 2>/dev/null || true
+    for _ in $(seq 20); do
+        [ -n "$(app_pids "$app")" ] || return 0
+        sleep 0.1
+    done
+    say "the old nomouse is still running: quit it from its menu bar icon's menu"
+}
+
+# Removes nomouse's entry from macOS's Accessibility list. After an update with a different code
+# signature that entry stays switched on but belongs to the old copy: macOS ignores it for the
+# new one, and switching it off and on again does not help.
+reset_accessibility() {
+    if tccutil reset Accessibility "$bundle_id" >/dev/null 2>&1; then
+        say "removed the old copy's Accessibility entry (macOS ties it to the old build)"
+    else
+        say "could not remove the old copy's Accessibility entry: if nomouse shows switched on"
+        say "but still asks, select it, remove it with the - button and add the new one"
+    fi
+}
+
+# The numbered next steps on macOS. UPDATE: an installed copy was replaced; REGRANT: its
+# Accessibility entry was removed; STARTED: the new copy was started.
+macos_next_steps() {
+    local app="$1" update="$2" regrant="$3" started="$4" pane
+    pane="$(accessibility_pane)"
+    if [ "$started" = true ]; then
+        step "1. the new nomouse is starting from \"${app}\""
+    else
+        step "1. open \"${app}\""
+    fi
+    if [ "$regrant" = true ]; then
+        step "   macOS asks for Accessibility again after every update until nomouse's releases are"
+        step "   signed with an Apple Developer ID. The Welcome window asks for it: in"
+        step "   ${pane}, switch nomouse on once more."
+        step "   It notices the switch and restarts by itself."
+    elif [ "$update" = true ]; then
+        step "   its keycap icon appears in the menu bar; its Accessibility switch still applies."
+    else
+        step "   its keycap icon appears in the menu bar and a Welcome window asks for"
+        step "   Accessibility: in ${pane},"
+        step "   switch on nomouse. It notices the switch and restarts by itself."
+    fi
+    step "2. press ctrl+space in any app and type a label to click it."
+    step "3. settings and start at login: the menu bar icon's menu."
+    step "check everything at any time with: nomouse doctor"
+}
+
 install_macos() {
-    local target="$1" bin_dir="$2" archive apps app
+    local target="$1" bin_dir="$2" archive apps app new_version old_requirement=""
+    local update=false running=false regrant=false started=false
     archive="$(archive_for "$target")"
     fetch_verified "$archive"
     ditto -x -k "${work}/${archive}" "${work}/unpacked"
@@ -279,6 +460,17 @@ install_macos() {
     fi
     # The release is not notarized yet, so drop the quarantine flag a browser download would set.
     xattr -dr com.apple.quarantine "${work}/unpacked/nomouse.app" 2>/dev/null || true
+    new_version="$(runnable_version "${work}/unpacked/nomouse.app/Contents/MacOS/nomouse")"
+    if [ -e "$app" ]; then
+        update=true
+        old_requirement="$(requirement_of "$app")"
+        # A copy left running would keep the old code, and its grant breaks at the next start.
+        if [ -n "$(app_pids "$app")" ]; then
+            running=true
+            say "quitting the running nomouse to update it"
+            quit_app "$app"
+        fi
+    fi
     rm -rf "${apps}/.nomouse.app.new"
     ditto "${work}/unpacked/nomouse.app" "${apps}/.nomouse.app.new"
     rm -rf "$app"
@@ -287,30 +479,42 @@ install_macos() {
     mkdir -p "$bin_dir"
     ln -sfn "${app}/Contents/MacOS/nomouse" "${bin_dir}/nomouse"
 
-    say "installed $("${bin_dir}/nomouse" --version) to ${app}"
+    say "installed ${new_version} to ${app}"
     say "the nomouse command: ${bin_dir}/nomouse -> ${app}/Contents/MacOS/nomouse"
+    if [ "$update" = true ] &&
+        { [ -z "$old_requirement" ] || [ "$(requirement_of "$app")" != "$old_requirement" ]; }; then
+        regrant=true
+        reset_accessibility
+    fi
+    if [ "$running" = true ]; then
+        if open "$app" >/dev/null 2>&1; then
+            started=true
+        else
+            say "could not start ${app} (no desktop session?)"
+        fi
+    fi
     echo
     say "next steps:"
     path_hint "$bin_dir"
-    step "1. open \"${app}\""
-    step "   its keycap icon appears in the menu bar and a Welcome window asks for"
-    step "   Accessibility: System Settings > Privacy & Security > Accessibility, switch on"
-    step "   nomouse. It notices the switch and restarts by itself."
-    step "2. press ctrl+space in any app and type a label to click it."
-    step "3. settings and start at login: the menu bar icon's menu."
-    step "check everything at any time with: nomouse doctor"
+    macos_next_steps "$app" "$update" "$regrant" "$started"
 }
 
 install_linux() {
-    local target="$1" bin_dir="$2" archive settings_missing
+    local target="$1" bin_dir="$2" archive settings_missing problem new_version
     command -v tar >/dev/null 2>&1 || fail "tar is required"
+    problem="$(linux_libc_problem "$target" "")"
+    # A --from directory may hold a build made for this system; its own run below decides.
+    if [ -n "$problem" ] && [ -z "$from" ]; then
+        fail "$problem"
+    fi
     archive="$(archive_for "$target")"
     fetch_verified "$archive"
     tar -xzf "${work}/${archive}" -C "$work"
     [ -f "${work}/nomouse-${target}/nomouse" ] || fail "${archive} has no nomouse-${target}/nomouse"
+    new_version="$(runnable_version "${work}/nomouse-${target}/nomouse" "$problem")"
     place_binary "${work}/nomouse-${target}/nomouse" "${bin_dir}/nomouse"
 
-    say "installed $("${bin_dir}/nomouse" --version) to ${bin_dir}/nomouse"
+    say "installed ${new_version} to ${bin_dir}/nomouse"
     if [ -f "${work}/nomouse-${target}/nomouse-settings" ]; then
         place_binary "${work}/nomouse-${target}/nomouse-settings" "${bin_dir}/nomouse-settings"
         say "installed the settings window to ${bin_dir}/nomouse-settings"

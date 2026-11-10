@@ -174,20 +174,119 @@ else
     fail "GNOME on Xorg next steps: ${steps}"
 fi
 
+# The macOS next steps name the Accessibility list as System Settings shows it: macOS 27 calls
+# it "Device Control and Data Access".
+fakemac="${work}/fakemac"
+mkdir -p "$fakemac"
+cat >"${fakemac}/sw_vers" <<'EOF'
+#!/bin/sh
+[ "$1" = -productVersion ] && [ -n "${FAKE_SW_VERS:-}" ] || exit 1
+echo "$FAKE_SW_VERS"
+EOF
+chmod 755 "${fakemac}/sw_vers"
+for case in "27.0.1:Device Control and Data Access" "28.1:Device Control and Data Access" \
+    "26.2:Accessibility" "15.5:Accessibility" "11.7.10:Accessibility" ":Accessibility"; do
+    check "accessibility_pane on macOS '${case%%:*}'" "System Settings > Privacy & Security > ${case#*:}" \
+        "$(FAKE_SW_VERS="${case%%:*}" PATH="${fakemac}:${PATH}" lib accessibility_pane)"
+done
+
+# Linux: which systems the glibc build is refused on before any download. getconf and ldd are
+# stand-ins answering FAKE_GETCONF and FAKE_LDD (musl's ldd prints to stderr and fails); the
+# fake roots hold the glibc loaders, the musl loader, or neither (NixOS).
+fakelibc="${work}/fakelibc"
+mkdir -p "${fakelibc}/bin" "${fakelibc}/glibc/lib64" "${fakelibc}/glibc/lib" "${fakelibc}/musl/lib" \
+    "${fakelibc}/nixos"
+touch "${fakelibc}/glibc/lib64/ld-linux-x86-64.so.2" "${fakelibc}/glibc/lib/ld-linux-aarch64.so.1" \
+    "${fakelibc}/musl/lib/ld-musl-x86_64.so.1"
+cat >"${fakelibc}/bin/getconf" <<'EOF'
+#!/bin/sh
+[ "$1" = GNU_LIBC_VERSION ] && [ -n "${FAKE_GETCONF:-}" ] || exit 1
+echo "$FAKE_GETCONF"
+EOF
+cat >"${fakelibc}/bin/ldd" <<'EOF'
+#!/bin/sh
+[ "$1" = --version ] && [ -n "${FAKE_LDD:-}" ] || exit 1
+case "$FAKE_LDD" in
+*musl*) printf '%s\n' "$FAKE_LDD" >&2; exit 1 ;;
+esac
+printf '%s\nCopyright (C) 2022 Free Software Foundation, Inc.\n' "$FAKE_LDD"
+EOF
+chmod 755 "${fakelibc}/bin/getconf" "${fakelibc}/bin/ldd"
+# libc_problem GETCONF LDD TARGET ROOT
+libc_problem() {
+    FAKE_GETCONF="$1" FAKE_LDD="$2" PATH="${fakelibc}/bin:${PATH}" \
+        lib linux_libc_problem "$3" "${fakelibc}/$4"
+}
+x86=x86_64-unknown-linux-gnu
+arm=aarch64-unknown-linux-gnu
+build_link="https://github.com/yuyudhan/nomouse/blob/nightly/docs/install.md#building-from-source"
+# expect_refusal NAME OUTPUT TEXT...: OUTPUT holds every TEXT and the build-from-source link.
+expect_refusal() {
+    local name="$1" out="$2" text
+    shift 2
+    for text in "$@" "$build_link"; do
+        if [[ "$out" != *"$text"* ]]; then
+            fail "${name}: '${text}' missing from: ${out}"
+            return
+        fi
+    done
+    pass "${name}"
+}
+expect_refusal "glibc 2.31 (getconf) is refused" "$(libc_problem "glibc 2.31" "" "$x86" glibc)" \
+    "needs glibc 2.35 or later" "this system has glibc 2.31" "Ubuntu 22.04"
+expect_refusal "glibc 2.34 (RHEL 9) is refused" "$(libc_problem "glibc 2.34" "" "$arm" glibc)" \
+    "this system has glibc 2.34"
+expect_refusal "glibc 2.31 (only ldd answers) is refused" \
+    "$(libc_problem "" "ldd (Ubuntu GLIBC 2.31-0ubuntu9.16) 2.31" "$x86" glibc)" "this system has glibc 2.31"
+check "glibc 2.35 is accepted" "" "$(libc_problem "glibc 2.35" "" "$x86" glibc)"
+check "glibc 2.39 on aarch64 is accepted" "" "$(libc_problem "glibc 2.39" "" "$arm" glibc)"
+check "glibc 2.36 (only ldd answers) is accepted" "" \
+    "$(libc_problem "" "ldd (GNU libc) 2.36" "$x86" glibc)"
+check "a glibc system that names no version is left to the binary's own run" "" \
+    "$(libc_problem "" "" "$x86" glibc)"
+expect_refusal "musl (ldd says so) is refused, even with a glibc loader shim" \
+    "$(libc_problem "" "musl libc (x86_64)" "$x86" glibc)" "uses musl libc"
+expect_refusal "musl (only its loader) is refused" "$(libc_problem "" "" "$x86" musl)" "uses musl libc"
+expect_refusal "no glibc loader (NixOS, x86_64) is refused with nix-ld" \
+    "$(libc_problem "glibc 2.40" "" "$x86" nixos)" "no glibc program loader at /lib64/ld-linux-x86-64.so.2" \
+    "programs.nix-ld.enable = true"
+expect_refusal "no glibc loader (NixOS, aarch64) names its loader" "$(libc_problem "" "" "$arm" nixos)" \
+    "/lib/ld-linux-aarch64.so.1"
+for case in "2.35 2.35 yes" "2.36 2.35 yes" "3.0 2.35 yes" "2.34 2.35 no" "2.4 2.35 no" "1.99 2.35 no"; do
+    read -r have want expected <<<"$case"
+    # A subshell: sourcing the installer here would replace this script's work and fail.
+    if (lib version_at_least "$have" "$want"); then actual=yes; else actual=no; fi
+    check "version_at_least ${have} ${want}" "$expected" "$actual"
+done
+
 # --- A fake release for this machine ----------------------------------------------------------
 
 target="$(lib asset_for "$os" "$(uname -m)")"
 archive="$(lib archive_for "$target")"
-release="${work}/release"
-stage="${work}/stage"
-mkdir -p "$release" "$stage"
-stub='#!/bin/sh
-echo "nomouse 0.1.0-fake"'
-if [ "$os" = Darwin ]; then
-    mkdir -p "${stage}/nomouse.app/Contents/MacOS"
-    printf '%s\n' "$stub" >"${stage}/nomouse.app/Contents/MacOS/nomouse"
-    chmod 755 "${stage}/nomouse.app/Contents/MacOS/nomouse"
-    cat >"${stage}/nomouse.app/Contents/Info.plist" <<'EOF'
+# The stand-in nomouse prints its version. `daemon` runs until `quit` asks it to stop (as the
+# real one does over its command socket); `quit` is logged to calls.log.
+calls="${work}/calls.log"
+stub="#!/bin/sh
+case \"\$1\" in
+daemon) while [ ! -e '${work}/quit-requested' ]; do sleep 0.1; done ;;
+quit) echo quit >>'${calls}'; touch '${work}/quit-requested' ;;
+*) echo 'nomouse 0.1.0-fake' ;;
+esac"
+# A build this system cannot start, as the loader reports a glibc too old.
+broken_stub="#!/bin/sh
+echo 'nomouse: /lib/x86_64-linux-gnu/libc.so.6: version GLIBC_2.35 not found' >&2
+exit 1"
+
+# make_release DIR PROGRAM: the release archive (and its .sha256) holding PROGRAM as nomouse.
+make_release() {
+    local dir="$1" program="$2" stage
+    stage="$(mktemp -d "${work}/stage.XXXXXX")"
+    mkdir -p "$dir"
+    if [ "$os" = Darwin ]; then
+        mkdir -p "${stage}/nomouse.app/Contents/MacOS"
+        printf '%s\n' "$program" >"${stage}/nomouse.app/Contents/MacOS/nomouse"
+        chmod 755 "${stage}/nomouse.app/Contents/MacOS/nomouse"
+        cat >"${stage}/nomouse.app/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -199,16 +298,21 @@ if [ "$os" = Darwin ]; then
 </dict>
 </plist>
 EOF
-    (cd "$stage" && ditto -c -k --keepParent nomouse.app "${release}/${archive}")
-else
-    mkdir -p "${stage}/nomouse-${target}"
-    printf '%s\n' "$stub" >"${stage}/nomouse-${target}/nomouse"
-    printf '#!/bin/sh\necho "nomouse-settings 0.1.0-fake"\n' >"${stage}/nomouse-${target}/nomouse-settings"
-    chmod 755 "${stage}/nomouse-${target}/nomouse" "${stage}/nomouse-${target}/nomouse-settings"
-    cp -R "${root}/packaging/linux/share" "${stage}/nomouse-${target}/"
-    tar -C "$stage" -czf "${release}/${archive}" "nomouse-${target}"
-fi
-"${root}/scripts/release/checksum.sh" "${release}/${archive}"
+        (cd "$stage" && ditto -c -k --keepParent nomouse.app "${dir}/${archive}")
+    else
+        mkdir -p "${stage}/nomouse-${target}"
+        printf '%s\n' "$program" >"${stage}/nomouse-${target}/nomouse"
+        printf '#!/bin/sh\necho "nomouse-settings 0.1.0-fake"\n' >"${stage}/nomouse-${target}/nomouse-settings"
+        chmod 755 "${stage}/nomouse-${target}/nomouse" "${stage}/nomouse-${target}/nomouse-settings"
+        cp -R "${root}/packaging/linux/share" "${stage}/nomouse-${target}/"
+        tar -C "$stage" -czf "${dir}/${archive}" "nomouse-${target}"
+    fi
+    "${root}/scripts/release/checksum.sh" "${dir}/${archive}"
+}
+release="${work}/release"
+make_release "$release" "$stub"
+broken="${work}/broken"
+make_release "$broken" "$broken_stub"
 
 home="${work}/home"
 decoy="${work}/decoy"
@@ -217,12 +321,24 @@ touch "${decoy}/config/nomouse/config.toml" "${decoy}/bin/nomouse"
 export XDG_CONFIG_HOME="${decoy}/config" NOMOUSE_INSTALL_DIR="${decoy}/bin"
 export NOMOUSE_APP_DIR="${decoy}/Applications" GH_TOKEN=decoy-token
 
+# Stand-ins for the macOS commands an update runs that act on the real login session: tccutil
+# (would reset the real nomouse's Accessibility entry), open (would start apps) and osascript.
+# They log their arguments to calls.log; every sandbox PATH starts with them.
+safe="${work}/safe-bin"
+mkdir -p "$safe"
+for tool in tccutil open osascript; do
+    printf '#!/bin/sh\necho "%s $*" >>"%s"\n' "$tool" "$calls" >"${safe}/${tool}"
+    chmod 755 "${safe}/${tool}"
+done
+sandbox_path="${safe}:/usr/bin:/bin:/usr/sbin:/sbin"
+
 # Runs the installer with only HOME, PATH and TERM from outside (plus the arguments' NAME=VALUE
-# words), so the decoys above can never reach it. macOS apps go into HOME/Applications.
+# words, where a PATH must keep sandbox_path), so the decoys above can never reach it. macOS
+# apps go into HOME/Applications.
 sandbox() {
     local apps=()
     if [ "$os" = Darwin ]; then apps=(NOMOUSE_APP_DIR="${home}/Applications"); fi
-    env -i HOME="$home" PATH=/usr/bin:/bin:/usr/sbin:/sbin TERM=dumb "${apps[@]}" "$@"
+    env -i HOME="$home" PATH="$sandbox_path" TERM=dumb "${apps[@]}" "$@"
 }
 bin="${home}/.local/bin/nomouse"
 settings="${home}/.local/bin/nomouse-settings"
@@ -269,6 +385,16 @@ if out="$(sandbox bash "$installer" --from "$release" 2>&1)" && installed &&
 else
     fail "--from install: ${out}"
 fi
+pane="$(lib accessibility_pane)"
+if [ "$os" = Darwin ]; then
+    if [[ "$out" == *"Welcome window asks for"* ]] && [[ "$out" == *"Accessibility: in ${pane},"* ]] &&
+        [[ "$out" != *"once more"* ]]; then
+        pass "a first install names the Accessibility list as this macOS does (${pane##*> })"
+    else
+        fail "first install next steps: ${out}"
+    fi
+    check "a first install quits, resets and starts nothing" "" "$(cat "$calls" 2>/dev/null || true)"
+fi
 
 if [ "$os" = Linux ]; then
     expected=$(($(echo "$icon_sizes" | wc -w) + 4))
@@ -312,10 +438,74 @@ if [ "$os" = Linux ]; then
     sandbox bash "$installer" --from "$release" >/dev/null 2>&1
 fi
 
+: >"$calls"
 if out="$(sandbox bash "$installer" --from "$release" 2>&1)" && installed; then
     pass "installing again replaces the installed copy"
+    if [ "$os" = Darwin ]; then
+        # The stub is unsigned, so the copies' signatures cannot match: the old entry goes.
+        check "an update with a new signature resets the Accessibility entry, nothing else" \
+            "tccutil reset Accessibility com.yuyudhan.nomouse" "$(cat "$calls")"
+        if [[ "$out" == *"switch nomouse on once more"* ]] && [[ "$out" == *"Developer ID"* ]] &&
+            [[ "$out" == *"in"*"${pane}, switch nomouse on once more"* ]] && [[ "$out" == *"1. open"* ]]; then
+            pass "the update says to switch nomouse on once more in ${pane##*> }"
+        else
+            fail "update wording: ${out}"
+        fi
+    fi
 else
     fail "reinstall: ${out}"
+fi
+
+if [ "$os" = Darwin ]; then
+    # Updating over a running copy: it is quit before the app is replaced, the entry is reset,
+    # and the new copy is started.
+    : >"$calls"
+    rm -f "${work}/quit-requested"
+    "${home}/Applications/nomouse.app/Contents/MacOS/nomouse" daemon &
+    old=$!
+    out="$(sandbox bash "$installer" --from "$release" 2>&1)" || out="exit $?: ${out}"
+    kill "$old" 2>/dev/null || true
+    if wait "$old"; then quit_by_installer=yes; else quit_by_installer=no; fi
+    check "an update over a running copy quits it first" yes "$quit_by_installer"
+    check "then resets the Accessibility entry and starts the new copy" \
+        "quit
+tccutil reset Accessibility com.yuyudhan.nomouse
+open ${home}/Applications/nomouse.app" "$(cat "$calls")"
+    if installed && [[ "$out" == *"quitting the running nomouse to update it"* ]] &&
+        [[ "$out" == *"1. the new nomouse is starting from"* ]] && [[ "$out" == *"once more"* ]]; then
+        pass "the update over a running copy says so and asks for the switch again"
+    else
+        fail "update over a running copy: ${out}"
+    fi
+
+    # The same signature (a reinstall of the same build, or a Developer ID signed release)
+    # keeps the grant: nothing is reset.
+    same="${work}/same-signature"
+    mkdir -p "$same"
+    printf '#!/bin/sh\necho "designated => identifier com.yuyudhan.nomouse and anchor apple generic"\n' \
+        >"${same}/codesign"
+    chmod 755 "${same}/codesign"
+    : >"$calls"
+    if out="$(sandbox PATH="${same}:${sandbox_path}" bash "$installer" --from "$release" 2>&1)" &&
+        installed && [ ! -s "$calls" ] && [[ "$out" != *"once more"* ]] &&
+        [[ "$out" == *"its Accessibility switch still applies"* ]]; then
+        pass "an update with the same signature keeps the Accessibility entry"
+    else
+        fail "update with the same signature (calls: $(cat "$calls")): ${out}"
+    fi
+fi
+
+# A build this system cannot start fails the install with the loader's message and leaves the
+# installed copy as it was.
+: >"$calls"
+if out="$(sandbox bash "$installer" --from "$broken" 2>&1)"; then
+    fail "a build that cannot run here should fail the install: ${out}"
+elif [[ "$out" == *"the downloaded nomouse does not run on this system"* ]] &&
+    [[ "$out" == *"GLIBC_2.35 not found"* ]] && [[ "$out" != *"installed nomouse"* ]] &&
+    [[ "$out" != *"next steps"* ]] && installed && [ ! -s "$calls" ]; then
+    pass "a build that cannot run here fails with its error and keeps the installed copy"
+else
+    fail "a build that cannot run here (calls: $(cat "$calls")): ${out}"
 fi
 
 mkdir -p "${home}/.config/nomouse"
@@ -359,6 +549,23 @@ elif [[ "$out" == *"has no ${archive}"* ]] && absent; then
     pass "a directory without the archive names the missing asset"
 else
     fail "missing asset: ${out}"
+fi
+
+if [ "$os" = Linux ]; then
+    # glibc 2.31 (Ubuntu 20.04): refused before anything is downloaded, nothing installed.
+    oldglibc="${work}/old-glibc"
+    mkdir -p "$oldglibc"
+    printf '#!/bin/sh\necho "glibc 2.31"\n' >"${oldglibc}/getconf"
+    chmod 755 "${oldglibc}/getconf"
+    if out="$(sandbox PATH="${oldglibc}:${sandbox_path}" NOMOUSE_INSTALL_BASE="file://${release}" \
+        bash "$installer" 2>&1)"; then
+        fail "glibc 2.31 should be refused: ${out}"
+    elif [[ "$out" == *"needs glibc 2.35 or later"* ]] && [[ "$out" == *"this system has glibc 2.31"* ]] &&
+        [[ "$out" == *"$build_link"* ]] && [[ "$out" != *"checksum ok"* ]] && absent; then
+        pass "glibc 2.31 is refused before the download, naming the fix"
+    else
+        fail "glibc 2.31: ${out}"
+    fi
 fi
 
 for args in "--version 1.2" "--purge" "--bogus" "--from ${work}/nowhere"; do

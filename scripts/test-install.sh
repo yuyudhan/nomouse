@@ -12,6 +12,14 @@
 # Usage: scripts/test-install.sh [DIST]
 set -euo pipefail
 
+# The assets are the Linux release's (target/dist holds only Linux builds), and on macOS an
+# update would act on the real login session (quit nomouse, reset its Accessibility entry);
+# scripts/test-installer.sh covers macOS with stand-ins for those commands.
+if [ "$(uname -s)" != Linux ]; then
+    echo "test-install: runs on Linux only; on macOS run scripts/test-installer.sh" >&2
+    exit 1
+fi
+
 root="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$(cd "${1:-${root}/target/dist}" && pwd)"
 [ -f "${dist}/install.sh" ] || {
@@ -167,6 +175,22 @@ else
     fail "wrong checksum: ${out}"
 fi
 rm -rf "${dist}/.bad-checksum"
+
+# 6a. A glibc older than the build's (here a stand-in getconf saying 2.31, Ubuntu 20.04) is
+# refused before the download, naming the fix, and nothing is installed.
+oldglibc="${work}/old-glibc"
+mkdir -p "$oldglibc"
+printf '#!/bin/sh\necho "glibc 2.31"\n' >"${oldglibc}/getconf"
+chmod 755 "${oldglibc}/getconf"
+if out="$(sandbox PATH="${oldglibc}:/usr/bin:/bin" NOMOUSE_INSTALL_BASE="$base" bash "${dist}/install.sh" 2>&1)"; then
+    fail "glibc 2.31 installed anyway: ${out}"
+elif [[ "$out" == *"needs glibc 2.35 or later"* ]] && [[ "$out" == *"this system has glibc 2.31"* ]] &&
+    [[ "$out" == *"#building-from-source"* ]] && [[ "$out" != *"checksum ok"* ]] &&
+    [ ! -e "${home}/.local/bin/nomouse" ]; then
+    pass "glibc 2.31 is refused before the download and installs nothing"
+else
+    fail "glibc 2.31: ${out}"
+fi
 
 # 7. The caller's environment was never used.
 if [ -f "${decoy}/config/nomouse/config.toml" ] && [ -f "${decoy}/bin/nomouse" ]; then
