@@ -101,6 +101,18 @@ swiftc -O -o "$tmp/mac_app" "$root/scripts/e2e/mac_app.swift"
 export XDG_CONFIG_HOME="$tmp/config" XDG_RUNTIME_DIR="$tmp/run"
 mkdir -p "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
+# The binary's own config directory and hints hotkey: a development build (`--bin` with a debug
+# or NOMOUSE_FLAVOUR=dev build) reads nomouse-dev/ and binds ctrl+alt+shift+space, a release
+# build nomouse/ and ctrl+space.
+stem="$(basename "$(dirname "$("$bin" config path)")")"
+hints_key="$("$bin" config show | sed -n 's/^hints = "\(.*\)"$/\1/p')"
+[[ -n "$stem" && -n "$hints_key" ]] || {
+    echo "FAIL: \`$bin config path\` or \`config show\` gave no config directory or hints hotkey"
+    exit 1
+}
+# The menu bar item's name: "nomouse Dev" for a development build.
+if [[ "$stem" == nomouse-dev ]]; then item_name="nomouse Dev"; else item_name=nomouse; fi
+echo "--- $("$bin" --version): config in \$XDG_CONFIG_HOME/$stem, hints hotkey $hints_key"
 
 passed=0
 failed=0
@@ -312,8 +324,8 @@ fi
 
 echo "--- Homerow keys: a label highlights; Return clicks, twice double clicks, Shift right clicks, Cmd cmd-clicks"
 homerow_config="$tmp/homerow-config"
-mkdir -p "$homerow_config/nomouse"
-printf '[hints]\nkeys = "homerow"\n' >"$homerow_config/nomouse/config.toml"
+mkdir -p "$homerow_config/$stem"
+printf '[hints]\nkeys = "homerow"\n' >"$homerow_config/$stem/config.toml"
 # homerow <log> <name> <chords...>: labels with the Homerow keys, types <name>'s label, then
 # presses the chords.
 homerow() {
@@ -364,8 +376,8 @@ echo "--- theme auto follows the system appearance"
 system=Light
 if [[ "$(defaults read -g AppleInterfaceStyle 2>/dev/null || true)" == Dark ]]; then system=Dark; fi
 theme_config="$tmp/theme-config"
-mkdir -p "$theme_config/nomouse"
-printf '[overlay]\ntheme = "auto"\n' >"$theme_config/nomouse/config.toml"
+mkdir -p "$theme_config/$stem"
+printf '[overlay]\ntheme = "auto"\n' >"$theme_config/$stem/config.toml"
 log="$tmp/theme.log"
 if XDG_CONFIG_HOME="$theme_config" run_hints "$log" hints; then
     "$probe" key escape
@@ -388,12 +400,12 @@ if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
     front
     before_scans="$(scans)"
     before="$(value count.Two)"
-    "$probe" key ctrl+space
+    "$probe" key "$hints_key"
     if wait_for 5 scans_above "$before_scans"; then
         "$probe" type "$(label_for "$daemon_log" Two)"
         if wait_for 3 value_is count.Two $((before + 1)); then pass "daemon hotkey click landed"; else fail "daemon hotkey click: count.Two '$(value count.Two)'"; fi
     else
-        fail "daemon hotkey: no scan after ctrl+space"
+        fail "daemon hotkey: no scan after $hints_key"
     fi
     front
     before_scans="$(scans)"
@@ -410,12 +422,12 @@ if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
     front
     before_scans="$(scans)"
     before="$(value count.Two)"
-    "$probe" key ctrl+space
+    "$probe" key "$hints_key"
     if wait_for 5 scans_above "$before_scans" && wait_for 3 windows_above 0; then
-        "$probe" key ctrl+space
+        "$probe" key "$hints_key"
         if wait_for 3 windows_is 0 && kill -0 "$daemon" && value_is count.Two "$before"; then pass "the hotkey pressed twice left no overlay and clicked nothing"; else fail "hotkey twice: $("$probe" panels "$daemon" || true) panel(s), count.Two went from $before to '$(value count.Two)'"; fi
     else
-        fail "toggle: no labels after ctrl+space"
+        fail "toggle: no labels after $hints_key"
     fi
     front
     before_scans="$(scans)"
@@ -433,9 +445,9 @@ fi
 
 echo "--- ignore.apps: no labels in the ignored fixture; \`nomouse reload\` applies a new config"
 reload_config="$tmp/reload-config"
-mkdir -p "$reload_config/nomouse"
+mkdir -p "$reload_config/$stem"
 # The fixture is an unbundled program: its process name is what identifies it.
-printf '[ignore]\napps = ["mac_app"]\n' >"$reload_config/nomouse/config.toml"
+printf '[ignore]\napps = ["mac_app"]\n' >"$reload_config/$stem/config.toml"
 if XDG_CONFIG_HOME="$reload_config" "$bin" doctor | grep -qE 'ignored apps: .*mac_app'; then pass "doctor lists the ignored app"; else fail "doctor does not list mac_app among the ignored apps"; fi
 daemon_log="$tmp/daemon-reload.log"
 XDG_CONFIG_HOME="$reload_config" NOMOUSE_LOG=debug "$bin" daemon 2>"$daemon_log" &
@@ -443,22 +455,22 @@ daemon=$!
 pids+=("$daemon")
 if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
     front
-    "$probe" key ctrl+space
+    "$probe" key "$hints_key"
     if wait_for 5 grep -q 'the focused app is ignored' "$daemon_log" && (($(scans) == 0)); then pass "the hotkey in the ignored fixture showed no labels"; else fail "ignore.apps: $(scans) scan(s), log '$({ grep -E 'ignored|performed' "$daemon_log" || true; } | tail -n1)'"; fi
-    printf '[hints]\nalphabet = "qwertyup"\n' >"$reload_config/nomouse/config.toml"
+    printf '[hints]\nalphabet = "qwertyup"\n' >"$reload_config/$stem/config.toml"
     XDG_CONFIG_HOME="$reload_config" "$bin" reload
     if wait_for 5 grep -q 'config reloaded' "$daemon_log"; then
         front
         before_scans="$(scans)"
         before="$(value count.Two)"
-        "$probe" key ctrl+space
+        "$probe" key "$hints_key"
         if wait_for 5 scans_above "$before_scans"; then
             sleep 0.2
             label="$(label_for "$daemon_log" Two)"
             "$probe" type "$label"
             if [[ "$label" =~ ^[qwertyup]+$ ]] && wait_for 3 value_is count.Two $((before + 1)); then pass "after \`nomouse reload\` the labels use the new alphabet ('$label' clicked Two)"; else fail "after reload: label '$label', count.Two went from $before to '$(value count.Two)'"; fi
         else
-            fail "after reload: no scan after ctrl+space"
+            fail "after reload: no scan after $hints_key"
         fi
     else
         fail "\`nomouse reload\`: the daemon did not reload ($(grep -E 'reload' "$daemon_log" | tail -n1))"
@@ -471,8 +483,8 @@ fi
 
 echo "--- menu bar and settings window: Settings…, a recorded hotkey and a picked theme reach config.toml and the daemon"
 settings_config="$tmp/settings-config"
-mkdir -p "$settings_config/nomouse"
-settings_file="$settings_config/nomouse/config.toml"
+mkdir -p "$settings_config/$stem"
+settings_file="$settings_config/$stem/config.toml"
 daemon_log="$tmp/daemon-settings.log"
 XDG_CONFIG_HOME="$settings_config" NOMOUSE_LOG=debug "$bin" daemon 2>"$daemon_log" &
 daemon=$!
@@ -482,7 +494,7 @@ has_line() { grep -qxF "$1" "$settings_file"; }
 reloads() { grep -c 'config reloaded' "$daemon_log" || true; }
 reloads_above() { (($(reloads) > $1)); }
 if wait_for 10 grep -q 'daemon ready' "$daemon_log"; then
-    if [[ "$("$probe" status-item "$daemon" || true)" == nomouse ]]; then pass "the menu bar shows the nomouse item"; else fail "the daemon has no nomouse item in the menu bar"; fi
+    if [[ "$("$probe" status-item "$daemon" || true)" == "$item_name" ]]; then pass "the menu bar shows the $item_name item"; else fail "the daemon has no $item_name item in the menu bar"; fi
     if "$probe" menu "$daemon" "Settings…" && wait_for 5 "$probe" window "$daemon" nomouse-settings; then
         pass "Settings… in the menu opens the settings window"
         before_reloads="$(reloads)"
@@ -521,8 +533,8 @@ echo "--- Dvorak: a letter hotkey triggers by character, labels type as shown"
 dvorak=com.apple.keylayout.Dvorak
 layout_before="$("$probe" layout)"
 if "$probe" layout-enabled "$dvorak"; then dvorak_added=0; else dvorak_added=1; fi
-mkdir -p "$tmp/dvorak-config/nomouse"
-printf '[hotkeys]\nhints = "ctrl+alt+o"\n' >"$tmp/dvorak-config/nomouse/config.toml"
+mkdir -p "$tmp/dvorak-config/$stem"
+printf '[hotkeys]\nhints = "ctrl+alt+o"\n' >"$tmp/dvorak-config/$stem/config.toml"
 daemon_log="$tmp/daemon-dvorak.log"
 XDG_CONFIG_HOME="$tmp/dvorak-config" NOMOUSE_LOG=debug "$bin" daemon 2>"$daemon_log" &
 daemon=$!

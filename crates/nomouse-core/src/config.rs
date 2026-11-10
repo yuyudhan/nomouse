@@ -436,6 +436,16 @@ impl Config {
                 field: "ignore.apps",
             });
         }
+        if self
+            .macos
+            .enhanced_ui_apps
+            .iter()
+            .any(|app| app.trim().is_empty())
+        {
+            return Err(ConfigError::EmptyEntry {
+                field: "macos.enhanced_ui_apps",
+            });
+        }
         Ok(())
     }
 
@@ -733,6 +743,12 @@ mod tests {
             Config::from_toml("[macos]\nenhanced_ui_apps = [\"com.google.Chrome\"]\n").unwrap();
         assert_eq!(config.macos.enhanced_ui_apps, ["com.google.Chrome"]);
         assert!(Config::from_toml("[macos]\nunknown = 1\n").is_err());
+        assert!(matches!(
+            Config::from_toml("[macos]\nenhanced_ui_apps = [\"com.google.Chrome\", \" \"]\n"),
+            Err(ConfigError::EmptyEntry {
+                field: "macos.enhanced_ui_apps"
+            })
+        ));
     }
 
     #[test]

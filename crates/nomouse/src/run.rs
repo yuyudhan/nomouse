@@ -323,6 +323,9 @@ pub(crate) fn activate(
 }
 
 #[cfg(test)]
+mod config_options;
+
+#[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
 

@@ -117,6 +117,12 @@ app:
 dev *args:
     cargo run -p nomouse -- {{args}}
 
+# Install config/dev.example.toml (every option, commented) as the development build's
+# ~/.config/nomouse-dev/config.toml. Keeps an existing file unless `--force`, which backs it
+# up as config.toml.bak-<time> first. Never touches ~/.config/nomouse/.
+dev-config *args:
+    scripts/dev-config.sh {{args}}
+
 # Check that a development build bundles as "nomouse Dev.app" with the dev bundle id (macOS).
 test-app-dev *args:
     scripts/test-app-dev.sh {{args}}

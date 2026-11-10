@@ -1,0 +1,84 @@
+# nomouse development config: every option, set to what a development build does without it.
+#
+# `just dev-config` installs this file as ~/.config/nomouse-dev/config.toml (the development
+# build's own config, never the installed nomouse's ~/.config/nomouse/). Change one value at a
+# time to see what it does: the running daemon picks a save up within two seconds, or at once
+# with `nomouse reload`. `nomouse config check` names the first bad key. A mistake leaves the
+# previous settings in effect, so the hotkeys keep working. Unknown keys are errors.
+#
+# Each comment gives the default, the values allowed and the effect. Reference:
+# docs/configuration.md.
+
+[hints]
+# Default "asdfghjk". The label letters, most preferred first: at least 2 distinct lowercase
+# ASCII letters, without i, l and o.
+alphabet = "asdfghjk"
+# Default "focused-window". "focused-window" labels the window you are in; "screen" labels
+# every visible window on every monitor.
+scope = "focused-window"
+# Default "click". What picking a label with the hints and continuous hotkeys does: "click",
+# "right-click", "double-click", "hover", "drag" (pick the start, then the end) or "scroll"
+# (pick an area, then scroll it with h j k l).
+action = "click"
+# Default false. true presses the element through the accessibility API (AXPress, AT-SPI
+# do_action, UI Automation Invoke) when it offers that, so the pointer does not move.
+semantic_click = false
+# Default "nomouse". "nomouse": typing a complete label acts at once. "homerow": a complete label
+# only highlights; Return clicks, Return twice double-clicks, Shift-Return right-clicks,
+# Cmd-Return (Super-Return) cmd-clicks.
+keys = "nomouse"
+# Default "fast". How much of a web page (browser tab, Electron window) a scan reads: "fast" only
+# what is in view; "exhaustive" the whole document, so search also finds links scrolled out of
+# view and picking one scrolls it into view first. Linux and macOS.
+browser = "fast"
+
+[hotkeys]
+# A hotkey is modifiers (ctrl/control, alt/option, shift, super/cmd/command/meta/win; at least
+# one) and a key (a-z, 0-9, f1-f24, space, tab, enter, escape, backspace, / ; , . or slash
+# semicolon comma period), joined by +, case-insensitive. Two modes cannot share one.
+# A development build's defaults add alt+shift and differ by key, so it never takes the
+# installed nomouse's ctrl+space chords. On Wayland the compositor binds `nomouse hints` etc.
+# Default "ctrl+alt+shift+space". Hints: label the window, type a label to act.
+hints = "ctrl+alt+shift+space"
+# Default "ctrl+alt+shift+period". Continuous: label again after every click until Escape.
+continuous = "ctrl+alt+shift+period"
+# Default "ctrl+alt+shift+comma". Scroll: pick a scrollable area, scroll it with keys.
+scroll = "ctrl+alt+shift+comma"
+# Default "ctrl+alt+shift+slash". Search: type part of an element's text.
+search = "ctrl+alt+shift+slash"
+
+[scroll]
+# Default 3, 1 to 50. Wheel steps per h j k l (or arrow) press; d and u scroll five times this.
+step = 3
+# Default 15, 1 to 100. Wheel steps per Shift with H J K L.
+dash_step = 15
+
+[overlay]
+# Default 13, 6 to 72. Label text size in points.
+font_size = 13
+# Default 95, 10 to 100. Label opacity in percent.
+opacity = 95
+# Default "original". "original" (yellow labels, dark text), "light", "dark", or "auto" (light
+# or dark, following the system appearance). The four colours below override the theme's:
+# comment them out to see a theme change anything.
+theme = "original"
+# Default unset (the theme's). "#rrggbb" label background; these four are the original theme's.
+background = "#ffd75f"
+# Default unset. "#rrggbb" label text.
+foreground = "#1c1c1c"
+# Default unset. "#rrggbb" for the label letters already typed.
+typed_foreground = "#8a8a8a"
+# Default unset. "#rrggbb" label border.
+border = "#1c1c1c"
+
+[ignore]
+# Default []. Apps where the hotkeys show no labels: macOS bundle ids ("com.apple.Terminal") or
+# executable names, Wayland app ids, X11 WM_CLASS instance or class, or process names; matching
+# ignores case. No blank entries. `nomouse doctor` lists them.
+apps = []
+
+[macos]
+# Default []. Bundle ids ("com.google.Chrome", "com.microsoft.VSCode") whose accessibility tree
+# nomouse switches on with AXEnhancedUserInterface (Chromium and Electron build it only when
+# asked; it can slow window animations). Ignored on other systems.
+enhanced_ui_apps = []
