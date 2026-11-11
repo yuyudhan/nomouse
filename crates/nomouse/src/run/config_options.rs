@@ -478,7 +478,12 @@ fn hints_scope_picks_where_elements_come_from() {
             let mut platform =
                 Fake::buttons(1).keys([Some(key(KeyPress::Escape, Modifiers::NONE))]);
             run(&mut platform, &settings, mode);
-            assert_eq!(platform.scopes, [scope], "{text:?} {mode:?}");
+            // The first scan and every re-scan read the configured scope.
+            assert!(
+                !platform.scopes.is_empty() && platform.scopes.iter().all(|s| *s == scope),
+                "{text:?} {mode:?}: {:?}",
+                platform.scopes
+            );
         }
     }
 }

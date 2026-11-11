@@ -7,6 +7,16 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Added
+
+- Hint mode scans again while you have typed nothing: right after the first scan, at 1 s and at
+  3 s after the hotkey (in continuous mode, after the scan that follows each click), so a
+  browser page that is still loading after a navigation gets its labels. New targets get free
+  labels, targets that went lose theirs, and a target still there keeps its label, including
+  one a loading page moved. A re-scan that finds nothing new redraws nothing; the first key you
+  type, Escape, the hotkey or a pick cancels the rest. In continuous mode an empty page after a
+  click no longer ends the mode at once: it ends only if nothing arrives by the 3 s re-scan.
+
 ### Fixed
 
 - macOS: after Accessibility was granted, nomouse kept running with no menu bar icon. Once the

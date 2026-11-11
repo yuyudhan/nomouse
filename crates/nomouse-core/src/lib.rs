@@ -10,6 +10,7 @@
 //!   watched, plus the fields a settings window shows.
 //! - [`platform`]: the traits each OS backend implements.
 //! - [`session`]: one hint-mode activation, tying the above together.
+//! - [`rescan`]: when hint mode scans again while nothing is typed (pages still loading).
 //! - [`search`]: fuzzy matching of a typed query against element names (search-by-text).
 //! - [`reveal`]: waiting for an element scrolled into view to come to rest.
 //! - [`placement`]: where a hint label goes, centred on its element and kept on screen.
@@ -36,6 +37,7 @@ pub mod hotkey;
 pub mod menu;
 pub mod placement;
 pub mod platform;
+pub mod rescan;
 pub mod reveal;
 pub mod scroll;
 pub mod search;
@@ -50,12 +52,13 @@ pub use config::{Config, ConfigError};
 pub use element::{Element, ElementId, Point, Rect, Role};
 pub use filter::{FilterState, LabelFilter};
 pub use flavour::Flavour;
-pub use hints::{Alphabet, AlphabetError, Hint, assign_hints, generate_labels};
+pub use hints::{Alphabet, AlphabetError, Hint, assign_hints, generate_labels, reassign_hints};
 pub use hotkey::{Hotkey, HotkeyError, Key, KeyEvent, KeyPress, Modifiers};
 pub use platform::{
     ElementSource, Frame, HotkeyId, HotkeySource, InputEvent, InputInjector, Overlay, Platform,
     PlatformError, Scope,
 };
+pub use rescan::{RESCAN_SCHEDULE, Rescans};
 pub use scroll::{ScrollEvent, ScrollSession};
 pub use session::{HintSession, KeyBindings, SessionEvent};
 pub use settings::{Settings, SettingsError};

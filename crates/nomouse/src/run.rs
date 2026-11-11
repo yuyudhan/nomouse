@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use nomouse_core::{
     Action, ActionKind, Alphabet, Frame, Hint, HintSession, InputEvent, KeyBindings, Platform,
-    PlatformError, Rect, Scope, ScrollEvent, ScrollSession, SessionEvent,
+    PlatformError, Rect, Rescans, Scope, ScrollEvent, ScrollSession, SessionEvent,
 };
 
 /// How long continuous mode waits after a click before re-scanning, so the app can update.
@@ -224,10 +224,44 @@ const fn ended(performed: usize) -> Outcome {
     }
 }
 
+/// The outcome of an activation whose scan left nothing to label after `performed` actions.
+const fn emptied(performed: usize) -> Outcome {
+    if performed > 0 {
+        Outcome::Performed(performed)
+    } else {
+        Outcome::NoElements
+    }
+}
+
+/// Scans again while nothing is typed and redraws when the labels changed. A failed scan
+/// (say, no focused window halfway through a navigation) keeps the labels shown; a lost
+/// display surfaces from the next wait for a key.
+fn rescan(
+    platform: &mut dyn Platform,
+    settings: &Settings,
+    session: &mut HintSession,
+) -> Result<(), PlatformError> {
+    let elements = match platform.elements(settings.scope) {
+        Ok(elements) => elements,
+        Err(error) => {
+            tracing::debug!("re-scan failed, keeping the labels: {error}");
+            return Ok(());
+        }
+    };
+    if session.rescan(elements) {
+        tracing::debug!("re-scan: {} hints", session.hints().len());
+        draw(platform, session)?;
+    }
+    Ok(())
+}
+
 /// Runs one activation in `mode`. `started` is when the trigger arrived, for the
-/// hotkey-to-labels timing logged at info level. `dismissed` reports a request to toggle the
-/// labels off that arrives outside the platform's events (the daemon's command socket). When
-/// the focused window's app is in `ignore.apps`, nothing is scanned or shown.
+/// hotkey-to-labels timing logged at info level and the re-scans ([`Rescans`]): while no key
+/// is typed the elements are scanned again right after the first scan and at 1 s and 3 s
+/// (in continuous mode, counted from the scan after each action), so a page still loading
+/// gets its labels. `dismissed` reports a request to toggle the labels off that arrives
+/// outside the platform's events (the daemon's command socket). When the focused window's
+/// app is in `ignore.apps`, nothing is scanned or shown.
 ///
 /// # Errors
 /// Platform errors from scanning, drawing or acting; the overlay is hidden either way.
@@ -238,6 +272,19 @@ pub(crate) fn activate(
     started: Instant,
     dismissed: &dyn Fn() -> bool,
 ) -> Result<Outcome, PlatformError> {
+    activate_on_clock(platform, settings, mode, started, dismissed, &Instant::now)
+}
+
+/// [`activate`] with `now` telling the time, so tests can run the re-scan schedule on a
+/// scripted clock.
+fn activate_on_clock(
+    platform: &mut dyn Platform,
+    settings: &Settings,
+    mode: Mode,
+    started: Instant,
+    dismissed: &dyn Fn() -> bool,
+    now: &dyn Fn() -> Instant,
+) -> Result<Outcome, PlatformError> {
     if let Some(pattern) = ignored(platform, &settings.ignore) {
         return Ok(Outcome::Ignored(pattern));
     }
@@ -246,6 +293,7 @@ pub(crate) fn activate(
     let mut performed = 0;
     let mut scans = 0_usize;
     loop {
+        let shown_from = if scans == 0 { started } else { now() };
         let elements = platform.elements(settings.scope)?;
         if mode == Mode::Scroll {
             let areas = ScrollSession::areas_of(&elements);
@@ -259,19 +307,29 @@ pub(crate) fn activate(
             }
         }
         let mut session = mode.session(settings, elements);
-        if session.is_empty() {
-            return Ok(if performed > 0 {
-                Outcome::Performed(performed)
-            } else {
-                Outcome::NoElements
-            });
+        // An empty first scan shows nothing. After a continuous-mode action the page may be
+        // navigating: the empty overlay keeps the keyboard (Escape ends) while the re-scans
+        // look for the next page's targets, and the activation ends only if none arrive.
+        if session.is_empty() && performed == 0 {
+            return Ok(Outcome::NoElements);
         }
         draw(platform, &session)?;
         scans += 1;
         log_scan(session.hints(), scans, started);
+        let mut rescans = Rescans::new(shown_from);
         let action = loop {
-            let key = match wait(platform, POLL, dismissed)? {
-                Wait::Key(key) => key,
+            if rescans.take_due(now()) {
+                rescan(platform, settings, &mut session)?;
+            }
+            if session.is_empty() && !rescans.is_pending() {
+                return Ok(emptied(performed));
+            }
+            let timeout = rescans.until_next(now()).map_or(POLL, |due| due.min(POLL));
+            let key = match wait(platform, timeout, dismissed)? {
+                Wait::Key(key) => {
+                    rescans.cancel();
+                    key
+                }
                 Wait::Dismissed => return Ok(ended(performed)),
                 Wait::Timeout => continue,
             };
@@ -327,7 +385,9 @@ mod config_options;
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::VecDeque;
+    use std::rc::Rc;
 
     use nomouse_core::{
         AppIdentity, Element, ElementId, ElementSource, Hint, Hotkey, HotkeyId, HotkeySource,
@@ -351,12 +411,30 @@ mod tests {
         outlined: Vec<Option<Rect>>,
         /// The focused window's app.
         app: Option<AppIdentity>,
+        /// The scripted clock, from the trigger: a poll that times out advances it by its
+        /// timeout.
+        clock: Rc<Cell<Duration>>,
+        /// When each scan ran, on `clock`.
+        scanned_at: Vec<Duration>,
+        /// A page that changes: a scan at or after an entry's time sees that entry's elements
+        /// (the last such entry), an earlier scan sees `elements`.
+        pages: Vec<(Duration, Vec<Element>)>,
+        /// The labels of each frame drawn, with their elements' centres.
+        frames: Vec<Vec<(String, Point)>>,
     }
 
     impl ElementSource for Fake {
         fn elements(&mut self, _scope: Scope) -> Result<Vec<Element>, PlatformError> {
             self.scans += 1;
-            Ok(self.elements.clone())
+            let now = self.clock.get();
+            self.scanned_at.push(now);
+            let page = self
+                .pages
+                .iter()
+                .rev()
+                .find(|(at, _)| *at <= now)
+                .map_or(&self.elements, |(_, elements)| elements);
+            Ok(page.clone())
         }
 
         fn focused_app(&mut self) -> Result<Option<AppIdentity>, PlatformError> {
@@ -367,6 +445,12 @@ mod tests {
     impl Overlay for Fake {
         fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError> {
             self.shown.push((hints.len(), typed.to_owned()));
+            self.frames.push(
+                hints
+                    .iter()
+                    .map(|hint| (hint.label.clone(), hint.element.target()))
+                    .collect(),
+            );
             self.visible = true;
             Ok(())
         }
@@ -402,10 +486,15 @@ mod tests {
             Ok(())
         }
 
-        fn next_event(&mut self, _timeout: Duration) -> Result<Option<InputEvent>, PlatformError> {
-            self.keys
+        fn next_event(&mut self, timeout: Duration) -> Result<Option<InputEvent>, PlatformError> {
+            let event = self
+                .keys
                 .pop_front()
-                .ok_or_else(|| PlatformError::Backend("script exhausted".to_owned()))
+                .ok_or_else(|| PlatformError::Backend("script exhausted".to_owned()))?;
+            if event.is_none() {
+                self.clock.set(self.clock.get() + timeout);
+            }
+            Ok(event)
         }
     }
 
@@ -469,8 +558,20 @@ mod tests {
         }
     }
 
+    /// Runs `mode` with `settings` on the fake's scripted clock.
+    fn run_with(
+        platform: &mut Fake,
+        settings: &Settings,
+        mode: Mode,
+    ) -> Result<Outcome, PlatformError> {
+        let clock = Rc::clone(&platform.clock);
+        let trigger = Instant::now();
+        let now = move || trigger + clock.get();
+        activate_on_clock(platform, settings, mode, trigger, &|| false, &now)
+    }
+
     fn run(platform: &mut Fake, mode: Mode) -> Result<Outcome, PlatformError> {
-        activate(platform, &settings(), mode, Instant::now(), &|| false)
+        run_with(platform, &settings(), mode)
     }
 
     fn homerow(platform: &mut Fake) -> Result<Outcome, PlatformError> {
@@ -478,13 +579,7 @@ mod tests {
             keys: KeyBindings::Homerow,
             ..settings()
         };
-        activate(
-            platform,
-            &homerow,
-            Mode::Once(ActionKind::Click),
-            Instant::now(),
-            &|| false,
-        )
+        run_with(platform, &homerow, Mode::Once(ActionKind::Click))
     }
 
     #[test]
@@ -682,7 +777,8 @@ mod tests {
         );
         assert_eq!(p.performed, vec![Action::click(Point::new(105, 5))]);
         assert!(!p.visible);
-        assert_eq!(p.scans, 1);
+        // The scan, then the immediate re-scan before the first key.
+        assert_eq!(p.scans, 2);
     }
 
     #[test]
@@ -705,7 +801,8 @@ mod tests {
             run(&mut p, Mode::Continuous(ActionKind::RightClick)),
             Ok(Outcome::Performed(3))
         );
-        assert_eq!(p.scans, 4);
+        // Four labellings (three clicks, then Escape), each scanned and re-scanned at once.
+        assert_eq!(p.scans, 8);
         assert!(p.performed.iter().all(|a| matches!(
             a,
             Action::Click {
@@ -733,7 +830,7 @@ mod tests {
                 Action::click(Point::new(105, 5))
             ]
         );
-        assert_eq!(p.scans, 2);
+        assert_eq!(p.scans, 4);
         assert_eq!(p.keys.len(), 2);
         assert!(!p.visible);
     }
@@ -838,5 +935,177 @@ mod tests {
             Ok(Outcome::Performed(1))
         );
         assert_eq!(p.performed[1], Action::scroll(LARGE, 0, 40));
+    }
+
+    const fn ms(millis: u64) -> Duration {
+        Duration::from_millis(millis)
+    }
+
+    /// `count` polls that time out, then `keys`.
+    fn after_polls(count: usize, keys: &str) -> String {
+        format!("{}{keys}", "_".repeat(count))
+    }
+
+    fn button(id: u64, x: i32, y: i32) -> Element {
+        Element {
+            id: ElementId(id),
+            role: Role::Button,
+            name: String::new(),
+            description: String::new(),
+            value: String::new(),
+            bounds: Rect::new(x, y, 10, 10),
+            enabled: true,
+            offscreen: false,
+        }
+    }
+
+    fn frame(labels: &[(&str, i32)]) -> Vec<(String, Point)> {
+        labels
+            .iter()
+            .map(|(label, x)| ((*label).to_owned(), Point::new(x + 5, 5)))
+            .collect()
+    }
+
+    #[test]
+    fn rescans_run_at_once_then_at_one_and_three_seconds_while_idle() {
+        let mut p = fake(3, &after_polls(70, "!"));
+        assert_eq!(
+            run(&mut p, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Cancelled)
+        );
+        assert_eq!(p.scanned_at, [ms(0), ms(0), ms(1000), ms(3000)]);
+        assert_eq!(p.keys.len(), 0);
+    }
+
+    #[test]
+    fn a_typed_key_cancels_the_pending_rescans() {
+        // A key that matches no label, typed after the 1 s re-scan.
+        let mut late = fake(3, &after_polls(25, &format!("z{}!", "_".repeat(60))));
+        assert_eq!(
+            run(&mut late, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Cancelled)
+        );
+        assert_eq!(late.scanned_at, [ms(0), ms(0), ms(1000)]);
+        // A label prefix typed at once: only the immediate re-scan ran.
+        let mut early = fake(20, &format!("a{}!", "_".repeat(80)));
+        assert_eq!(
+            run(&mut early, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Cancelled)
+        );
+        assert_eq!(early.scanned_at, [ms(0), ms(0)]);
+        assert_eq!(
+            early.shown.last().map(|(_, typed)| typed.as_str()),
+            Some("a")
+        );
+    }
+
+    #[test]
+    fn closing_cancels_the_pending_rescans() {
+        // Escape, the activation hotkey and a picked target, each half a second in.
+        for (keys, outcome) in [
+            ("!", Outcome::Cancelled),
+            ("@", Outcome::Cancelled),
+            ("s", Outcome::Performed(1)),
+        ] {
+            let mut p = fake(3, &after_polls(10, keys));
+            assert_eq!(run(&mut p, Mode::Once(ActionKind::Click)), Ok(outcome));
+            assert_eq!(p.scanned_at, [ms(0), ms(0)], "{keys}");
+            assert!(!p.visible);
+        }
+        // A dismissal from the command socket.
+        let mut p = fake(3, "_");
+        let clock = Rc::clone(&p.clock);
+        let trigger = Instant::now();
+        let now = move || trigger + clock.get();
+        let once = Mode::Once(ActionKind::Click);
+        let outcome = activate_on_clock(&mut p, &settings(), once, trigger, &|| true, &now);
+        assert_eq!(outcome, Ok(Outcome::Cancelled));
+        assert_eq!(p.scanned_at, [ms(0), ms(0)]);
+    }
+
+    #[test]
+    fn labels_stay_stable_across_a_rescan_that_adds_targets() {
+        let mut p = fake(2, &after_polls(60, "d"));
+        let first = p.elements.clone();
+        // At 1 s a button arrives between the two; at 3 s the first one is gone.
+        let mut grown = first.clone();
+        grown.push(button(7, 50, 0));
+        let shrunk = vec![first[1].clone(), button(8, 50, 0)];
+        p.pages = vec![(ms(1000), grown), (ms(3000), shrunk)];
+        assert_eq!(
+            run(&mut p, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Performed(1))
+        );
+        assert_eq!(
+            p.frames,
+            [
+                frame(&[("a", 0), ("s", 100)]),
+                frame(&[("a", 0), ("d", 50), ("s", 100)]),
+                frame(&[("d", 50), ("s", 100)]),
+            ]
+        );
+        assert_eq!(p.performed, [Action::click(Point::new(55, 5))]);
+    }
+
+    #[test]
+    fn a_rescan_that_finds_nothing_new_draws_nothing() {
+        let mut p = fake(3, &after_polls(70, "!"));
+        // The same buttons in another order with other ids, as another snapshot reports them.
+        let mut again = p.elements.clone();
+        again.reverse();
+        for (id, element) in (10..).zip(&mut again) {
+            element.id = ElementId(id);
+        }
+        p.pages = vec![(ms(500), again)];
+        assert_eq!(
+            run(&mut p, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Cancelled)
+        );
+        assert_eq!(p.scans, 4);
+        assert_eq!(p.frames, [frame(&[("a", 0), ("s", 100), ("d", 200)])]);
+    }
+
+    #[test]
+    fn continuous_mode_rescans_after_each_click_and_waits_out_a_navigation() {
+        // The click at 250 ms navigates: the page is empty until the next one loads at 1 s.
+        let mut p = fake(2, &after_polls(5, &format!("a{}a!", "_".repeat(20))));
+        p.pages = vec![(ms(200), Vec::new()), (ms(1000), vec![button(5, 300, 0)])];
+        assert_eq!(
+            run(&mut p, Mode::Continuous(ActionKind::Click)),
+            Ok(Outcome::Performed(2))
+        );
+        assert_eq!(
+            p.performed,
+            [
+                Action::click(Point::new(5, 5)),
+                Action::click(Point::new(305, 5))
+            ]
+        );
+        // The second labelling's schedule counts from its scan at 250 ms.
+        assert_eq!(
+            p.scanned_at,
+            [ms(0), ms(0), ms(250), ms(250), ms(1250), ms(1250), ms(1250)]
+        );
+        assert_eq!(
+            p.frames,
+            [
+                frame(&[("a", 0), ("s", 100)]),
+                Vec::new(),
+                frame(&[("a", 300)]),
+                frame(&[("a", 300)])
+            ]
+        );
+    }
+
+    #[test]
+    fn continuous_mode_ends_when_no_target_arrives_after_a_click() {
+        let mut p = fake(2, &after_polls(5, &format!("a{}", "_".repeat(70))));
+        p.pages = vec![(ms(200), Vec::new())];
+        assert_eq!(
+            run(&mut p, Mode::Continuous(ActionKind::Click)),
+            Ok(Outcome::Performed(1))
+        );
+        assert_eq!(p.scanned_at.last(), Some(&ms(3250)));
+        assert!(!p.visible);
     }
 }

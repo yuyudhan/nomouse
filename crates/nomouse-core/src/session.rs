@@ -22,12 +22,14 @@
 //! modifier digits) pick another match; Backspace with no label typed returns to editing the
 //! query.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::action::{Action, ActionKind, MouseButton};
-use crate::element::{Element, Point, Role};
+use crate::element::{Element, Point, Rect, Role};
 use crate::filter::{FilterState, LabelFilter};
-use crate::hints::{Alphabet, Hint, assign_hints, generate_labels};
+use crate::hints::{Alphabet, Hint, assign_hints, generate_labels, reassign_hints};
 use crate::hotkey::{KeyEvent, KeyPress, Modifiers};
 use crate::search::{is_searchable, rank};
 
@@ -120,6 +122,22 @@ const fn types_text(modifiers: Modifiers) -> bool {
     !(modifiers.ctrl || modifiers.alt || modifiers.meta)
 }
 
+/// The elements an action of `kind` labels, as [`HintSession::new`] describes.
+fn targets(elements: Vec<Element>, kind: ActionKind) -> Vec<Element> {
+    let visible = elements.into_iter().filter(|e| !e.offscreen);
+    if kind == ActionKind::Scroll {
+        let (areas, rest): (Vec<Element>, Vec<Element>) =
+            visible.partition(|e| e.role == Role::ScrollArea && e.enabled && !e.bounds.is_empty());
+        if areas.is_empty() {
+            rest.into_iter().filter(Element::is_clickable).collect()
+        } else {
+            areas
+        }
+    } else {
+        visible.filter(Element::is_clickable).collect()
+    }
+}
+
 impl HintSession {
     /// Labels the elements an action of `kind` targets (others are dropped).
     ///
@@ -128,21 +146,54 @@ impl HintSession {
     /// clickable elements are labelled instead. Every other kind labels the clickable elements.
     /// Elements scrolled out of view ([`Element::offscreen`]) get no label: it could not be seen.
     pub fn new(alphabet: &Alphabet, elements: Vec<Element>, kind: ActionKind) -> Self {
-        let visible = elements.into_iter().filter(|e| !e.offscreen);
-        let targets = if kind == ActionKind::Scroll {
-            let (areas, rest): (Vec<Element>, Vec<Element>) = visible
-                .partition(|e| e.role == Role::ScrollArea && e.enabled && !e.bounds.is_empty());
-            if areas.is_empty() {
-                rest.into_iter().filter(Element::is_clickable).collect()
-            } else {
-                areas
-            }
-        } else {
-            visible.filter(Element::is_clickable).collect()
-        };
         let mut session = Self::empty(alphabet, kind, None);
-        session.set_hints(assign_hints(alphabet, targets));
+        session.set_hints(assign_hints(alphabet, targets(elements, kind)));
         session
+    }
+
+    /// Takes in a fresh scan of `elements` while the user has typed nothing, for a page that
+    /// is still loading: a target still there keeps its label, new targets get free labels and
+    /// gone ones lose theirs ([`reassign_hints`]), and the highlight stays on its label while
+    /// that is still shown. Search mode takes the scan as its candidates (no label is shown
+    /// before a query).
+    ///
+    /// Returns whether the overlay must be redrawn: `false` when the labels, their places and
+    /// the highlight are as before. Once a key has changed the session (a typed label
+    /// character, a query, a toggled modifier, a drag start, an armed Return) the scan is
+    /// ignored and nothing changes.
+    pub fn rescan(&mut self, elements: Vec<Element>) -> bool {
+        let untouched = self.filter.typed().is_empty()
+            && self.drag_from.is_none()
+            && self.modifiers.is_empty()
+            && self.armed.is_none();
+        if !untouched {
+            return false;
+        }
+        if let Some(search) = &mut self.search {
+            if search.query.is_empty() && !search.picking {
+                search.candidates = elements.into_iter().filter(is_searchable).collect();
+            }
+            return false;
+        }
+        let hints = reassign_hints(&self.alphabet, &self.hints, targets(elements, self.kind));
+        let before: HashSet<(&str, Rect)> = self
+            .hints
+            .iter()
+            .map(|hint| (hint.label.as_str(), hint.element.bounds))
+            .collect();
+        let moved = hints.len() != before.len()
+            || hints
+                .iter()
+                .any(|hint| !before.contains(&(hint.label.as_str(), hint.element.bounds)));
+        let focused = self.focused().map(|hint| hint.label.clone());
+        self.set_hints(hints);
+        if let Some(index) = focused
+            .as_deref()
+            .and_then(|label| self.hints.iter().position(|hint| hint.label == label))
+        {
+            self.focus = Some(index);
+        }
+        moved || self.focused().map(|hint| hint.label.as_str()) != focused.as_deref()
     }
 
     /// Starts search-by-text over the named `elements` (interactive ones and static text): no
@@ -952,5 +1003,95 @@ mod tests {
             session.key(KeyPress::Enter),
             SessionEvent::Perform(Action::click(Point::new(5, 105)))
         );
+    }
+
+    /// The buttons of `elements()` plus one more named `name` at height `y`.
+    fn with_button(name: &str, y: i32) -> Vec<Element> {
+        let mut scan = elements();
+        scan.push(Element {
+            id: ElementId(9),
+            role: Role::Button,
+            name: name.to_owned(),
+            description: String::new(),
+            value: String::new(),
+            bounds: Rect::new(0, y, 10, 10),
+            enabled: true,
+            offscreen: false,
+        });
+        scan
+    }
+
+    fn shown(session: &HintSession) -> Vec<(String, String)> {
+        session
+            .visible()
+            .into_iter()
+            .map(|hint| (hint.element.name, hint.label))
+            .collect()
+    }
+
+    #[test]
+    fn a_rescan_labels_new_targets_and_keeps_the_old_labels() {
+        let mut session = HintSession::new(&Alphabet::default(), elements(), ActionKind::Click);
+        let pair = |name: &str, label: &str| (name.to_owned(), label.to_owned());
+        assert_eq!(shown(&session), [pair("e0", "a"), pair("e1", "s")]);
+        // A button arrives above e1: it gets a free label, e0 and e1 keep theirs.
+        assert!(session.rescan(with_button("late", 50)));
+        assert_eq!(
+            shown(&session),
+            [pair("e0", "a"), pair("late", "d"), pair("e1", "s")]
+        );
+        assert_eq!(session.focused().map(|hint| hint.label.as_str()), Some("a"));
+        assert_eq!(
+            session.key(KeyPress::Char('d')),
+            SessionEvent::Perform(Action::click(Point::new(5, 55)))
+        );
+    }
+
+    #[test]
+    fn a_rescan_that_finds_the_same_targets_changes_nothing() {
+        let mut session = HintSession::new(&Alphabet::default(), elements(), ActionKind::Click);
+        let before = shown(&session);
+        // Same targets with new ids, as a backend reports them in another snapshot.
+        let mut again = elements();
+        again.reverse();
+        for (id, element) in (10..).zip(&mut again) {
+            element.id = ElementId(id);
+        }
+        assert!(!session.rescan(again));
+        assert_eq!(shown(&session), before);
+    }
+
+    #[test]
+    fn a_rescan_drops_gone_targets_and_moves_the_highlight_off_them() {
+        let mut session = HintSession::new(&Alphabet::default(), elements(), ActionKind::Click);
+        let only_e1: Vec<Element> = elements().into_iter().skip(1).collect();
+        assert!(session.rescan(only_e1));
+        assert_eq!(shown(&session), [("e1".to_owned(), "s".to_owned())]);
+        assert_eq!(session.focused().map(|hint| hint.label.as_str()), Some("s"));
+        assert!(session.rescan(Vec::new()));
+        assert!(session.is_empty());
+    }
+
+    #[test]
+    fn a_rescan_after_a_key_changed_the_session_is_ignored() {
+        let alphabet = Alphabet::default();
+        let many: Vec<Element> = (0..20)
+            .map(|i| with_button("x", i * 20)[3].clone())
+            .collect();
+        let mut typed = HintSession::new(&alphabet, many, ActionKind::Click);
+        assert_eq!(typed.key(KeyPress::Char('a')), SessionEvent::Narrowed);
+        assert!(!typed.rescan(with_button("late", 50)));
+        assert_eq!(typed.hints().len(), 20);
+        let mut toggled = HintSession::new(&alphabet, elements(), ActionKind::Click);
+        assert!(matches!(
+            toggled.key(KeyPress::Char('2')),
+            SessionEvent::ModifiersChanged(_)
+        ));
+        assert!(!toggled.rescan(with_button("late", 50)));
+        assert_eq!(toggled.hints().len(), 2);
+        let mut search = HintSession::search(&alphabet, elements(), ActionKind::Click);
+        assert!(!search.rescan(with_button("late", 50)));
+        assert_eq!(search.key(KeyPress::Char('l')), SessionEvent::Narrowed);
+        assert_eq!(shown(&search)[0].0, "late");
     }
 }

@@ -1,8 +1,12 @@
-//! Property tests: generated labels are unique, prefix-free, minimal and typable.
+//! Property tests: generated labels are unique, prefix-free, minimal and typable, and a re-scan
+//! keeps the labels of the targets still there.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use nomouse_core::{Alphabet, FilterState, LabelFilter, generate_labels};
+use nomouse_core::{
+    Alphabet, Element, ElementId, FilterState, Hint, LabelFilter, Rect, Role, assign_hints,
+    generate_labels, reassign_hints,
+};
 use proptest::prelude::*;
 
 fn alphabet() -> impl Strategy<Value = Alphabet> {
@@ -14,6 +18,40 @@ fn alphabet() -> impl Strategy<Value = Alphabet> {
     .prop_filter_map("valid alphabet", |chars| {
         Alphabet::new(&chars.into_iter().collect::<String>()).ok()
     })
+}
+
+/// The buttons of a 10-column grid at the positions `present` marks.
+fn grid(present: &[bool]) -> Vec<Element> {
+    (0..present.len())
+        .filter(|index| present[*index])
+        .map(|index| {
+            let i = i32::try_from(index).unwrap_or(0);
+            Element {
+                id: ElementId(u64::try_from(index).unwrap_or(0)),
+                role: Role::Button,
+                name: String::new(),
+                description: String::new(),
+                value: String::new(),
+                bounds: Rect::new(i % 10 * 50, i / 10 * 30, 20, 10),
+                enabled: true,
+                offscreen: false,
+            }
+        })
+        .collect()
+}
+
+fn assert_prefix_free(hints: &[Hint]) -> Result<(), TestCaseError> {
+    let mut labels: Vec<&str> = hints.iter().map(|hint| hint.label.as_str()).collect();
+    labels.sort_unstable();
+    for pair in labels.windows(2) {
+        prop_assert!(
+            !pair[1].starts_with(pair[0]),
+            "{} prefixes {}",
+            pair[0],
+            pair[1]
+        );
+    }
+    Ok(())
 }
 
 proptest! {
@@ -57,5 +95,29 @@ proptest! {
             last = filter.push(c);
         }
         prop_assert_eq!(last, FilterState::Matched(index));
+    }
+
+    #[test]
+    fn a_rescan_keeps_the_labels_of_targets_still_there(
+        alphabet in alphabet(),
+        before in prop::collection::vec(any::<bool>(), 0..120),
+        after in prop::collection::vec(any::<bool>(), 0..120),
+    ) {
+        let first = assign_hints(&alphabet, grid(&before));
+        let scan = grid(&after);
+        let second = reassign_hints(&alphabet, &first, scan.clone());
+        // Every target of the new scan has exactly one label, and the labels stay typable.
+        prop_assert_eq!(second.len(), scan.len());
+        let targets: HashSet<Rect> = second.iter().map(|hint| hint.element.bounds).collect();
+        prop_assert_eq!(targets, scan.iter().map(|e| e.bounds).collect::<HashSet<_>>());
+        assert_prefix_free(&second)?;
+        // Targets in both scans keep their labels; only a full label tree gives one up.
+        let old: HashMap<Rect, &str> =
+            first.iter().map(|hint| (hint.element.bounds, hint.label.as_str())).collect();
+        let changed = second
+            .iter()
+            .filter(|hint| old.get(&hint.element.bounds).is_some_and(|label| *label != hint.label))
+            .count();
+        prop_assert!(changed <= 1, "{changed} kept targets changed their label");
     }
 }

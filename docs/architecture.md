@@ -55,6 +55,14 @@ Every method is blocking and runs on the event-loop thread; errors are `Platform
    outlined through `Frame::area` (without one it picks an element first). Escape cancels, and
    so does an activation hotkey or a command-socket request arriving while the labels are up
    (toggle).
+   Until the first key, `nomouse_core::Rescans` runs `RESCAN_SCHEDULE` (right after the first
+   scan, then 1 s and 3 s after the hotkey, or after the scan that follows each continuous-mode
+   click): each re-scan goes through `HintSession::rescan`, whose `reassign_hints` keeps the
+   label of every target still there (same role, name and bounds, else same role and name),
+   gives new targets the shortest free labels and drops gone ones; the overlay is redrawn only
+   when a label, its place or the highlight changed. The first key, a dismissal or a pick
+   cancels the rest. After a continuous-mode click an empty scan keeps the (empty) overlay up
+   until a re-scan finds targets; the activation ends if the last one finds none.
 5. `Overlay::hide`, then `InputInjector::perform(action)`.
 
 Hint alphabet: `asdfghjk` by default, configurable; `i`, `l`, `o` are rejected as ambiguous.
