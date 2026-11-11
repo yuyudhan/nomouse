@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-11-11
+
 ### Added
 
 - Hint mode scans again while you have typed nothing: right after the first scan, at 1 s and at
