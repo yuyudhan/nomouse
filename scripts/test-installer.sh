@@ -25,9 +25,10 @@ esac
 work="$(mktemp -d)"
 server=""
 flaky=""
+www_server=""
 cleanup() {
     local pid
-    for pid in "$server" "$flaky"; do
+    for pid in "$server" "$flaky" "$www_server"; do
         if [ -n "$pid" ]; then
             kill "$pid" 2>/dev/null || true
         fi
@@ -699,6 +700,212 @@ EOF
 else
     echo "skip - this curl has no --retry-all-errors (7.71+): cut connections are not retried"
 fi
+
+# --- The one-line install leaves nothing behind ----------------------------------------------
+
+# The documented one-liner (the first sh block under "## The one-line install" in
+# docs/install.md), with only the release URL pointed at a local server, run from a fresh empty
+# folder with TMPDIR set to a fresh empty directory. Whether it installs, gets a 404 for the
+# installer or an asset, or a checksum mismatch, both must be empty afterwards: install.sh and
+# every download live in temporary directories that are removed on every exit.
+latest="https://github.com/yuyudhan/nomouse/releases/latest/download"
+fence="$(printf '\140\140\140')"
+one_liner="$(awk -v fence="$fence" '
+    /^## The one-line install$/ { section = 1; next }
+    section && /^## / { exit }
+    section && $0 == fence "sh" { block = 1; next }
+    block && $0 == fence { exit }
+    block { print }
+' "${root}/docs/install.md")"
+[[ "$one_liner" == *"${latest}/install.sh"* ]] || fail "no one-line install in docs/install.md"
+
+# Each folder of the tree is one release: ok (install.sh and good assets), badsum (a .sha256 that
+# does not match), noasset (install.sh only), hang (install.sh, and an archive the server never
+# finishes sending). Anything else, such as missing/install.sh, is a 404.
+www="${work}/www"
+for case in ok badsum noasset hang; do
+    mkdir -p "${www}/${case}"
+    cp "$installer" "${www}/${case}/install.sh"
+done
+cp "${release}/${archive}" "${release}/${archive}.sha256" "${www}/ok/"
+cp "${release}/${archive}" "${www}/badsum/"
+printf '%064d  %s\n' 0 "$archive" >"${www}/badsum/${archive}.sha256"
+python3 - "$www" "${work}/www.port" >"${work}/www.log" 2>&1 <<'EOF' &
+import os, socketserver, sys, time
+import http.server
+root, port_file = sys.argv[1], sys.argv[2]
+class Release(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.startswith("/hang/") and not self.path.endswith("/install.sh"):
+            self.send_response(200)
+            self.send_header("Content-Length", "1000000")
+            self.end_headers()
+            self.wfile.write(b"x" * 1000)
+            self.wfile.flush()
+            time.sleep(60)
+            return
+        path = os.path.join(root, self.path.lstrip("/"))
+        if os.path.isfile(path):
+            with open(path, "rb") as f:
+                body = f.read()
+            self.send_response(200)
+        else:
+            body = b"Not Found"
+            self.send_response(404)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args):
+        pass
+# TCPServer, not HTTPServer, whose fully qualified name lookup is slow on macOS runners.
+class Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    daemon_threads = True
+server = Server(("127.0.0.1", 0), Release)
+with open(port_file + ".tmp", "w") as out:
+    out.write(str(server.server_address[1]))
+os.rename(port_file + ".tmp", port_file)
+server.serve_forever()
+EOF
+www_server=$!
+for _ in $(seq 300); do
+    [ -s "${work}/www.port" ] && break
+    kill -0 "$www_server" 2>/dev/null || break
+    sleep 0.1
+done
+www_base="http://127.0.0.1:$(cat "${work}/www.port" 2>/dev/null || echo 0)"
+# Caps curl's retries of a 404 to a few seconds; the command line stays the documented one.
+printf 'retry-max-time = 3\n' >"${home}/.curlrc"
+
+# macOS's mktemp -d ignores TMPDIR (it uses the per-user temporary directory), which would hide
+# the temporary directories from the check below. This mktemp, first on the PATH of these runs,
+# makes a bare `mktemp -d` honour TMPDIR, as GNU mktemp does, and logs every path it creates to
+# TEST_MKTEMP_LOG, so the check also proves each one was removed.
+shim="${work}/shim-bin"
+mkdir -p "$shim"
+cat >"${shim}/mktemp" <<EOF
+#!/bin/sh
+if [ "\$#" -eq 1 ] && [ "\$1" = -d ]; then
+    set -- -d "\${TMPDIR:-/tmp}/tmp.XXXXXXXXXX"
+fi
+path="\$($(command -v mktemp) "\$@")" || exit 1
+echo "\$path" >>"\$TEST_MKTEMP_LOG"
+echo "\$path"
+EOF
+chmod 755 "${shim}/mktemp"
+
+# leftovers DIR...: every entry still in the DIRs, one per line.
+leftovers() {
+    local dir
+    for dir in "$@"; do
+        find "$dir" -mindepth 1 -maxdepth 1
+    done
+}
+
+# fresh_dirs: a new empty folder to run from (`here`), a new empty TMPDIR (`scratch_tmp`) and
+# the log of the temporary directories the run makes (`made`, beside them).
+fresh_dirs() {
+    here="$(mktemp -d "${work}/here.XXXXXX")"
+    scratch_tmp="$(mktemp -d "${work}/tmp.XXXXXX")"
+    made="${scratch_tmp}.made"
+    : >"$made"
+}
+
+# one_line SHELL CASE: runs the one-liner in SHELL with the release at CASE, from `here` with
+# TMPDIR `scratch_tmp` (call fresh_dirs first); prints its output, returns its status.
+one_line() {
+    local shell="$1" case="$2"
+    (cd "$here" && sandbox PATH="${shim}:${sandbox_path}" TEST_MKTEMP_LOG="$made" \
+        TMPDIR="$scratch_tmp" NOMOUSE_INSTALL_BASE="${www_base}/${case}" \
+        "$shell" -c "${one_liner//"$latest"/${www_base}/${case}}")
+}
+
+# expect_clean NAME: passes NAME when the run made temporary directories, all inside its TMPDIR,
+# and its folder and TMPDIR are both empty afterwards.
+expect_clean() {
+    local left dir
+    left="$(leftovers "$here" "$scratch_tmp")"
+    while IFS= read -r dir; do
+        if [ -e "$dir" ]; then left="${left} ${dir}"; fi
+        if [[ "$dir" != "${scratch_tmp}/"* ]]; then left="${left} ${dir}(outside TMPDIR)"; fi
+    done <"$made"
+    if [ ! -s "$made" ]; then
+        fail "$1 made no temporary directory (is the mktemp shim on its PATH?)"
+    elif [ -z "$left" ]; then
+        pass "$1 leaves the folder and TMPDIR empty ($(wc -l <"$made" | tr -d ' ') temporary directories removed)"
+    else
+        fail "$1 left files behind: $(echo "$left" | tr '\n' ' ')"
+    fi
+}
+
+shells="bash"
+if command -v zsh >/dev/null 2>&1; then shells="bash zsh"; fi
+for shell in $shells; do
+    fresh_dirs
+    if out="$(one_line "$shell" ok 2>&1)" && installed && [[ "$out" == *"checksum ok: ${archive}"* ]]; then
+        pass "${shell}: the one-liner installs"
+    else
+        fail "${shell}: the one-liner did not install: ${out}"
+    fi
+    expect_clean "${shell}: an install"
+    sandbox bash "$installer" --uninstall >/dev/null 2>&1
+
+    # case|what the output must hold
+    for expect in "missing|404" "noasset|download failed: ${www_base}/noasset/${archive}" \
+        "badsum|checksum mismatch for ${archive}"; do
+        case="${expect%%|*}"
+        fresh_dirs
+        if out="$(one_line "$shell" "$case" 2>&1)"; then
+            fail "${shell}: ${case} exited 0: ${out}"
+        elif ! absent; then
+            fail "${shell}: ${case} installed something: ${out}"
+        elif [[ "$out" != *"${expect#*|}"* ]]; then
+            fail "${shell}: ${case} did not say '${expect#*|}': ${out}"
+        else
+            pass "${shell}: ${case} fails loudly (${expect#*|}) and installs nothing"
+        fi
+        expect_clean "${shell}: ${case}"
+    done
+done
+
+# Interrupted (Ctrl-C) or killed mid-download, install.sh still removes its work directory. The
+# installer runs in its own process group, started through Python so that, though started in
+# the background, it does not inherit an ignored SIGINT; each signal goes to the whole group, as
+# Ctrl-C in a terminal does, while curl waits on the hanging archive.
+apps=()
+if [ "$os" = Darwin ]; then apps=(NOMOUSE_APP_DIR="${home}/Applications"); fi
+for signal in INT TERM HUP; do
+    fresh_dirs
+    rm -f "${work}/hang.pid"
+    (cd "$here" && python3 -c 'import os, signal, sys
+os.setsid()
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+with open(sys.argv[1], "w") as out:
+    out.write(str(os.getpid()))
+os.execvp(sys.argv[2], sys.argv[2:])' "${work}/hang.pid" env -i HOME="$home" \
+        PATH="${shim}:${sandbox_path}" TEST_MKTEMP_LOG="$made" TERM=dumb "${apps[@]}" \
+        TMPDIR="$scratch_tmp" NOMOUSE_INSTALL_BASE="${www_base}/hang" \
+        bash "$installer" >"${work}/hang.log" 2>&1) &
+    hung=$!
+    for _ in $(seq 300); do
+        [ -n "$(find "$scratch_tmp" -mindepth 2 -name "$archive" 2>/dev/null)" ] && break
+        sleep 0.1
+    done
+    if [ -z "$(find "$scratch_tmp" -mindepth 2 -name "$archive" 2>/dev/null)" ]; then
+        fail "${signal}: the installer never started downloading: $(cat "${work}/hang.log")"
+    fi
+    kill -s "$signal" -- "-$(cat "${work}/hang.pid")" 2>/dev/null || true
+    status=0
+    # (wait's stderr: bash's own "Hangup" notice for a job a signal ended.)
+    wait "$hung" 2>/dev/null || status=$?
+    if [ "$status" -eq 0 ]; then
+        fail "${signal}: the interrupted installer exited 0"
+    else
+        pass "${signal}: the interrupted installer exits non-zero (${status})"
+    fi
+    expect_clean "${signal} mid-download"
+done
+kill "$www_server" 2>/dev/null || true
+rm -f "${home}/.curlrc"
 
 # --- The caller's environment was never used -------------------------------------------------
 

@@ -14,11 +14,17 @@ pub const LATEST_URL: &str = "https://github.com/yuyudhan/nomouse/releases/lates
 /// The installer one-liner (macOS and Linux) that installs or updates to the newest release.
 /// Until releases are Developer-ID signed, this is the update path to offer on macOS: the
 /// installer clears the download quarantine that makes Gatekeeper refuse a browser-downloaded
-/// `.dmg` or `.app.zip`. It downloads `install.sh` first and runs it only when the download
-/// worked: piped into `bash`, a failed download (a 404, a cut connection) would run an empty
-/// script and report success with nothing installed.
-pub const INSTALL_COMMAND: &str = "curl -fsSLO --retry 5 --retry-all-errors \
-     https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash install.sh";
+/// `.dmg` or `.app.zip`. It downloads `install.sh` into a fresh temporary directory, never the
+/// current folder, and runs it only when the download worked: piped into `bash`, a failed
+/// download (a 404, a cut connection) would run an empty script and report success with
+/// nothing installed. The subshell's trap removes that directory however the command ends
+/// (done, failed, Ctrl-C) and keeps the installer's exit status.
+pub const INSTALL_COMMAND: &str = concat!(
+    r#"(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && "#,
+    r#"curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" "#,
+    "https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh",
+    r#" && bash "$d/install.sh")"#
+);
 
 /// Where the release notes of `version` (`0.1.3`) are.
 pub fn release_url(version: &str) -> String {
@@ -182,15 +188,17 @@ mod tests {
     }
 
     #[test]
-    fn the_install_command_downloads_the_latest_installer_then_runs_it() {
+    fn the_install_command_downloads_the_latest_installer_into_a_temporary_directory() {
         assert_eq!(
             INSTALL_COMMAND,
-            "curl -fsSLO --retry 5 --retry-all-errors \
-             https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh \
-             && bash install.sh"
+            r#"(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash "$d/install.sh")"#
         );
         assert!(INSTALL_COMMAND.contains(&format!("{LATEST_URL}/download/install.sh")));
         assert!(!INSTALL_COMMAND.contains('|'), "never piped into a shell");
+        assert!(
+            !INSTALL_COMMAND.contains("-fsSLO"),
+            "never saved in the current folder"
+        );
     }
 
     /// The one line under "The one-line install" in docs/install.md, which the README shows and

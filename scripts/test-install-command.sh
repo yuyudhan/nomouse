@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Tests the documented one-line install (docs/install.md, "The one-line install") against a
 # local HTTP server: a 404 makes the command exit non-zero without running anything, after curl
-# retried it; a served install.sh is saved in the current folder and run with bash. The command
-# is the documented one with only the release URL pointed at 127.0.0.1.
+# retried it; a served install.sh is downloaded into a temporary directory and run with bash.
+# Either way the folder it runs from and its TMPDIR are empty afterwards. The command is the
+# documented one with only the release URL pointed at 127.0.0.1. (scripts/test-installer.sh
+# runs the same command with the real install.sh and a fake release.)
 #
 # A .curlrc with retry-max-time (in CURL_HOME and HOME) keeps the retries of a 404 to a few
 # seconds; the command line itself is unchanged.
@@ -92,15 +94,30 @@ done
 base="http://127.0.0.1:$(cat "${tmp}/port")"
 printf 'retry-max-time = 3\n' >"${tmp}/home/.curlrc"
 
-# Runs the documented command with the release URL replaced by $1, in a fresh folder.
+# Runs the documented command with the release URL replaced by $1, in a fresh folder (`here`)
+# with a fresh TMPDIR (`scratch_tmp`).
 run() {
-    local work
-    work="$(mktemp -d "${tmp}/run.XXXXXX")"
-    (cd "$work" && CURL_HOME="${tmp}/home" HOME="${tmp}/home" bash -c "${command//"$release"/$1}")
+    (cd "$here" && CURL_HOME="${tmp}/home" HOME="${tmp}/home" TMPDIR="$scratch_tmp" \
+        bash -c "${command//"$release"/$1}")
+}
+fresh_dirs() {
+    here="$(mktemp -d "${tmp}/run.XXXXXX")"
+    scratch_tmp="$(mktemp -d "${tmp}/tmp.XXXXXX")"
+}
+# expect_clean NAME: passes NAME when `here` and `scratch_tmp` are both empty.
+expect_clean() {
+    local left
+    left="$(find "$here" "$scratch_tmp" -mindepth 1 -maxdepth 1)"
+    if [ -z "$left" ]; then
+        pass "$1 leaves the folder and TMPDIR empty"
+    else
+        fail "$1 left files behind: $(echo "$left" | tr '\n' ' ')"
+    fi
 }
 
 # 1. A 404: curl fails, the command exits non-zero and bash runs nothing.
 rm -f "${tmp}/ran"
+fresh_dirs
 if out="$(run "${base}/missing" 2>&1)"; then
     fail "a 404 exited 0: ${out}"
 elif [ -e "${tmp}/ran" ] || [[ "$out" == *"install.sh ran"* ]]; then
@@ -116,14 +133,17 @@ if [ "$tries" -gt 1 ]; then
 else
     fail "curl did not retry the 404 (${tries} requests)"
 fi
+expect_clean "a 404"
 
-# 2. A served install.sh is saved, then run.
+# 2. A served install.sh is downloaded, then run.
 rm -f "${tmp}/ran"
+fresh_dirs
 if out="$(run "${base}/ok" 2>&1)" && [ -e "${tmp}/ran" ] && [[ "$out" == *"install.sh ran"* ]]; then
     pass "a served install.sh is downloaded and run"
 else
     fail "the served install.sh did not run: ${out}"
 fi
+expect_clean "a served install.sh"
 
 if [ "$failures" -ne 0 ]; then
     echo "test-install-command: ${failures} failed" >&2

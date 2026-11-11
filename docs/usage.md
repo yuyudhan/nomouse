@@ -146,7 +146,7 @@ while paused or unable to run). Its menu:
 | Settings… (`cmd+,`) | the settings window |
 | Run doctor… | `nomouse doctor`'s report in a window, with a Copy button |
 | Start at login | registers nomouse.app as a login item (System Settings › General › Login Items) |
-| Check for updates… | asks GitHub for the latest release; when it is newer, its window shows the one-line install (`curl -fsSLO --retry 5 --retry-all-errors https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash install.sh`): **Copy Install Command** puts it on the clipboard to paste into Terminal, **Open Release Page** opens the release. Use the command rather than the `.dmg` there, which a browser quarantines; then allow nomouse again ([why](install.md#updating)) |
+| Check for updates… | asks GitHub for the latest release; when it is newer, its window shows the one-line install (`(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash "$d/install.sh")`, which downloads the installer into a temporary directory and removes it afterwards): **Copy Install Command** puts it on the clipboard to paste into Terminal, **Open Release Page** opens the release. Use the command rather than the `.dmg` there, which a browser quarantines; then allow nomouse again ([why](install.md#updating)) |
 | About nomouse, Quit nomouse (`cmd+q`) | |
 
 The settings window has these pages:

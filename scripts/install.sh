@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # Installs, updates or uninstalls nomouse on macOS and Linux, without sudo. Published with every
 # GitHub release as releases/latest/download/install.sh; README.md#install has the one-line
-# command that downloads it with curl, then runs it (`... -fsSLO .../install.sh && bash
-# install.sh`). Downloading first matters: piped into bash, a failed download (a 404, a cut
-# connection) runs an empty script and exits 0, so it looks like success with nothing installed.
+# command, which downloads it into a fresh temporary directory, runs it from there only when the
+# download worked, and removes that directory however it ends:
+#   (d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL ... -o "$d/install.sh"
+#   .../install.sh && bash "$d/install.sh")
+# Downloading first matters: piped into bash, a failed download (a 404, a cut connection) runs an
+# empty script and exits 0, so it looks like success with nothing installed.
+#
+# Every download goes into one private `mktemp -d` directory, removed on every exit (success,
+# error, Ctrl-C, kill); nothing is written to the current directory.
 #
 # Piping (the one-liner before 0.1.8) still works when the download does: all work happens in
 # main, called on the last line, so bash has read the whole script before anything runs.
-# Options go after the script (`bash install.sh --uninstall`; `bash -s --` when piped).
+# Options go after the script (`bash "$d/install.sh" --uninstall`; `bash -s --` when piped).
 #
 # What it installs, after checking each download against the release's .sha256 and running the
 # downloaded nomouse once (`--version`), so a build this system cannot start fails the install:
@@ -77,7 +83,7 @@ usage() {
     cat <<'EOF'
 Install, update or uninstall nomouse (macOS and Linux, no sudo).
 
-Options (after "bash install.sh"; after "bash -s --" when piped):
+Options (after the script: bash "$d/install.sh" --uninstall; after "bash -s --" when piped):
   --version X.Y.Z    install that release instead of the latest
   --from DIR         install from a directory holding the release assets
   --uninstall        remove nomouse, keep the config
@@ -668,6 +674,30 @@ linux_next_steps() {
     step "check everything at any time with: nomouse doctor"
 }
 
+# Removes this run's work directory, if it made one: the EXIT trap, so every way out of the
+# script runs it.
+remove_work() {
+    if [ -n "$work" ]; then
+        rm -rf "$work"
+        work=""
+    fi
+}
+
+# Creates `work`, the private directory under TMPDIR that every download and unpacked file of
+# this run goes into, and removes it however the script ends: finished, failed (fail exits),
+# interrupted (Ctrl-C) or killed with HUP or TERM, whose traps exit with the signal's usual
+# status and so run the EXIT trap. The traps come first, so no moment leaves it behind. Nothing
+# is ever written to the current directory.
+work_dir() {
+    local tmp="${TMPDIR:-/tmp}"
+    trap remove_work EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    work="$(mktemp -d "${tmp%/}/nomouse-install.XXXXXX")" ||
+        fail "cannot create a temporary directory in ${tmp} (set TMPDIR to a writable directory)"
+}
+
 install_release() {
     local bin_dir="$1" target
     target="$(asset_for "$(uname -s)" "$(uname -m)")"
@@ -677,9 +707,7 @@ install_release() {
             net+=(--retry-all-errors)
         fi
     fi
-    work="$(mktemp -d)"
-    # shellcheck disable=SC2064 # expand now: the path is fixed for this run
-    trap "rm -rf '${work}'" EXIT
+    work_dir
 
     if [ -n "$from" ]; then
         say "installing from ${from}"

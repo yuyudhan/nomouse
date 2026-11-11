@@ -7,6 +7,22 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Changed
+
+- The one-line install no longer leaves `install.sh` in the folder it runs in:
+  `(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL ... -o "$d/install.sh"
+  .../install.sh && bash "$d/install.sh")` downloads it into a temporary directory, runs it only
+  when the download worked (a 404 or a cut download still fails with curl's error and a non-zero
+  exit) and removes the directory however it ends, Ctrl-C included. Options go after the script
+  inside the parentheses (`bash "$d/install.sh" --uninstall)`). The README, docs, release notes,
+  the macOS **Copy Install Command** and the Linux update notification use the new command.
+  `install.sh` keeps its downloads in one `nomouse-install.XXXXXX` directory under `TMPDIR`
+  and removes it on every exit: success, an error (a 404, a checksum mismatch), Ctrl-C, HUP and
+  TERM. `scripts/test-installer.sh` runs the documented command in bash and zsh with the real
+  installer against a local server, from an empty folder with an empty `TMPDIR`, and checks both
+  are empty after an install, a 404 of the installer or of an asset, a checksum mismatch, and
+  each of those signals mid-download.
+
 ## [0.1.8] - 2026-11-10
 
 ### Added

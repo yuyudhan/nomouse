@@ -18,13 +18,14 @@ nomouse clicks it.
 ## Install
 
 ```sh
-curl -fsSLO --retry 5 --retry-all-errors https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash install.sh
+(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash "$d/install.sh")
 ```
 
 One command for macOS 11+ (Apple silicon and Intel) and Linux (x86_64 and aarch64, glibc 2.35+,
-X11 and Wayland). It saves `install.sh` in the current folder, then runs it only if the download
-worked. No sudo: it verifies the download's SHA-256, installs `nomouse.app` on macOS or the
-`nomouse` binary in `~/.local/bin` on Linux, and prints the next step for your system.
+X11 and Wayland), in bash or zsh. It downloads `install.sh` into a temporary directory, runs it
+only if the download worked, and removes that directory afterwards: nothing is left in the
+current folder. No sudo: it verifies the download's SHA-256, installs `nomouse.app` on macOS or
+the `nomouse` binary in `~/.local/bin` on Linux, and prints the next step for your system.
 
 Debian and Ubuntu `.deb` packages, the Windows build (x86_64, and Windows 11 on ARM through
 emulation), every installer option: [docs/install.md](docs/install.md).
@@ -158,7 +159,7 @@ Every Linux page in light and dark: `docs/media/settings-<page>-<light|dark>.png
 ## Uninstall
 
 ```sh
-curl -fsSLO https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash install.sh --uninstall
+(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash "$d/install.sh" --uninstall)
 ```
 
 Removes the app or binary and keeps your config (add `--purge` to delete it too). On macOS,

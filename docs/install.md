@@ -15,13 +15,18 @@
 ## The one-line install
 
 ```sh
-curl -fsSLO --retry 5 --retry-all-errors https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash install.sh
+(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash "$d/install.sh")
 ```
 
-It saves `install.sh` in the current folder and runs it only when the download worked. Download
+It downloads `install.sh` into a new private temporary directory, runs it from there only when
+the download worked, and removes that directory when the command ends, whether it installed,
+failed or you pressed Ctrl-C. Nothing is written to the folder you run it from, and the
+installer keeps its own downloads in a temporary directory it removes the same way. Download
 first rather than piping curl into bash: a failed download piped into bash (a 404, a cut
 connection) runs an empty script and exits 0, so it looks like success with nothing installed.
-Saved to a file, a failed download stops the command with curl's error.
+Saved to a file, a failed download stops the command with curl's error and a non-zero exit,
+and a partial download is never run. Paste it into bash or zsh (macOS's Terminal); in fish,
+type `bash` first.
 
 The installer needs no sudo. It picks the build for your OS and CPU, downloads it from the latest
 [GitHub release](https://github.com/yuyudhan/nomouse/releases), checks it against the
@@ -231,10 +236,10 @@ build that cannot start leaves the old one in place.
 
 ## Installer options
 
-Options go after the script, once it is downloaded:
+Options go after the script, inside the parentheses:
 
 ```sh
-curl -fsSLO https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash install.sh --version 0.1.0
+(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash "$d/install.sh" --version 0.1.0)
 ```
 
 | Option | Effect |
@@ -299,7 +304,7 @@ Or, in the pane, select nomouse, click **−**, then **+** and pick `/Applicatio
 ## Uninstalling
 
 ```sh
-curl -fsSLO https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash install.sh --uninstall
+(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash "$d/install.sh" --uninstall)
 ```
 
 This removes `~/.local/bin/nomouse`, on Linux `nomouse-settings`, the app launcher entry and its

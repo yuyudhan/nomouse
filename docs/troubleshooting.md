@@ -17,8 +17,15 @@ NOMOUSE_LOG=debug nomouse hints --standalone
 Before 0.1.8 the one-line install piped curl straight into bash. When the download failed (a
 404, a proxy, a cut connection), curl printed an error, bash ran an empty script and the command
 exited 0 with nothing installed. Use the current
-[one-line install](install.md#the-one-line-install): it saves `install.sh` first and runs it
-only when the download worked, so a failed download stops with curl's error and a non-zero exit.
+[one-line install](install.md#the-one-line-install): it downloads `install.sh` into a
+temporary directory first and runs it only when the download worked, so a failed download stops
+with curl's error and a non-zero exit.
+
+**An `install.sh` file is left in a folder**
+The 0.1.8 one-line install (`curl -fsSLO ... && bash install.sh`) saved `install.sh` in the
+folder it ran in. Delete it; the current
+[one-line install](install.md#the-one-line-install) downloads into a temporary directory and
+removes it, and the installer never writes to the current folder.
 
 **`curl: (35) error:0A000126:SSL routines::unexpected eof while reading`**
 The network cut the connection during the TLS handshake, usually to GitHub's download host
