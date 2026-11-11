@@ -15,15 +15,19 @@ pub const LATEST_URL: &str = "https://github.com/yuyudhan/nomouse/releases/lates
 /// Until releases are Developer-ID signed, this is the update path to offer on macOS: the
 /// installer clears the download quarantine that makes Gatekeeper refuse a browser-downloaded
 /// `.dmg` or `.app.zip`. It downloads `install.sh` into a fresh temporary directory, never the
-/// current folder, and runs it only when the download worked: piped into `bash`, a failed
-/// download (a 404, a cut connection) would run an empty script and report success with
-/// nothing installed. The subshell's trap removes that directory however the command ends
-/// (done, failed, Ctrl-C) and keeps the installer's exit status.
+/// current folder, and runs it only after an HTTP 200: piped into `bash`, a failed download (a
+/// 404, a cut connection) would run an empty script and report success with nothing
+/// installed. Otherwise it prints one line and exits 1: `nomouse: release not found: <url>`
+/// for a 404, or `nomouse: could not download <url> (HTTP <code>, check the network): <curl's
+/// reason>`. The subshell's trap removes that directory however the command ends (done,
+/// failed, Ctrl-C) and keeps the installer's exit status.
 pub const INSTALL_COMMAND: &str = concat!(
     r#"(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && "#,
-    r#"curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" "#,
-    "https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh",
-    r#" && bash "$d/install.sh")"#
+    "u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh",
+    r#" && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")""#,
+    r#" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2"#,
+    r#" || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2;"#,
+    r#" exit 1; }; } && bash "$d/install.sh")"#
 );
 
 /// Where the release notes of `version` (`0.1.3`) are.
@@ -191,10 +195,14 @@ mod tests {
     fn the_install_command_downloads_the_latest_installer_into_a_temporary_directory() {
         assert_eq!(
             INSTALL_COMMAND,
-            r#"(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash "$d/install.sh")"#
+            r#"(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2 || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2; exit 1; }; } && bash "$d/install.sh")"#
         );
         assert!(INSTALL_COMMAND.contains(&format!("{LATEST_URL}/download/install.sh")));
-        assert!(!INSTALL_COMMAND.contains('|'), "never piped into a shell");
+        // `||` chains the error messages; a single `|` would pipe into a shell.
+        assert!(
+            !INSTALL_COMMAND.replace("||", "").contains('|'),
+            "never piped into a shell"
+        );
         assert!(
             !INSTALL_COMMAND.contains("-fsSLO"),
             "never saved in the current folder"

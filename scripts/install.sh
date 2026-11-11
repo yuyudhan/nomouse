@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # Installs, updates or uninstalls nomouse on macOS and Linux, without sudo. Published with every
 # GitHub release as releases/latest/download/install.sh; README.md#install has the one-line
-# command, which downloads it into a fresh temporary directory, runs it from there only when the
-# download worked, and removes that directory however it ends:
-#   (d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL ... -o "$d/install.sh"
-#   .../install.sh && bash "$d/install.sh")
+# command, which downloads it into a fresh `mktemp -d` directory, runs it from there only after
+# an HTTP 200, and removes that directory however it ends:
+#   (d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && u=.../install.sh && { c="$(curl
+#   ... -w '%{http_code}' -o "$d/install.sh" "$u" ...)" && [ "$c" = 200 ] || { ...; exit 1; }; }
+#   && bash "$d/install.sh")
 # Downloading first matters: piped into bash, a failed download (a 404, a cut connection) runs an
 # empty script and exits 0, so it looks like success with nothing installed.
 #
 # Every download goes into one private `mktemp -d` directory, removed on every exit (success,
-# error, Ctrl-C, kill); nothing is written to the current directory.
+# error, Ctrl-C, kill); nothing is written to the current directory. Every failure is one
+# `nomouse: error: ...` line and a non-zero exit: a release or asset that does not exist
+# (`release not found`, HTTP 404), a network error with curl's reason, a checksum mismatch, an
+# unsupported OS or CPU. Running it again over the same version reinstalls it in place.
 #
 # Piping (the one-liner before 0.1.8) still works when the download does: all work happens in
 # main, called on the last line, so bash has read the whole script before anything runs.
@@ -30,7 +34,7 @@
 #     anything is downloaded, with what to do instead.
 #
 # Options:
-#   --version X.Y.Z    Install that release instead of the latest.
+#   --version X.Y.Z    Install that release instead of the latest (vX.Y.Z works too).
 #   --from DIR         Install from a directory holding the release assets (no network).
 #   --uninstall        Remove nomouse; keep the config file.
 #   --purge            With --uninstall, also delete the nomouse config directory.
@@ -58,7 +62,8 @@ tray_icons="symbolic/apps/${app_id}-symbolic.svg symbolic/apps/${app_id}-paused-
 # that stalls (under 1 KB/s for 30 s) instead of hanging. --retry alone retries only timeouts and
 # HTTP 408/429/5xx; install_release adds --retry-all-errors where curl has it (7.71+), so a
 # network that cuts connections (`curl: (35) ... unexpected eof while reading`) is retried too.
-net=(--fail --silent --show-error --location --connect-timeout 15 --retry 5 --retry-delay 2
+# No --fail: download judges the HTTP status itself, so a 404 is reported at once, not retried.
+net=(--silent --show-error --location --connect-timeout 15 --retry 5 --retry-delay 2
     --speed-limit 1024 --speed-time 30)
 
 # The Linux release is built on Ubuntu 22.04, so it needs that glibc or a later one.
@@ -170,6 +175,26 @@ token() {
     printf '%s' "${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 }
 
+# Downloads URL into DEST (extra curl options, such as headers, after HINT) and fails with one
+# line unless the server answered 200 (a file:// URL has no status: curl reports 000): HTTP 404
+# is `release not found` with HINT appended, no answer is a network error with curl's reason,
+# anything else names the status.
+download() {
+    local url="$1" dest="$2" hint="$3" code="" reason
+    shift 3
+    if ! code="$(curl "${net[@]}" --stderr "${dest}.err" --write-out '%{http_code}' \
+        --output "$dest" "$@" "$url")"; then
+        reason="$(sed -n 's/^curl: ([0-9]*) //p' "${dest}.err" | tail -n 1)"
+        fail "network error: could not download ${url} (${reason:-no answer}); check the network, a proxy or firewall, then run the installer again, or install from downloaded assets with --from DIR"
+    fi
+    rm -f "${dest}.err"
+    case "${code}:${url%%://*}" in
+    200:* | 000:file) ;;
+    404:*) fail "release not found: ${url} (HTTP 404${hint}); the releases are at https://github.com/${repo}/releases" ;;
+    *) fail "download failed: ${url} (HTTP ${code})" ;;
+    esac
+}
+
 # Fetches release asset NAME into DEST from wherever this run installs from: the --from
 # directory, NOMOUSE_INSTALL_BASE, the GitHub API (with a token) or the public download URL.
 # The globals `from`, `version` and `work` are set by main and install_release.
@@ -179,35 +204,30 @@ fetch() {
         [ -f "${from}/${name}" ] || fail "${from} has no ${name}"
         cp "${from}/${name}" "$dest"
     elif [ -n "${NOMOUSE_INSTALL_BASE:-}" ]; then
-        curl "${net[@]}" --output "$dest" "${NOMOUSE_INSTALL_BASE%/}/${name}" ||
-            fail "download failed: ${NOMOUSE_INSTALL_BASE%/}/${name}"
+        download "${NOMOUSE_INSTALL_BASE%/}/${name}" "$dest" ""
     elif [ -n "$(token)" ]; then
         api="${NOMOUSE_API_BASE:-https://api.github.com}"
         api="${api%/}/repos/${repo}/releases"
         release="${work}/release.json"
         if [ ! -f "$release" ]; then
             if [ -n "$version" ]; then api="${api}/tags/v${version}"; else api="${api}/latest"; fi
-            curl "${net[@]}" --output "$release" \
+            # GitHub answers 404, not 401, when the token may not read the repository.
+            download "$api" "$release" ", or the token cannot read ${repo}" \
                 --header "Authorization: Bearer $(token)" \
-                --header "Accept: application/vnd.github+json" "$api" ||
-                fail "cannot read the release from ${api} (is the token allowed to read ${repo}?)"
+                --header "Accept: application/vnd.github+json"
         fi
         url="$(asset_api_url "$name" "$release")"
-        [ -n "$url" ] || fail "the release has no asset ${name}"
-        curl "${net[@]}" --output "$dest" \
+        [ -n "$url" ] || fail "release not found: the release has no asset ${name}"
+        download "$url" "$dest" "" \
             --header "Authorization: Bearer $(token)" \
-            --header "Accept: application/octet-stream" "$url" ||
-            fail "download failed: ${name} from ${url}"
+            --header "Accept: application/octet-stream"
     else
         if [ -n "$version" ]; then
             url="https://github.com/${repo}/releases/download/v${version}/${name}"
         else
             url="https://github.com/${repo}/releases/latest/download/${name}"
         fi
-        curl "${net[@]}" --output "$dest" "$url" || fail "download failed: ${url}
-  Check the network (a proxy or firewall that cuts connections to github.com or
-  release-assets.githubusercontent.com), then run the installer again; or download the
-  release assets in a browser and install from that folder with --from DIR."
+        download "$url" "$dest" ""
     fi
 }
 

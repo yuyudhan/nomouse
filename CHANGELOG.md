@@ -9,19 +9,26 @@ the release's section; add entries under Unreleased as changes land.
 
 ### Changed
 
-- The one-line install no longer leaves `install.sh` in the folder it runs in:
-  `(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL ... -o "$d/install.sh"
-  .../install.sh && bash "$d/install.sh")` downloads it into a temporary directory, runs it only
-  when the download worked (a 404 or a cut download still fails with curl's error and a non-zero
-  exit) and removes the directory however it ends, Ctrl-C included. Options go after the script
+- The one-line install no longer leaves `install.sh` in the folder it runs in: it downloads it
+  into a `mktemp -d` directory, runs it only after an HTTP 200, and removes the directory
+  however it ends, Ctrl-C included. A missing release prints one line,
+  `nomouse: release not found: <url>`, at once (a 404 is no longer retried), and a network
+  failure `nomouse: could not download <url> (HTTP 000, check the network): <curl's reason>`,
+  both with exit status 1; cut connections are still retried. Options go after the script
   inside the parentheses (`bash "$d/install.sh" --uninstall)`). The README, docs, release notes,
-  the macOS **Copy Install Command** and the Linux update notification use the new command.
-  `install.sh` keeps its downloads in one `nomouse-install.XXXXXX` directory under `TMPDIR`
-  and removes it on every exit: success, an error (a 404, a checksum mismatch), Ctrl-C, HUP and
-  TERM. `scripts/test-installer.sh` runs the documented command in bash and zsh with the real
-  installer against a local server, from an empty folder with an empty `TMPDIR`, and checks both
-  are empty after an install, a 404 of the installer or of an asset, a checksum mismatch, and
-  each of those signals mid-download.
+  the macOS **Copy Install Command** and the Linux update notification use the new command,
+  the same shape as quickhop's.
+- `install.sh` reports every failure as one `nomouse: error:` line with a non-zero exit:
+  `release not found` (HTTP 404) for a missing release or asset, reported at once instead of
+  after five retries, `network error` with curl's reason, a checksum mismatch, or an
+  unsupported OS or CPU. It keeps its downloads in one `nomouse-install.XXXXXX` directory under
+  `TMPDIR` and removes it on every exit: success, an error, Ctrl-C, HUP and TERM.
+  `scripts/test-installer.sh` runs the documented command in bash and zsh with the real
+  installer against a local server, from an empty folder with an empty `TMPDIR`: an install, a
+  second install over it, `--version v0.1.0`, a 404 of the installer or of an asset, no answer,
+  a network error inside the installer, a checksum mismatch, an unsupported OS and CPU, and
+  each signal mid-download; every failure must be exactly one error line, and both folders
+  must be empty afterwards.
 
 ## [0.1.8] - 2026-11-10
 

@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Tests the documented one-line install (docs/install.md, "The one-line install") against a
-# local HTTP server: a 404 makes the command exit non-zero without running anything, after curl
-# retried it; a served install.sh is downloaded into a temporary directory and run with bash.
-# Either way the folder it runs from and its TMPDIR are empty afterwards. The command is the
-# documented one with only the release URL pointed at 127.0.0.1. (scripts/test-installer.sh
-# runs the same command with the real install.sh and a fake release.)
-#
-# A .curlrc with retry-max-time (in CURL_HOME and HOME) keeps the retries of a 404 to a few
-# seconds; the command line itself is unchanged.
+# local HTTP server: a 404 makes the command print one `release not found` line and exit
+# non-zero without running anything, at once (a 404 is final, not retried); connections the
+# network cuts are retried until install.sh arrives; a served install.sh is downloaded into a
+# temporary directory and run with bash. Either way the folder it runs from and its TMPDIR are
+# empty afterwards. The command is the documented one with only the release URL pointed at
+# 127.0.0.1. (scripts/test-installer.sh runs the same command with the real install.sh and a
+# fake release.)
 #
 # Usage: scripts/test-install-command.sh
 set -euo pipefail
@@ -45,19 +44,26 @@ command="$(awk -v fence="$fence" '
     exit 1
 }
 
-# Serves /ok/install.sh (a script that leaves a marker) and answers 404 to everything else,
-# counting the requests for each path.
-mkdir -p "${tmp}/www/ok" "${tmp}/home"
+# Serves /ok/install.sh and /flaky/install.sh (a script that leaves a marker; /flaky/ hangs up
+# without answering its first two requests, as a network that cuts connections does) and
+# answers 404 to everything else, counting the requests for each path.
+mkdir -p "${tmp}/www/ok" "${tmp}/www/flaky" "${tmp}/home"
 printf 'touch "%s/ran"\necho "install.sh ran: $*"\n' "$tmp" >"${tmp}/www/ok/install.sh"
+cp "${tmp}/www/ok/install.sh" "${tmp}/www/flaky/install.sh"
 python3 - "${tmp}/www" "${tmp}/port" "${tmp}/requests" <<'PY' &
-import http.server, os, socketserver, sys
+import collections, http.server, os, socketserver, sys
 
 www, port_file, log = sys.argv[1], sys.argv[2], sys.argv[3]
+seen = collections.Counter()
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         with open(log, "a") as out:
             out.write(self.path + "\n")
+        seen[self.path] += 1
+        if self.path.startswith("/flaky/") and seen[self.path] <= 2:
+            self.close_connection = True
+            return
         path = os.path.join(www, self.path.lstrip("/"))
         if os.path.isfile(path):
             with open(path, "rb") as source:
@@ -92,6 +98,7 @@ done
     exit 1
 }
 base="http://127.0.0.1:$(cat "${tmp}/port")"
+# Caps curl's retries of a cut connection to a few seconds; the command line is unchanged.
 printf 'retry-max-time = 3\n' >"${tmp}/home/.curlrc"
 
 # Runs the documented command with the release URL replaced by $1, in a fresh folder (`here`)
@@ -115,27 +122,38 @@ expect_clean() {
     fi
 }
 
-# 1. A 404: curl fails, the command exits non-zero and bash runs nothing.
+# 1. A 404: the command prints one `release not found` line, exits non-zero, runs nothing and
+# asks only once.
 rm -f "${tmp}/ran"
 fresh_dirs
-if out="$(run "${base}/missing" 2>&1)"; then
-    fail "a 404 exited 0: ${out}"
-elif [ -e "${tmp}/ran" ] || [[ "$out" == *"install.sh ran"* ]]; then
-    fail "a 404 still ran a script: ${out}"
-elif [[ "$out" != *"404"* ]]; then
-    fail "a 404 did not show curl's error: ${out}"
+if run "${base}/missing" >"${tmp}/stdout" 2>"${tmp}/stderr"; then
+    fail "a 404 exited 0: $(cat "${tmp}/stdout" "${tmp}/stderr")"
+elif [ -e "${tmp}/ran" ] || [ -s "${tmp}/stdout" ]; then
+    fail "a 404 still ran a script: $(cat "${tmp}/stdout")"
+elif [ "$(cat "${tmp}/stderr")" != "nomouse: release not found: ${base}/missing/install.sh" ]; then
+    fail "a 404 did not print the one 'release not found' line: $(cat "${tmp}/stderr")"
 else
-    pass "a 404 exits non-zero with curl's error and runs nothing"
+    pass "a 404 exits non-zero with one line ($(cat "${tmp}/stderr")) and runs nothing"
 fi
 tries="$(grep -c '^/missing/install.sh$' "${tmp}/requests" || true)"
-if [ "$tries" -gt 1 ]; then
-    pass "curl retried the 404 (${tries} requests)"
+if [ "$tries" -eq 1 ]; then
+    pass "a 404 is final: asked once"
 else
-    fail "curl did not retry the 404 (${tries} requests)"
+    fail "a 404 was asked for ${tries} times"
 fi
 expect_clean "a 404"
 
-# 2. A served install.sh is downloaded, then run.
+# 2. Connections the network cuts are retried until install.sh arrives, which then runs.
+rm -f "${tmp}/ran"
+fresh_dirs
+if out="$(run "${base}/flaky" 2>&1)" && [ -e "${tmp}/ran" ] && [[ "$out" == *"install.sh ran"* ]]; then
+    pass "cut connections are retried, then install.sh runs ($(grep -c '^/flaky/install.sh$' "${tmp}/requests") requests)"
+else
+    fail "cut connections were not retried: ${out}"
+fi
+expect_clean "cut connections"
+
+# 3. A served install.sh is downloaded, then run.
 rm -f "${tmp}/ran"
 fresh_dirs
 if out="$(run "${base}/ok" 2>&1)" && [ -e "${tmp}/ran" ] && [[ "$out" == *"install.sh ran"* ]]; then

@@ -18,8 +18,18 @@ Before 0.1.8 the one-line install piped curl straight into bash. When the downlo
 404, a proxy, a cut connection), curl printed an error, bash ran an empty script and the command
 exited 0 with nothing installed. Use the current
 [one-line install](install.md#the-one-line-install): it downloads `install.sh` into a
-temporary directory first and runs it only when the download worked, so a failed download stops
-with curl's error and a non-zero exit.
+temporary directory first and runs it only after an HTTP 200, so a failed download stops with
+one line and a non-zero exit.
+
+**`nomouse: release not found: <url>`**
+GitHub has no release (or no such asset) at that address, from the one-line install or from
+`install.sh --version`: check the version on the
+[releases page](https://github.com/yuyudhan/nomouse/releases).
+
+**`nomouse: could not download <url> (HTTP 000, check the network)` or `nomouse: error: network
+error: …`**
+Nothing answered; curl's own reason follows (no DNS, a refused or cut connection, a proxy). Fix
+the network and run the line again, or install from downloaded assets with `install.sh --from`.
 
 **An `install.sh` file is left in a folder**
 The 0.1.8 one-line install (`curl -fsSLO ... && bash install.sh`) saved `install.sh` in the
@@ -30,18 +40,13 @@ removes it, and the installer never writes to the current folder.
 **`curl: (35) error:0A000126:SSL routines::unexpected eof while reading`**
 The network cut the connection during the TLS handshake, usually to GitHub's download host
 `release-assets.githubusercontent.com`; on some networks this happens to a third of
-connections. Run the one-line install with `--retry 5 --retry-all-errors` as
+connections. Run the one-line install with `--retry-all-errors` as
 [install.md](install.md#the-one-line-install) shows: curl retries the cut connection, and the
 installer (0.1.2 and later) retries its own downloads the same way.
 
 **`curl: option --retry-all-errors: is unknown`**
 Your curl is older than 7.71. Drop `--retry-all-errors` from the command, or install from a
 folder with `install.sh --from`.
-
-**`curl: (22)` or `(56) The requested URL returned error`**
-The download URL could not be reached, often through a proxy. Download the release assets from
-the [releases page](https://github.com/yuyudhan/nomouse/releases) and install from the folder
-with `install.sh --from`, as [install.md](install.md#the-one-line-install) shows.
 
 **`checksum mismatch`**
 The download was cut off or changed on the way. Nothing was installed; run the installer

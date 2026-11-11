@@ -642,7 +642,7 @@ sandbox bash "$installer" --uninstall >/dev/null 2>&1
 
 if out="$(sandbox GH_TOKEN=wrong-token NOMOUSE_API_BASE="$base" bash "$installer" 2>&1)"; then
     fail "a refused token should fail: ${out}"
-elif absent && [[ "$out" == *"cannot read the release"* ]]; then
+elif absent && [[ "$out" == *"release not found"*"the token cannot read yuyudhan/nomouse"* ]]; then
     pass "a token the API refuses fails before installing"
 else
     fail "refused token: ${out}"
@@ -773,7 +773,8 @@ for _ in $(seq 300); do
     sleep 0.1
 done
 www_base="http://127.0.0.1:$(cat "${work}/www.port" 2>/dev/null || echo 0)"
-# Caps curl's retries of a 404 to a few seconds; the command line stays the documented one.
+# Caps curl's retries of a refused connection to a few seconds; the command line stays the
+# documented one.
 printf 'retry-max-time = 3\n' >"${home}/.curlrc"
 
 # macOS's mktemp -d ignores TMPDIR (it uses the per-user temporary directory), which would hide
@@ -810,13 +811,21 @@ fresh_dirs() {
     : >"$made"
 }
 
-# one_line SHELL CASE: runs the one-liner in SHELL with the release at CASE, from `here` with
-# TMPDIR `scratch_tmp` (call fresh_dirs first); prints its output, returns its status.
+# one_line SHELL CASE [ASSETS [OPTIONS [PATH]]]: runs the one-liner in SHELL with install.sh from
+# the release at CASE (a folder of the tree, or a full URL base), the installer's assets from
+# ASSETS (default: the same), OPTIONS after `bash "$d/install.sh"` as the docs place them, and
+# PATH first on the PATH; from `here` with TMPDIR `scratch_tmp` (call fresh_dirs first). Prints
+# the output, returns the status.
 one_line() {
-    local shell="$1" case="$2"
-    (cd "$here" && sandbox PATH="${shim}:${sandbox_path}" TEST_MKTEMP_LOG="$made" \
-        TMPDIR="$scratch_tmp" NOMOUSE_INSTALL_BASE="${www_base}/${case}" \
-        "$shell" -c "${one_liner//"$latest"/${www_base}/${case}}")
+    local shell="$1" case="$2" assets="${3:-}" options="${4:-}" extra="${5:-}" url line
+    url="$case"
+    [[ "$url" == *://* ]] || url="${www_base}/${case}"
+    [[ "$assets" == *://* ]] || assets="${www_base}/${assets:-$case}"
+    line="${one_liner//"$latest"/$url}"
+    line="${line%)}${options:+ ${options}})"
+    (cd "$here" && sandbox PATH="${extra:+${extra}:}${shim}:${sandbox_path}" TEST_MKTEMP_LOG="$made" \
+        TMPDIR="$scratch_tmp" NOMOUSE_INSTALL_BASE="$assets" \
+        "$shell" -c "$line")
 }
 
 # expect_clean NAME: passes NAME when the run made temporary directories, all inside its TMPDIR,
@@ -837,6 +846,19 @@ expect_clean() {
     fi
 }
 
+# A port nothing listens on: opened, then closed again.
+closed_port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+nowhere="http://127.0.0.1:${closed_port}"
+# Stand-in uname for systems the release has no build for.
+for system in "FreeBSD amd64" "Linux riscv64"; do
+    dir="${work}/uname-${system%% *}"
+    mkdir -p "$dir"
+    # shellcheck disable=SC2016 # the stand-in's own script, expanded when it runs
+    printf '#!/bin/sh\ncase "$1" in -m) echo %s ;; *) echo %s ;; esac\n' \
+        "${system#* }" "${system%% *}" >"${dir}/uname"
+    chmod 755 "${dir}/uname"
+done
+
 shells="bash"
 if command -v zsh >/dev/null 2>&1; then shells="bash zsh"; fi
 for shell in $shells; do
@@ -847,23 +869,51 @@ for shell in $shells; do
         fail "${shell}: the one-liner did not install: ${out}"
     fi
     expect_clean "${shell}: an install"
+
+    fresh_dirs
+    if out="$(one_line "$shell" ok 2>&1)" && installed && [[ "$out" == *"checksum ok: ${archive}"* ]]; then
+        pass "${shell}: running the one-liner again reinstalls in place"
+    else
+        fail "${shell}: the second one-liner run did not install: ${out}"
+    fi
+    expect_clean "${shell}: a second install"
     sandbox bash "$installer" --uninstall >/dev/null 2>&1
 
-    # case|what the output must hold
-    for expect in "missing|404" "noasset|download failed: ${www_base}/noasset/${archive}" \
-        "badsum|checksum mismatch for ${archive}"; do
-        case="${expect%%|*}"
+    fresh_dirs
+    if out="$(one_line "$shell" ok ok "--version v0.1.0" 2>&1)" && installed &&
+        [[ "$out" == *"installing nomouse 0.1.0"* ]]; then
+        pass "${shell}: the one-liner with --version v0.1.0 installs that version"
+    else
+        fail "${shell}: the one-liner with --version v0.1.0: ${out}"
+    fi
+    expect_clean "${shell}: an install with --version"
+    sandbox bash "$installer" --uninstall >/dev/null 2>&1
+
+    # case|install.sh from|assets from|PATH first|the one error line holds
+    for spec in \
+        "install.sh not found|missing|||nomouse: release not found: ${www_base}/missing/install.sh" \
+        "no answer for install.sh|${nowhere}|ok||nomouse: could not download ${nowhere}/install.sh (HTTP 000, check the network): curl: (7)" \
+        "missing release asset|noasset|||nomouse: error: release not found: ${www_base}/noasset/${archive} (HTTP 404)" \
+        "network error in the installer|ok|${nowhere}||nomouse: error: network error: could not download ${nowhere}/" \
+        "bad checksum|badsum|||nomouse: error: checksum mismatch for ${archive}" \
+        "unsupported OS|ok||${work}/uname-FreeBSD|nomouse: error: unsupported OS FreeBSD" \
+        "unsupported CPU|ok||${work}/uname-Linux|nomouse: error: no Linux build for riscv64"; do
+        IFS='|' read -r name case assets extra want <<<"$spec"
         fresh_dirs
-        if out="$(one_line "$shell" "$case" 2>&1)"; then
-            fail "${shell}: ${case} exited 0: ${out}"
+        if one_line "$shell" "$case" "$assets" "" "$extra" >"${work}/stdout" 2>"${work}/stderr"; then
+            fail "${shell}: ${name} exited 0: $(cat "${work}/stdout" "${work}/stderr")"
         elif ! absent; then
-            fail "${shell}: ${case} installed something: ${out}"
-        elif [[ "$out" != *"${expect#*|}"* ]]; then
-            fail "${shell}: ${case} did not say '${expect#*|}': ${out}"
+            fail "${shell}: ${name} installed something"
         else
-            pass "${shell}: ${case} fails loudly (${expect#*|}) and installs nothing"
+            pass "${shell}: ${name} exits non-zero and installs nothing"
         fi
-        expect_clean "${shell}: ${case}"
+        errors="$(cat "${work}/stderr")"
+        if [ "$(printf '%s\n' "$errors" | wc -l | tr -d ' ')" = 1 ] && [[ "$errors" == *"$want"* ]]; then
+            pass "${shell}: ${name}: one error line: ${errors}"
+        else
+            fail "${shell}: ${name}: want one error line holding '${want}', got: ${errors}"
+        fi
+        expect_clean "${shell}: ${name}"
     done
 done
 

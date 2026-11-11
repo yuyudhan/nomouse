@@ -15,25 +15,29 @@
 ## The one-line install
 
 ```sh
-(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash "$d/install.sh")
+(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2 || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2; exit 1; }; } && bash "$d/install.sh")
 ```
 
-It downloads `install.sh` into a new private temporary directory, runs it from there only when
-the download worked, and removes that directory when the command ends, whether it installed,
-failed or you pressed Ctrl-C. Nothing is written to the folder you run it from, and the
-installer keeps its own downloads in a temporary directory it removes the same way. Download
-first rather than piping curl into bash: a failed download piped into bash (a 404, a cut
-connection) runs an empty script and exits 0, so it looks like success with nothing installed.
-Saved to a file, a failed download stops the command with curl's error and a non-zero exit,
-and a partial download is never run. Paste it into bash or zsh (macOS's Terminal); in fish,
-type `bash` first.
+It downloads `install.sh` into a new private temporary directory, runs it from there only after
+an HTTP 200, and removes that directory when the command ends, whether it installed, failed or
+you pressed Ctrl-C. Nothing is written to the folder you run it from, and the installer keeps
+its own downloads in a temporary directory it removes the same way. Download first rather than
+piping curl into bash: a failed download piped into bash (a 404, a cut connection) runs an empty
+script and exits 0, so it looks like success with nothing installed. Here a failed download
+prints one line and exits 1, and a partial download is never run: `nomouse: release not found:
+<url>` (HTTP 404: no such release), or `nomouse: could not download <url> (HTTP <code>, check
+the network): <curl's reason>`. Paste it into bash or zsh (macOS's Terminal); in fish, type
+`bash` first.
 
 The installer needs no sudo. It picks the build for your OS and CPU, downloads it from the latest
 [GitHub release](https://github.com/yuyudhan/nomouse/releases), checks it against the
 release's `.sha256` and refuses to install on a mismatch, then prints the next steps for your
-system. `--retry-all-errors` makes curl retry a connection the network cuts; the installer's
-own downloads retry the same way. curl older than 7.71 (Ubuntu 20.04, RHEL 8) does not know it:
-drop `--retry-all-errors` there.
+system. Its failures are one `nomouse: error:` line with a non-zero exit too: `release not
+found` for a missing release or asset, `network error` with curl's reason, `checksum
+mismatch`, or an OS or CPU it has no build for. Running the line again updates, or reinstalls
+the same version in place. `--retry-all-errors` makes curl retry a connection the network
+cuts (a 404 is final and not retried); the installer's own downloads retry the same way. curl
+older than 7.71 (Ubuntu 20.04, RHEL 8) does not know it: drop `--retry-all-errors` there.
 
 | System | What you get |
 |--------|--------------|
@@ -239,7 +243,7 @@ build that cannot start leaves the old one in place.
 Options go after the script, inside the parentheses:
 
 ```sh
-(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash "$d/install.sh" --version 0.1.0)
+(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2 || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2; exit 1; }; } && bash "$d/install.sh" --version v0.1.0)
 ```
 
 | Option | Effect |
@@ -304,7 +308,7 @@ Or, in the pane, select nomouse, click **−**, then **+** and pick `/Applicatio
 ## Uninstalling
 
 ```sh
-(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash "$d/install.sh" --uninstall)
+(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2 || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2; exit 1; }; } && bash "$d/install.sh" --uninstall)
 ```
 
 This removes `~/.local/bin/nomouse`, on Linux `nomouse-settings`, the app launcher entry and its

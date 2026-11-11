@@ -18,14 +18,17 @@ nomouse clicks it.
 ## Install
 
 ```sh
-(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash "$d/install.sh")
+(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2 || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2; exit 1; }; } && bash "$d/install.sh")
 ```
 
 One command for macOS 11+ (Apple silicon and Intel) and Linux (x86_64 and aarch64, glibc 2.35+,
 X11 and Wayland), in bash or zsh. It downloads `install.sh` into a temporary directory, runs it
-only if the download worked, and removes that directory afterwards: nothing is left in the
-current folder. No sudo: it verifies the download's SHA-256, installs `nomouse.app` on macOS or
-the `nomouse` binary in `~/.local/bin` on Linux, and prints the next step for your system.
+only after an HTTP 200, and removes that directory afterwards (success, failure or Ctrl-C):
+nothing is left in the current folder. No sudo: it verifies the download's SHA-256, installs
+`nomouse.app` on macOS or the `nomouse` binary in `~/.local/bin` on Linux, and prints the next
+step for your system. Run it again to update or reinstall. Every failure is one line and a
+non-zero exit: `release not found`, the network error, a checksum mismatch, or an unsupported
+system.
 
 Debian and Ubuntu `.deb` packages, the Windows build (x86_64, and Windows 11 on ARM through
 emulation), every installer option: [docs/install.md](docs/install.md).
@@ -159,7 +162,7 @@ Every Linux page in light and dark: `docs/media/settings-<page>-<light|dark>.png
 ## Uninstall
 
 ```sh
-(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && curl -fsSL --retry 5 --retry-all-errors -o "$d/install.sh" https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && bash "$d/install.sh" --uninstall)
+(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2 || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2; exit 1; }; } && bash "$d/install.sh" --uninstall)
 ```
 
 Removes the app or binary and keeps your config (add `--purge` to delete it too). On macOS,
