@@ -1106,6 +1106,7 @@ mod tests {
 
     #[test]
     fn a_held_instance_lock_is_seen() {
+        let _alone = lock::children_guard();
         let path = std::env::temp_dir().join(format!("nomouse-doctor-{}.lock", std::process::id()));
         assert_eq!(daemon_lock(&path), DaemonLock::Free, "no lock file");
         let held = lock::acquire(&path).unwrap();

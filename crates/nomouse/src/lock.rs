@@ -80,6 +80,18 @@ pub(crate) fn acquire(path: &Path) -> Result<InstanceLock, LockError> {
     Ok(InstanceLock { _file: file })
 }
 
+/// Serialises the tests that start a child process and the tests that release a lock and
+/// expect it free: a child forked while a lock file is open shares that file's lock until it
+/// execs, so a release in that window would not be seen. Every such test, in any module,
+/// holds this guard for its whole body.
+#[cfg(test)]
+pub(crate) fn children_guard() -> std::sync::MutexGuard<'static, ()> {
+    static CHILDREN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    CHILDREN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,6 +120,7 @@ mod tests {
 
     #[test]
     fn second_lock_is_refused() {
+        let _alone = children_guard();
         let path = std::env::temp_dir().join(format!("nomouse-test-{}.lock", std::process::id()));
         let first = acquire(&path).unwrap();
         assert!(matches!(acquire(&path), Err(LockError::Taken(_))));

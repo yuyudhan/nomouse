@@ -671,6 +671,7 @@ mod tests {
 
     #[test]
     fn a_daemon_that_exits_at_once_fails_with_its_log() {
+        let _alone = lock::children_guard();
         let log = std::env::temp_dir().join(format!("nomouse-launch-{}.log", std::process::id()));
         std::fs::write(&log, b"\nnomouse: no display\n").unwrap();
         let child = Command::new("true").spawn().unwrap();

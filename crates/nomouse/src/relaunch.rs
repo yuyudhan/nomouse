@@ -111,18 +111,11 @@ pub(crate) fn start(plan: &Plan, args: &[OsString]) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
     use super::*;
     use crate::lock::{self, LockError};
 
     const EXE: &str = "/Applications/nomouse.app/Contents/MacOS/nomouse";
     const APP: &str = "/Applications/nomouse.app";
-
-    /// Held by the test that starts children and the one that releases a lock: a child
-    /// forked while a lock file is open shares that file's lock until it execs, so the
-    /// release would not be seen in that window.
-    static CHILDREN: Mutex<()> = Mutex::new(());
 
     #[test]
     fn the_app_without_a_terminal_is_opened_again_as_a_new_instance() {
@@ -154,9 +147,7 @@ mod tests {
 
     #[test]
     fn the_next_daemon_finds_the_lock_free_and_holds_it_alone() {
-        let _alone = CHILDREN
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _alone = lock::children_guard();
         let path =
             std::env::temp_dir().join(format!("nomouse-relaunch-test-{}.lock", std::process::id()));
         let old = lock::acquire(&path).unwrap();
@@ -171,9 +162,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_waited_child_reports_its_failure() {
-        let _alone = CHILDREN
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _alone = lock::children_guard();
         let plan = Plan::Wait(PathBuf::from("/bin/sh"));
         let args = ["-c", "exit 3"].map(OsString::from);
         let error = start(&plan, &args).unwrap_err();
