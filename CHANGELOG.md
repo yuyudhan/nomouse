@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-11-11
+
 ### Changed
 
 - The one-line install no longer leaves `install.sh` in the folder it runs in: it downloads it

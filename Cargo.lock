@@ -1204,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "nomouse"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "clap",
  "nomouse-core",
@@ -1219,7 +1219,7 @@ dependencies = [
 
 [[package]]
 name = "nomouse-core"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "proptest",
  "serde",
@@ -1232,7 +1232,7 @@ dependencies = [
 
 [[package]]
 name = "nomouse-linux"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-io",
  "atspi",
@@ -1255,7 +1255,7 @@ dependencies = [
 
 [[package]]
 name = "nomouse-macos"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "nomouse-core",
  "nomouse-sys-macos",
@@ -1266,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "nomouse-settings"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "gtk4",
  "libadwaita",
@@ -1276,7 +1276,7 @@ dependencies = [
 
 [[package]]
 name = "nomouse-sys-macos"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "objc2",
  "objc2-app-kit",
@@ -1291,14 +1291,14 @@ dependencies = [
 
 [[package]]
 name = "nomouse-sys-windows"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "windows",
 ]
 
 [[package]]
 name = "nomouse-windows"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "nomouse-core",
  "nomouse-sys-windows",
