@@ -7,6 +7,24 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Changed
+
+- New one-line install: `curl -fsSL https://yuyudhan.github.io/nomouse/install | sh` (options
+  after `sh -s --`, e.g. `| sh -s -- --uninstall`). The address serves the latest release's
+  `install.sh` byte for byte, which still works as `sh install.sh` after downloading it. The
+  README leads with the line; docs, release notes, the macOS **Copy Install Command** and the
+  Linux update notification use it.
+- `install.sh` is POSIX sh: it runs piped into `sh` (dash on Debian and Ubuntu), `bash` and
+  `zsh`, and only its last line starts the install, so a download cut short runs nothing. Its
+  output is a header, a checked line per step, `nomouse X.Y.Z is installed.` (from the
+  installed binary) and a `Next:` list, with Accessibility first on macOS; colour only on a
+  terminal, without `NO_COLOR` and `TERM=dumb`. Each failure is one
+  `nomouse: error: <what happened>; <the fix>` line, e.g. `could not reach github.com (…); check
+  the network or proxy and run the command again` or `release v9.9.9 not found (HTTP 404); the
+  versions are at …`. Downloads are checked against the release's `SHA256SUMS` (`--from DIR`
+  without one: the asset's `.sha256`). `NOMOUSE_VERSION` picks a release like `--version`,
+  which wins.
+
 ## [0.1.10] - 2026-11-11
 
 ### Added

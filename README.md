@@ -7,6 +7,13 @@
 **Click anything on screen without touching the mouse.** A free, open-source
 [Homerow](https://www.homerow.app/) alternative for macOS and Linux, written in Rust.
 
+```sh
+curl -fsSL https://yuyudhan.github.io/nomouse/install | sh
+```
+
+Installs nomouse for your user on macOS 11+ or Linux (x86_64 and aarch64, glibc 2.35+),
+verifies its SHA-256, no sudo; run it again to update. [Other ways to install](docs/install.md)
+
 Press a hotkey, and every button, link, tab and field gets a short label. Type the label and
 nomouse clicks it.
 
@@ -17,18 +24,11 @@ nomouse clicks it.
 
 ## Install
 
-```sh
-(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2 || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2; exit 1; }; } && bash "$d/install.sh")
-```
-
-One command for macOS 11+ (Apple silicon and Intel) and Linux (x86_64 and aarch64, glibc 2.35+,
-X11 and Wayland), in bash or zsh. It downloads `install.sh` into a temporary directory, runs it
-only after an HTTP 200, and removes that directory afterwards (success, failure or Ctrl-C):
-nothing is left in the current folder. No sudo: it verifies the download's SHA-256, installs
-`nomouse.app` on macOS or the `nomouse` binary in `~/.local/bin` on Linux, and prints the next
-step for your system. Run it again to update or reinstall. Every failure is one line and a
-non-zero exit: `release not found`, the network error, a checksum mismatch, or an unsupported
-system.
+The line above installs `nomouse.app` on macOS or the `nomouse` binary, its settings window and
+app launcher entry on Linux, then prints the next step for your system. It is the release's
+`install.sh`, in POSIX sh (`sh`, `bash`, `zsh`); options go after `sh -s --`
+(`| sh -s -- --version 0.1.0`). Every failure is one `nomouse: error:` line saying what to do,
+and a non-zero exit.
 
 Debian and Ubuntu `.deb` packages, the Windows build (x86_64, and Windows 11 on ARM through
 emulation), every installer option: [docs/install.md](docs/install.md).
@@ -162,7 +162,7 @@ Every Linux page in light and dark: `docs/media/settings-<page>-<light|dark>.png
 ## Uninstall
 
 ```sh
-(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2 || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2; exit 1; }; } && bash "$d/install.sh" --uninstall)
+curl -fsSL https://yuyudhan.github.io/nomouse/install | sh -s -- --uninstall
 ```
 
 Removes the app or binary and keeps your config (add `--purge` to delete it too). On macOS,

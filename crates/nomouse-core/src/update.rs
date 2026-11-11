@@ -14,21 +14,10 @@ pub const LATEST_URL: &str = "https://github.com/yuyudhan/nomouse/releases/lates
 /// The installer one-liner (macOS and Linux) that installs or updates to the newest release.
 /// Until releases are Developer-ID signed, this is the update path to offer on macOS: the
 /// installer clears the download quarantine that makes Gatekeeper refuse a browser-downloaded
-/// `.dmg` or `.app.zip`. It downloads `install.sh` into a fresh temporary directory, never the
-/// current folder, and runs it only after an HTTP 200: piped into `bash`, a failed download (a
-/// 404, a cut connection) would run an empty script and report success with nothing
-/// installed. Otherwise it prints one line and exits 1: `nomouse: release not found: <url>`
-/// for a 404, or `nomouse: could not download <url> (HTTP <code>, check the network): <curl's
-/// reason>`. The subshell's trap removes that directory however the command ends (done,
-/// failed, Ctrl-C) and keeps the installer's exit status.
-pub const INSTALL_COMMAND: &str = concat!(
-    r#"(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && "#,
-    "u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh",
-    r#" && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")""#,
-    r#" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2"#,
-    r#" || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2;"#,
-    r#" exit 1; }; } && bash "$d/install.sh")"#
-);
+/// `.dmg` or `.app.zip`. The address serves the latest release's `install.sh`, a POSIX sh script
+/// whose last line starts the install, so a download cut short runs nothing; it writes nothing
+/// to the current folder and reports a failure as one `nomouse: error:` line and exit status 1.
+pub const INSTALL_COMMAND: &str = "curl -fsSL https://yuyudhan.github.io/nomouse/install | sh";
 
 /// Where the release notes of `version` (`0.1.3`) are.
 pub fn release_url(version: &str) -> String {
@@ -192,16 +181,10 @@ mod tests {
     }
 
     #[test]
-    fn the_install_command_downloads_the_latest_installer_into_a_temporary_directory() {
+    fn the_install_command_pipes_the_published_installer_into_sh() {
         assert_eq!(
             INSTALL_COMMAND,
-            r#"(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2 || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2; exit 1; }; } && bash "$d/install.sh")"#
-        );
-        assert!(INSTALL_COMMAND.contains(&format!("{LATEST_URL}/download/install.sh")));
-        // `||` chains the error messages; a single `|` would pipe into a shell.
-        assert!(
-            !INSTALL_COMMAND.replace("||", "").contains('|'),
-            "never piped into a shell"
+            "curl -fsSL https://yuyudhan.github.io/nomouse/install | sh"
         );
         assert!(
             !INSTALL_COMMAND.contains("-fsSLO"),
@@ -221,7 +204,11 @@ mod tests {
     #[test]
     fn the_install_command_is_the_documented_one_and_in_the_release_notes() {
         assert_eq!(documented_one_liner(), Some(INSTALL_COMMAND));
-        assert!(include_str!("../../../README.md").contains(&format!("\n{INSTALL_COMMAND}\n")));
+        // The README leads with it: its first code block, under the title and tagline.
+        let readme = include_str!("../../../README.md");
+        let first_block = readme.split("```sh\n").nth(1).unwrap_or_default();
+        assert_eq!(first_block.split("\n```").next(), Some(INSTALL_COMMAND));
+        assert!(readme.find("```sh\n") < readme.find("\n## "));
         let notes = include_str!("../../../scripts/release/notes.sh");
         assert!(notes.contains("## The one-line install"));
         assert!(notes.contains("## Install or update"));

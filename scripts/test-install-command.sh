@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # Tests the documented one-line install (docs/install.md, "The one-line install") against a
-# local HTTP server: a 404 makes the command print one `release not found` line and exit
-# non-zero without running anything, at once (a 404 is final, not retried); connections the
-# network cuts are retried until install.sh arrives; a served install.sh is downloaded into a
-# temporary directory and run with bash. Either way the folder it runs from and its TMPDIR are
-# empty afterwards. The command is the documented one with only the release URL pointed at
-# 127.0.0.1. (scripts/test-installer.sh runs the same command with the real install.sh and a
+# local HTTP server, piped into every shell it may meet (sh, dash, bash, zsh): a 404 runs
+# nothing and asks once (curl -f prints its one line); a served script runs and gets the options
+# after `sh -s --`; the real install.sh cut off mid-download, or just before its last line, runs
+# nothing, because only that last line starts the install. Either way the folder it runs from and
+# its TMPDIR are empty afterwards. The command is the documented one with only its URL pointed
+# at 127.0.0.1. (scripts/test-installer.sh pipes the real install.sh into each shell against a
 # fake release.)
 #
 # Usage: scripts/test-install-command.sh
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-release="https://github.com/yuyudhan/nomouse/releases/latest/download"
+pages="https://yuyudhan.github.io/nomouse/install"
 tmp="$(mktemp -d)"
 server_pid=""
 cleanup() {
@@ -39,29 +39,39 @@ command="$(awk -v fence="$fence" '
     block && $0 == fence { exit }
     block { print }
 ' "${root}/docs/install.md")"
-[[ "$command" == *"${release}/install.sh"* ]] || {
-    echo "test-install-command: no one-line install in docs/install.md: ${command}" >&2
+[ "$command" = "curl -fsSL ${pages} | sh" ] || {
+    echo "test-install-command: docs/install.md's one-line install is not 'curl -fsSL ${pages} | sh': ${command}" >&2
     exit 1
 }
 
-# Serves /ok/install.sh and /flaky/install.sh (a script that leaves a marker; /flaky/ hangs up
-# without answering its first two requests, as a network that cuts connections does) and
-# answers 404 to everything else, counting the requests for each path.
-mkdir -p "${tmp}/www/ok" "${tmp}/www/flaky" "${tmp}/home"
-printf 'touch "%s/ran"\necho "install.sh ran: $*"\n' "$tmp" >"${tmp}/www/ok/install.sh"
-cp "${tmp}/www/ok/install.sh" "${tmp}/www/flaky/install.sh"
-python3 - "${tmp}/www" "${tmp}/port" "${tmp}/requests" <<'PY' &
-import collections, http.server, os, socketserver, sys
+# Serves /ok/install (a script that leaves a marker and prints its arguments), /half/install
+# (the real install.sh, cut off halfway) and /lastline/install (the real install.sh without its
+# last line, then cut off): both cut ones announce the whole length and hang up early, as a
+# dropped connection does. Everything else is a 404. Every request is logged.
+mkdir -p "${tmp}/www/ok" "${tmp}/home"
+printf 'touch "%s/ran"\necho "install.sh ran: $*"\n' "$tmp" >"${tmp}/www/ok/install"
+python3 - "${tmp}/www" "${tmp}/port" "${tmp}/requests" "${root}/scripts/install.sh" <<'PY' &
+import http.server, os, socketserver, sys
 
-www, port_file, log = sys.argv[1], sys.argv[2], sys.argv[3]
-seen = collections.Counter()
+www, port_file, log, installer = sys.argv[1:5]
+with open(installer, "rb") as source:
+    script = source.read()
+lines = script.rstrip(b"\n").split(b"\n")
+cut = {
+    "/half/install": script[: len(script) // 2],
+    "/lastline/install": b"\n".join(lines[:-1]) + b"\n",
+}
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         with open(log, "a") as out:
             out.write(self.path + "\n")
-        seen[self.path] += 1
-        if self.path.startswith("/flaky/") and seen[self.path] <= 2:
+        if self.path in cut:
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(script)))
+            self.end_headers()
+            self.wfile.write(cut[self.path])
+            self.wfile.flush()
             self.close_connection = True
             return
         path = os.path.join(www, self.path.lstrip("/"))
@@ -98,70 +108,85 @@ done
     exit 1
 }
 base="http://127.0.0.1:$(cat "${tmp}/port")"
-# Caps curl's retries of a cut connection to a few seconds; the command line is unchanged.
-printf 'retry-max-time = 3\n' >"${tmp}/home/.curlrc"
 
-# Runs the documented command with the release URL replaced by $1, in a fresh folder (`here`)
-# with a fresh TMPDIR (`scratch_tmp`).
+# run SHELL CASE [OPTIONS]: the documented command with its URL replaced by CASE's on the local
+# server, piped into SHELL (with `-s -- OPTIONS` when given), in a fresh folder (`here`) with a
+# fresh TMPDIR (`scratch_tmp`) and HOME. NOMOUSE_INSTALL_BASE points at no server, so a script
+# that did start would fail at its first download, not install anything real.
 run() {
-    (cd "$here" && CURL_HOME="${tmp}/home" HOME="${tmp}/home" TMPDIR="$scratch_tmp" \
-        bash -c "${command//"$release"/$1}")
+    local line="${command//"$pages"/${base}/$2/install}"
+    line="${line%| sh}| $1${3:+ -s -- $3}"
+    (cd "$here" && env -i HOME="${tmp}/home" PATH="$PATH" TMPDIR="$scratch_tmp" TERM=dumb \
+        NOMOUSE_INSTALL_BASE="${base}/nowhere" sh -c "$line")
 }
 fresh_dirs() {
     here="$(mktemp -d "${tmp}/run.XXXXXX")"
     scratch_tmp="$(mktemp -d "${tmp}/tmp.XXXXXX")"
+    rm -f "${tmp}/ran"
 }
-# expect_clean NAME: passes NAME when `here` and `scratch_tmp` are both empty.
+# expect_clean NAME: passes NAME when `here`, `scratch_tmp` and HOME are all empty.
 expect_clean() {
     local left
-    left="$(find "$here" "$scratch_tmp" -mindepth 1 -maxdepth 1)"
+    left="$(find "$here" "$scratch_tmp" "${tmp}/home" -mindepth 1 -maxdepth 1)"
     if [ -z "$left" ]; then
-        pass "$1 leaves the folder and TMPDIR empty"
+        pass "$1 leaves the folder, TMPDIR and HOME empty"
     else
         fail "$1 left files behind: $(echo "$left" | tr '\n' ' ')"
     fi
 }
 
-# 1. A 404: the command prints one `release not found` line, exits non-zero, runs nothing and
-# asks only once.
-rm -f "${tmp}/ran"
-fresh_dirs
-if run "${base}/missing" >"${tmp}/stdout" 2>"${tmp}/stderr"; then
-    fail "a 404 exited 0: $(cat "${tmp}/stdout" "${tmp}/stderr")"
-elif [ -e "${tmp}/ran" ] || [ -s "${tmp}/stdout" ]; then
-    fail "a 404 still ran a script: $(cat "${tmp}/stdout")"
-elif [ "$(cat "${tmp}/stderr")" != "nomouse: release not found: ${base}/missing/install.sh" ]; then
-    fail "a 404 did not print the one 'release not found' line: $(cat "${tmp}/stderr")"
-else
-    pass "a 404 exits non-zero with one line ($(cat "${tmp}/stderr")) and runs nothing"
-fi
-tries="$(grep -c '^/missing/install.sh$' "${tmp}/requests" || true)"
-if [ "$tries" -eq 1 ]; then
-    pass "a 404 is final: asked once"
-else
-    fail "a 404 was asked for ${tries} times"
-fi
-expect_clean "a 404"
+shells="sh"
+for shell in dash bash zsh; do
+    if command -v "$shell" >/dev/null 2>&1; then shells="${shells} ${shell}"; fi
+done
+echo "shells: ${shells}"
+for shell in $shells; do
+    # 1. A 404: curl prints its one line, the shell gets an empty script and runs nothing, and
+    # curl asks only once.
+    fresh_dirs
+    : >"${tmp}/requests"
+    run "$shell" missing >"${tmp}/stdout" 2>"${tmp}/stderr" || true
+    if [ -e "${tmp}/ran" ] || [ -s "${tmp}/stdout" ]; then
+        fail "${shell}: a 404 still ran a script: $(cat "${tmp}/stdout")"
+    elif [ "$(cat "${tmp}/stderr")" != "curl: (22) The requested URL returned error: 404" ]; then
+        fail "${shell}: a 404 did not print curl's one line: $(cat "${tmp}/stderr")"
+    else
+        pass "${shell}: a 404 prints one line ($(cat "${tmp}/stderr")) and runs nothing"
+    fi
+    tries="$(grep -c '^/missing/install$' "${tmp}/requests" || true)"
+    if [ "$tries" -eq 1 ]; then
+        pass "${shell}: a 404 is asked for once"
+    else
+        fail "${shell}: a 404 was asked for ${tries} times"
+    fi
+    expect_clean "${shell}: a 404"
 
-# 2. Connections the network cuts are retried until install.sh arrives, which then runs.
-rm -f "${tmp}/ran"
-fresh_dirs
-if out="$(run "${base}/flaky" 2>&1)" && [ -e "${tmp}/ran" ] && [[ "$out" == *"install.sh ran"* ]]; then
-    pass "cut connections are retried, then install.sh runs ($(grep -c '^/flaky/install.sh$' "${tmp}/requests") requests)"
-else
-    fail "cut connections were not retried: ${out}"
-fi
-expect_clean "cut connections"
+    # 2. A served script runs, with the options after `sh -s --`.
+    fresh_dirs
+    if out="$(run "$shell" ok "--version 0.1.0" 2>&1)" && [ -e "${tmp}/ran" ] &&
+        [ "$out" = "install.sh ran: --version 0.1.0" ]; then
+        pass "${shell}: a served script runs with the options after -s --"
+    else
+        fail "${shell}: the served script did not run with its options: ${out}"
+    fi
+    expect_clean "${shell}: a served script"
 
-# 3. A served install.sh is downloaded, then run.
-rm -f "${tmp}/ran"
-fresh_dirs
-if out="$(run "${base}/ok" 2>&1)" && [ -e "${tmp}/ran" ] && [[ "$out" == *"install.sh ran"* ]]; then
-    pass "a served install.sh is downloaded and run"
-else
-    fail "the served install.sh did not run: ${out}"
-fi
-expect_clean "a served install.sh"
+    # 3. The real install.sh cut off halfway, or right before its last line, runs nothing: no
+    # header, no download, nothing installed.
+    for cut in half lastline; do
+        fresh_dirs
+        : >"${tmp}/requests"
+        run "$shell" "$cut" >"${tmp}/stdout" 2>"${tmp}/stderr" || true
+        if [ -s "${tmp}/stdout" ] || grep -q '^/nowhere/' "${tmp}/requests"; then
+            fail "${shell}: install.sh cut off (${cut}) still ran: $(cat "${tmp}/stdout" "${tmp}/stderr")"
+        elif ! grep -q '^curl: (18) ' "${tmp}/stderr"; then
+            fail "${shell}: install.sh cut off (${cut}): curl did not report the cut: $(cat "${tmp}/stderr")"
+        else
+            pass "${shell}: install.sh cut off (${cut}) runs nothing"
+        fi
+        expect_clean "${shell}: install.sh cut off (${cut})"
+    done
+done
 
 if [ "$failures" -ne 0 ]; then
     echo "test-install-command: ${failures} failed" >&2

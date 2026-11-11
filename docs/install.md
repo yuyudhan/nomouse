@@ -15,47 +15,67 @@
 ## The one-line install
 
 ```sh
-(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2 || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2; exit 1; }; } && bash "$d/install.sh")
+curl -fsSL https://yuyudhan.github.io/nomouse/install | sh
 ```
 
-It downloads `install.sh` into a new private temporary directory, runs it from there only after
-an HTTP 200, and removes that directory when the command ends, whether it installed, failed or
-you pressed Ctrl-C. Nothing is written to the folder you run it from, and the installer keeps
-its own downloads in a temporary directory it removes the same way. Download first rather than
-piping curl into bash: a failed download piped into bash (a 404, a cut connection) runs an empty
-script and exits 0, so it looks like success with nothing installed. Here a failed download
-prints one line and exits 1, and a partial download is never run: `nomouse: release not found:
-<url>` (HTTP 404: no such release), or `nomouse: could not download <url> (HTTP <code>, check
-the network): <curl's reason>`. Paste it into bash or zsh (macOS's Terminal); in fish, type
-`bash` first.
+It installs nomouse for your user on macOS or Linux, with no sudo: it picks the build for your
+OS and CPU from the latest [GitHub release](https://github.com/yuyudhan/nomouse/releases),
+checks its SHA-256 against the release's `SHA256SUMS` and refuses to install on a mismatch,
+then prints what it did and the next steps for your system:
 
-The installer needs no sudo. It picks the build for your OS and CPU, downloads it from the latest
-[GitHub release](https://github.com/yuyudhan/nomouse/releases), checks it against the
-release's `.sha256` and refuses to install on a mismatch, then prints the next steps for your
-system. Its failures are one `nomouse: error:` line with a non-zero exit too: `release not
-found` for a missing release or asset, `network error` with curl's reason, `checksum
-mismatch`, or an OS or CPU it has no build for. Running the line again updates, or reinstalls
-the same version in place. `--retry-all-errors` makes curl retry a connection the network
-cuts (a 404 is final and not retried); the installer's own downloads retry the same way. curl
-older than 7.71 (Ubuntu 20.04, RHEL 8) does not know it: drop `--retry-all-errors` there.
+```text
+nomouse installer
+  ✓ macOS (Apple silicon): nomouse-universal-apple-darwin.app.zip, latest release
+  ✓ Downloaded and verified (SHA-256 from SHA256SUMS)
+  ✓ Installed /Applications/nomouse.app
+  ✓ Linked ~/.local/bin/nomouse
+nomouse 0.1.9 is installed.
+
+Next:
+  Switch on Accessibility: System Settings → Privacy & Security → Accessibility → nomouse
+  ...
+```
+
+Running the line again updates, or reinstalls the same version in place. The script is the
+release's own `install.sh` (the address serves the latest release's copy, byte for byte), in
+POSIX sh: it runs piped into `sh` (dash on Debian and Ubuntu), `bash` or `zsh`, and from fish
+too. Every function is defined before the last line runs it, so a download cut short runs
+nothing. Its downloads go into one temporary directory that it removes however it ends,
+Ctrl-C included; nothing is written to the folder you run it from. Every failure is one line
+on stderr and exit status 1, saying what happened and what to do:
+
+- `nomouse: error: could not reach github.com (<curl's reason>); check the network or proxy and run the command again`
+- `nomouse: error: release v9.9.9 not found (HTTP 404); the versions are at https://github.com/yuyudhan/nomouse/releases`
+- `nomouse: error: checksum mismatch for <asset> (expected …, got …); nothing was installed, run the command again`
+- `nomouse: error: no nomouse build for <OS> <CPU>; build from source: …`
+
+The installer's downloads retry a connection the network cuts (curl 7.71 or later); a 404 is
+final. Colour appears only on a terminal; `NO_COLOR=1` or `TERM=dumb` turns it off.
+
+To read the script before running it, download the release's copy and run that; it takes the
+same options:
+
+```sh
+curl -fsSLO https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && sh install.sh
+```
 
 | System | What you get |
 |--------|--------------|
 | macOS 11+, Apple silicon and Intel | `nomouse.app` in `/Applications` (`~/Applications` when `/Applications` is not writable), and a `nomouse` command in `~/.local/bin` that runs the app's binary |
 | Linux x86_64 and aarch64, glibc 2.35+ | the `nomouse` and `nomouse-settings` (the settings window) binaries in `~/.local/bin`, and nomouse in the app launcher: the desktop entry `io.github.yuyudhan.nomouse.desktop` in `~/.local/share/applications` with its icons, and the tray icons, in `~/.local/share/icons/hicolor` |
 
-If `~/.local/bin` is not on your `PATH`, the installer says so and gives the line to add to
-`~/.profile` or `~/.zshrc`. The settings window needs GTK 4 (4.6 or later) and libadwaita (1.1
-or later), which Ubuntu 22.04 and later, Fedora and Arch desktops have; when they are missing the
-installer prints the command that adds them (for example `sudo apt install libgtk-4-1
-libadwaita-1-0`). nomouse itself runs without them.
+If `~/.local/bin` is not on your `PATH`, the installer says so under `Next:` and gives the line
+to add to `~/.zshrc` or `~/.profile`. The settings window needs GTK 4 (4.6 or later) and
+libadwaita (1.1 or later), which Ubuntu 22.04 and later, Fedora and Arch desktops have; when
+they are missing the installer prints the command that adds them (for example `sudo apt install
+libgtk-4-1 libadwaita-1-0`). nomouse itself runs without them.
 
 Offline, or behind a proxy that blocks the script: download the release assets and install from
 the folder (`gh release download --repo yuyudhan/nomouse --pattern '*' --dir nomouse-release`
 does it in one step), then:
 
 ```sh
-bash nomouse-release/install.sh --from nomouse-release
+sh nomouse-release/install.sh --from nomouse-release
 ```
 
 ## Requirements
@@ -240,15 +260,16 @@ build that cannot start leaves the old one in place.
 
 ## Installer options
 
-Options go after the script, inside the parentheses:
+Options go after `sh -s --` when the script is piped, or after `install.sh` when you run a
+downloaded copy:
 
 ```sh
-(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2 || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2; exit 1; }; } && bash "$d/install.sh" --version v0.1.0)
+curl -fsSL https://yuyudhan.github.io/nomouse/install | sh -s -- --version 0.1.0
 ```
 
 | Option | Effect |
 |--------|--------|
-| `--version X.Y.Z` | install that release instead of the latest |
+| `--version X.Y.Z` | install that release instead of the latest (`vX.Y.Z` works too) |
 | `--from DIR` | install from a folder holding the release assets (no network) |
 | `--uninstall` | remove nomouse, keep the config |
 | `--uninstall --purge` | also delete `~/.config/nomouse` |
@@ -256,11 +277,13 @@ Options go after the script, inside the parentheses:
 
 | Environment | Effect |
 |-------------|--------|
+| `NOMOUSE_VERSION` | the release to install, as `--version` takes it (`--version` wins) |
 | `NOMOUSE_INSTALL_DIR` | where the `nomouse` command goes (default `~/.local/bin`) |
 | `NOMOUSE_APP_DIR` | macOS: where `nomouse.app` goes (default `/Applications`) |
 | `GH_TOKEN` or `GITHUB_TOKEN` | download through the GitHub API with this token (avoids anonymous rate limits) |
 | `NOMOUSE_INSTALL_BASE` | a URL holding the release assets, for mirrors |
 | `NOMOUSE_API_BASE` | the GitHub API base for token downloads (default `https://api.github.com`) |
+| `NO_COLOR` | no colours in the output |
 
 ## Updating
 
@@ -310,7 +333,7 @@ Or, in the pane, select nomouse, click **−**, then **+** and pick `/Applicatio
 ## Uninstalling
 
 ```sh
-(d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT INT TERM && u=https://github.com/yuyudhan/nomouse/releases/latest/download/install.sh && { c="$(curl -sSL --retry 3 --retry-all-errors -w '%{http_code}' -o "$d/install.sh" "$u" 2>"$d/err")" && [ "$c" = 200 ] || { [ "$c" = 404 ] && echo "nomouse: release not found: $u" >&2 || echo "nomouse: could not download $u (HTTP ${c:-000}, check the network): $(tail -n 1 "$d/err")" >&2; exit 1; }; } && bash "$d/install.sh" --uninstall)
+curl -fsSL https://yuyudhan.github.io/nomouse/install | sh -s -- --uninstall
 ```
 
 This removes `~/.local/bin/nomouse`, on Linux `nomouse-settings`, the app launcher entry and its
@@ -408,7 +431,7 @@ does, from the build:
 cargo build --release --locked -p nomouse -p nomouse-settings
 target="$(rustc -vV | sed -n 's/^host: //p')"
 scripts/release/package.sh "$target" target/release/nomouse target/dist
-bash scripts/install.sh --from target/dist
+sh scripts/install.sh --from target/dist
 ```
 
 macOS, as `nomouse.app` in `/Applications` (an update over an installed copy needs the grant
@@ -418,7 +441,7 @@ it `app.sh` gets whatever flavour the build was:
 ```sh
 NOMOUSE_FLAVOUR=release cargo build --release --locked -p nomouse
 scripts/release/app.sh target/release/nomouse target/release-app
-bash scripts/install.sh --from target/release-app
+sh scripts/install.sh --from target/release-app
 ```
 
 `just app` is for working on nomouse: it builds **nomouse Dev.app**

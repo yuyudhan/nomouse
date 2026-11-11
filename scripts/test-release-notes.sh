@@ -21,6 +21,8 @@ grep -qF "($link)" <<<"$notes" || fail "the notes do not link $link"
 if grep -qF "/blob/main/" <<<"$notes"; then
     fail "the notes link main, which has no docs/install.md"
 fi
+one_liner="curl -fsSL https://yuyudhan.github.io/nomouse/install | sh"
+grep -qxF "$one_liner" <<<"$notes" || fail "the notes do not hold the one-line install: ${one_liner}"
 
 if "$script" 0.0.0-none >/dev/null 2>&1; then
     fail "a version without a changelog section was accepted"

@@ -46,7 +46,9 @@ jobs:
               run: typos
             - name: Shellcheck
               if: runner.os == 'Linux'
-              run: git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck --severity=style
+              run: |
+                  git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck --severity=style
+                  shellcheck --shell=sh --severity=style scripts/install.sh
             - name: PSScriptAnalyzer
               if: runner.os == 'Windows'
               shell: pwsh
@@ -66,13 +68,13 @@ jobs:
             # the Finder test on macOS (it skips itself without an Accessibility grant).
             - name: Test (Windows + macOS backends, integration on their OS)
               run: cargo test -p nomouse-windows -p nomouse-macos --all-features -- --nocapture
-            - name: desktop-file-validate for the installer test
+            - name: desktop-file-validate and zsh for the installer tests
               if: runner.os == 'Linux'
-              run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends desktop-file-utils
-            - name: install.sh against a fake release
+              run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends desktop-file-utils zsh
+            - name: install.sh against a fake release, piped into sh, dash, bash and zsh
               if: runner.os != 'Windows'
               run: scripts/test-installer.sh
-            - name: The documented one-line install against a local server (404 fails)
+            - name: The documented one-line install against a local server (404 and cut downloads run nothing)
               if: runner.os != 'Windows'
               run: scripts/test-install-command.sh
             - name: just dev-config in a throwaway HOME

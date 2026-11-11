@@ -26,9 +26,11 @@ guards:
 typos:
     typos
 
-# shellcheck over every tracked shell script and git hook.
+# shellcheck over every tracked shell script and git hook; install.sh as POSIX sh, which the
+# one-line install pipes it into.
 shellcheck:
     git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck --severity=style
+    shellcheck --shell=sh --severity=style scripts/install.sh
 
 # Clippy with -D warnings for the host only.
 clippy:

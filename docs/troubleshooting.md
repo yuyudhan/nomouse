@@ -13,40 +13,37 @@ NOMOUSE_LOG=debug nomouse hints --standalone
 
 ## The install
 
-**The install "worked" but nothing was installed (the old one-liner)**
-Before 0.1.8 the one-line install piped curl straight into bash. When the download failed (a
-404, a proxy, a cut connection), curl printed an error, bash ran an empty script and the command
-exited 0 with nothing installed. Use the current
-[one-line install](install.md#the-one-line-install): it downloads `install.sh` into a
-temporary directory first and runs it only after an HTTP 200, so a failed download stops with
-one line and a non-zero exit.
+The [one-line install](install.md#the-one-line-install) reports every failure as one
+`nomouse: error: <what happened>; <the fix>` line and exit status 1.
 
-**`nomouse: release not found: <url>`**
-GitHub has no release (or no such asset) at that address, from the one-line install or from
-`install.sh --version`: check the version on the
-[releases page](https://github.com/yuyudhan/nomouse/releases).
+**The install "worked" but nothing was installed (an old one-liner)**
+Before 0.1.8 the one-line install piped the release's `install.sh` URL into bash, and a failed
+download ran an empty script that exited 0. Use the current
+[one-line install](install.md#the-one-line-install). If `curl` itself cannot fetch the script,
+it prints its own `curl: (N) …` line and nothing runs; the script's last line starts the
+install, so a download cut short runs nothing either.
 
-**`nomouse: could not download <url> (HTTP 000, check the network)` or `nomouse: error: network
-error: …`**
-Nothing answered; curl's own reason follows (no DNS, a refused or cut connection, a proxy). Fix
-the network and run the line again, or install from downloaded assets with `install.sh --from`.
+**`nomouse: error: release v9.9.9 not found (HTTP 404)` or `release not found: <url>`**
+GitHub has no such release (or that release has no such asset): check the version on the
+[releases page](https://github.com/yuyudhan/nomouse/releases). With `GH_TOKEN` it can also mean
+the token cannot read the repository.
+
+**`nomouse: error: could not reach github.com (<curl's reason>)`**
+Nothing answered: curl's own reason is in the parentheses (no DNS, a refused or cut connection, a
+proxy). Fix the network and run the line again, or install from downloaded assets with
+`sh install.sh --from DIR`.
 
 **An `install.sh` file is left in a folder**
-The 0.1.8 one-line install (`curl -fsSLO ... && bash install.sh`) saved `install.sh` in the
-folder it ran in. Delete it; the current
-[one-line install](install.md#the-one-line-install) downloads into a temporary directory and
-removes it, and the installer never writes to the current folder.
+The 0.1.8 one-line install saved `install.sh` in the folder it ran in. Delete it; the current
+one-line install streams the script into `sh`, and the installer never writes to the current
+folder.
 
 **`curl: (35) error:0A000126:SSL routines::unexpected eof while reading`**
 The network cut the connection during the TLS handshake, usually to GitHub's download host
 `release-assets.githubusercontent.com`; on some networks this happens to a third of
-connections. Run the one-line install with `--retry-all-errors` as
-[install.md](install.md#the-one-line-install) shows: curl retries the cut connection, and the
-installer (0.1.2 and later) retries its own downloads the same way.
-
-**`curl: option --retry-all-errors: is unknown`**
-Your curl is older than 7.71. Drop `--retry-all-errors` from the command, or install from a
-folder with `install.sh --from`.
+connections. The installer (0.1.2 and later) retries its own downloads with
+`--retry-all-errors` on curl 7.71 and later; if curl fetching the script itself fails this way,
+run the line again.
 
 **`checksum mismatch`**
 The download was cut off or changed on the way. Nothing was installed; run the installer

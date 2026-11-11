@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Prints the GitHub release notes for VERSION: the CHANGELOG.md section (without its heading),
 # then how to install or update, with the one-line install from docs/install.md ("The one-line
-# install"), the same command as nomouse_core::update::INSTALL_COMMAND, which the macOS update
-# window copies (crates/nomouse-core/src/update.rs tests that they match). On macOS it is the
-# way to update: a browser quarantines a downloaded .dmg or .app.zip, the installer does not.
+# install", `curl -fsSL https://yuyudhan.github.io/nomouse/install | sh`), the same command as
+# nomouse_core::update::INSTALL_COMMAND, which the macOS update window copies
+# (crates/nomouse-core/src/update.rs tests that they match). On macOS it is the way to update: a
+# browser quarantines a downloaded .dmg or .app.zip, the installer does not.
 #
 # Usage: scripts/release/notes.sh VERSION
 set -euo pipefail
@@ -33,7 +34,7 @@ if [ -z "$install" ] || [ "$(printf '%s\n' "$install" | wc -l)" -ne 1 ]; then
 fi
 printf '%s\n' "$notes"
 printf '\n## Install or update\n\n'
-printf 'macOS 11+ and Linux (x86_64 and aarch64, glibc 2.35+), in a terminal:\n\n'
+printf 'macOS 11+ and Linux (x86_64 and aarch64, glibc 2.35+), in a terminal, no sudo:\n\n'
 printf '%s\n%s\n%s\n' "${fence}sh" "$install" "$fence"
 cat <<'EOF'
 

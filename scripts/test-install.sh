@@ -74,9 +74,10 @@ else
 fi
 
 # 2. Install.
-if out="$(sandbox NOMOUSE_INSTALL_BASE="$base" bash "${dist}/install.sh" 2>&1)" &&
-    [[ "$out" == *"checksum ok"* ]] && [ -x "${home}/.local/bin/nomouse" ]; then
-    pass "install.sh installs into \$HOME/.local/bin with a verified checksum"
+if out="$(sandbox NOMOUSE_INSTALL_BASE="$base" sh "${dist}/install.sh" 2>&1)" &&
+    [[ "$out" == *"✓ Downloaded and verified (SHA-256 from SHA256SUMS)"* ]] &&
+    [[ "$out" == *"is installed."* ]] && [ -x "${home}/.local/bin/nomouse" ]; then
+    pass "install.sh (in sh) installs into \$HOME/.local/bin, verified against SHA256SUMS"
 else
     fail "install: ${out}"
 fi
@@ -96,8 +97,8 @@ settings="${home}/.local/bin/nomouse-settings"
 if [ ! -x "$settings" ]; then
     fail "no settings window at ${settings}"
 elif ldd "$settings" 2>/dev/null | grep -q 'not found'; then
-    if [[ "$out" == *"the settings window needs GTK 4 and libadwaita"* ]] &&
-        [[ "$out" == *"install them with:"* ]]; then
+    if [[ "$out" == *"the settings window needs GTK 4 and libadwaita, missing here: "* ]] &&
+        [[ "$out" == *"For the settings window, install GTK 4 and libadwaita: "* ]]; then
         pass "without GTK 4 here, install.sh says which packages the settings window needs"
     else
         fail "GTK 4 is missing here and install.sh did not say so: ${out}"
@@ -147,7 +148,7 @@ fi
 
 # 4. Uninstall keeps the config.
 sandbox "${home}/.local/bin/nomouse" config init >/dev/null
-out="$(sandbox bash "${dist}/install.sh" --uninstall 2>&1)"
+out="$(sandbox sh "${dist}/install.sh" --uninstall 2>&1)"
 if [ ! -e "${home}/.local/bin/nomouse" ] && [ ! -e "${home}/.local/bin/nomouse-settings" ] &&
     [ -f "${home}/.config/nomouse/config.toml" ] && [ ! -e "$entry" ]; then
     pass "--uninstall removes both binaries and the launcher entry and keeps the config"
@@ -156,9 +157,9 @@ else
 fi
 
 # 5. Purge names the path, then deletes only it.
-out="$(sandbox bash "${dist}/install.sh" --uninstall --purge 2>&1)"
-if [[ "$out" == *"--purge deletes: ${home}/.config/nomouse"* ]] && [ ! -e "${home}/.config/nomouse" ]; then
-    pass "--purge lists ${home}/.config/nomouse before deleting it"
+out="$(sandbox sh "${dist}/install.sh" --uninstall --purge 2>&1)"
+if [[ "$out" == *"✓ Deleted the config directory ~/.config/nomouse"* ]] && [ ! -e "${home}/.config/nomouse" ]; then
+    pass "--purge names ~/.config/nomouse as it deletes it"
 else
     fail "--purge: ${out}"
 fi
@@ -166,8 +167,8 @@ fi
 # 6. A wrong checksum aborts without installing.
 mkdir -p "${dist}/.bad-checksum"
 cp "${dist}/nomouse-x86_64-unknown-linux-gnu.tar.gz" "${dist}/.bad-checksum/"
-echo "0000  nomouse-x86_64-unknown-linux-gnu.tar.gz" >"${dist}/.bad-checksum/nomouse-x86_64-unknown-linux-gnu.tar.gz.sha256"
-if out="$(sandbox NOMOUSE_INSTALL_BASE="${base}/.bad-checksum" bash "${dist}/install.sh" 2>&1)"; then
+echo "0000  nomouse-x86_64-unknown-linux-gnu.tar.gz" >"${dist}/.bad-checksum/SHA256SUMS"
+if out="$(sandbox NOMOUSE_INSTALL_BASE="${base}/.bad-checksum" sh "${dist}/install.sh" 2>&1)"; then
     fail "a wrong checksum installed anyway"
 elif [[ "$out" == *"checksum mismatch"* ]] && [ ! -e "${home}/.local/bin/nomouse" ]; then
     pass "a wrong checksum fails and installs nothing"
@@ -182,10 +183,10 @@ oldglibc="${work}/old-glibc"
 mkdir -p "$oldglibc"
 printf '#!/bin/sh\necho "glibc 2.31"\n' >"${oldglibc}/getconf"
 chmod 755 "${oldglibc}/getconf"
-if out="$(sandbox PATH="${oldglibc}:/usr/bin:/bin" NOMOUSE_INSTALL_BASE="$base" bash "${dist}/install.sh" 2>&1)"; then
+if out="$(sandbox PATH="${oldglibc}:/usr/bin:/bin" NOMOUSE_INSTALL_BASE="$base" sh "${dist}/install.sh" 2>&1)"; then
     fail "glibc 2.31 installed anyway: ${out}"
 elif [[ "$out" == *"needs glibc 2.35 or later"* ]] && [[ "$out" == *"this system has glibc 2.31"* ]] &&
-    [[ "$out" == *"#building-from-source"* ]] && [[ "$out" != *"checksum ok"* ]] &&
+    [[ "$out" == *"#building-from-source"* ]] && [[ "$out" != *"verified"* ]] &&
     [ ! -e "${home}/.local/bin/nomouse" ]; then
     pass "glibc 2.31 is refused before the download and installs nothing"
 else
