@@ -7,6 +7,26 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: after Accessibility was granted, nomouse kept running with no menu bar icon. Once the
+  grant arrived, the first run restarted nomouse in place with `exec`, and macOS's menu bar
+  refuses status items from a process replaced that way ("process has mismatched pid
+  version"). It asked again once a second and never showed the icon. Now the first run lets
+  go of the single-instance lock and opens the app again as a new instance (`open -n`); in a
+  terminal it starts a child and waits for it. Then it ends, so one nomouse runs with one
+  icon and one set of hotkeys.
+- macOS: nomouse checks that its menu bar icon is really on screen. If it is not, nomouse
+  logs a warning once and makes the icon again, 5, 20 and 60 seconds apart. Then it removes
+  the icon, so nothing retries every second, and shows a window saying the icon did not
+  appear.
+
+### Changed
+
+- macOS: while Accessibility is missing, the menu bar shows a warning sign in place of the
+  icon, and its menu says **Accessibility: not allowed: click to allow**. The first run's
+  menu does the same.
+
 ## [0.1.9] - 2026-11-11
 
 ### Changed

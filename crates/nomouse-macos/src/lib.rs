@@ -7,6 +7,7 @@
 //! - [`roles`]: which Accessibility roles get hints.
 //! - [`geometry`]: global top-left (Accessibility, Quartz) versus Cocoa bottom-left coordinates.
 //! - [`keys`]: virtual key codes for hotkeys and typed keys.
+//! - [`icon_watch`]: whether the menu bar item came up, and its retries when it did not.
 //! - [`walk`]: the bounded, cycle-safe tree walk over any [`walk::AxTree`].
 //! - [`style`]: the overlay look from the configuration.
 //! - [`setup`]: the guided first run's permission and its texts.
@@ -16,6 +17,7 @@
 
 pub mod bundle;
 pub mod geometry;
+pub mod icon_watch;
 pub mod keys;
 pub mod roles;
 pub mod setup;

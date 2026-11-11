@@ -140,7 +140,7 @@ while paused or unable to run). Its menu:
 | Item | Does |
 |------|------|
 | `nomouse 0.1.4: on` | the state: on, paused, or why it cannot run |
-| `Accessibility: allowed` | the permission; while it is missing, `Accessibility: not allowed. Allow…` removes a stale entry left by an older version, asks for it and opens its Settings pane (Privacy & Security › Accessibility, Device Control and Data Access on macOS 27) |
+| `Accessibility: allowed` | the permission; while it is missing the icon is a warning sign and `Accessibility: not allowed: click to allow` removes a stale entry left by an older version, asks for it and opens its Settings pane (Privacy & Security › Accessibility, Device Control and Data Access on macOS 27) |
 | Pause nomouse / Resume nomouse | release the hotkeys until resumed |
 | Show Hints, Continuous Hints, Scroll, Search | start the mode; the hotkey in effect is shown at the right |
 | Settings… (`cmd+,`) | the settings window |

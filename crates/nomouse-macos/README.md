@@ -9,7 +9,7 @@ All FFI lives in `nomouse-sys-macos`; this crate is `#![forbid(unsafe_code)]`.
 
 | Permission | Needed for | How to grant |
 | --- | --- | --- |
-| **Accessibility** | Reading other apps' UI, performing `AXPress`, the keyboard event tap (an active tap filters keys, which macOS allows only for trusted processes), posting clicks | System Settings > Privacy & Security > Accessibility: add and enable `nomouse.app` (or the `nomouse` binary, or the terminal it runs from). `nomouse setup`, and the daemon's first start, explain it (dialogs when there is no terminal), show macOS's prompt, open that pane, wait for the switch and restart the daemon. |
+| **Accessibility** | Reading other apps' UI, performing `AXPress`, the keyboard event tap (an active tap filters keys, which macOS allows only for trusted processes), posting clicks | System Settings > Privacy & Security > Accessibility: add and enable `nomouse.app` (or the `nomouse` binary, or the terminal it runs from). `nomouse setup`, and the daemon's first start, explain it (dialogs when there is no terminal, with a warning sign in the menu bar), show macOS's prompt, open that pane, wait for the switch and start the daemon again as a new process. |
 | Input Monitoring | Not needed: the active tap runs under Accessibility. `nomouse doctor` still reports its state. | System Settings > Privacy & Security > Input Monitoring |
 
 Granting Accessibility to a terminal (Terminal, iTerm2) also covers anything started from it,

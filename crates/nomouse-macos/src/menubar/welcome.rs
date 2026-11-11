@@ -1,6 +1,9 @@
 //! The guided first run inside the app (NM-APP-10): while Accessibility is missing, nomouse
-//! shows its menu bar item and a Welcome window that explains the permission, opens its
-//! settings pane and follows the grant, instead of a row of alerts.
+//! shows its menu bar item (a warning sign, with **Accessibility: not allowed: click to
+//! allow** in its menu) and a Welcome window that explains the permission, opens its settings
+//! pane and follows the grant, instead of a row of alerts. The item is made once and stays
+//! until this process ends; the daemon that starts after the grant is a new process with its
+//! own item.
 
 use std::time::{Duration, Instant};
 
@@ -10,7 +13,8 @@ use nomouse_sys_macos::ui::form::{Form, FormEvent, Page, Row, Spec, Tone};
 use nomouse_sys_macos::ui::status::{MenuLine, StatusItem};
 use nomouse_sys_macos::ui::{self, UiEvent, panels};
 
-use super::MENU_ICON;
+use super::{MENU_ICON, NOT_ALLOWED, NOT_ALLOWED_TIP, tend};
+use crate::icon_watch::IconWatch;
 use crate::setup::{MacTrust, ask_for_accessibility, dialog};
 
 /// "Open System Settings".
@@ -28,6 +32,7 @@ const SLICE: Duration = Duration::from_millis(50);
 pub struct Onboarding {
     app: App,
     item: StatusItem,
+    watch: IconWatch,
     form: Form,
 }
 
@@ -73,22 +78,16 @@ impl Onboarding {
         let app = App::new()?;
         let mtm = app.main_thread();
         ui::install_main_menu(mtm);
-        let item = StatusItem::new(
+        let mut item = StatusItem::new(
             mtm,
             MENU_ICON,
             nomouse_core::Flavour::CURRENT.display_name(),
         );
+        item.set_warning(Some(NOT_ALLOWED_TIP));
         item.set_menu(&[
             MenuLine::Item {
-                tag: 0,
-                title: "nomouse needs Accessibility".to_owned(),
-                enabled: false,
-                checked: false,
-                shortcut: None,
-            },
-            MenuLine::Item {
                 tag: OPEN,
-                title: "Open System Settings…".to_owned(),
+                title: NOT_ALLOWED.to_owned(),
                 enabled: true,
                 checked: false,
                 shortcut: None,
@@ -102,16 +101,22 @@ impl Onboarding {
                 shortcut: None,
             },
         ]);
-        item.set_dimmed(true);
         let form = Form::new(mtm, "Welcome to nomouse", &[page()]);
-        Ok(Self { app, item, form })
+        Ok(Self {
+            app,
+            item,
+            watch: IconWatch::new(Instant::now()),
+            form,
+        })
     }
 
     /// Services the window for up to `duration`; returns the first button or menu pick.
-    fn pump(&self, duration: Duration) -> Option<Pick> {
+    fn pump(&mut self, duration: Duration) -> Option<Pick> {
         let deadline = Instant::now() + duration;
         loop {
             self.app.pump(SLICE.as_secs_f64());
+            // A refused item is logged and made again here; the Welcome window still shows.
+            tend(&mut self.item, &mut self.watch);
             for event in ui::take_events() {
                 let tag = match self.form.translate(&event) {
                     Some(FormEvent::Pressed(tag)) => tag,
@@ -215,6 +220,5 @@ impl Presenter for Onboarding {
 impl Drop for Onboarding {
     fn drop(&mut self) {
         self.form.close();
-        self.item.set_dimmed(false);
     }
 }

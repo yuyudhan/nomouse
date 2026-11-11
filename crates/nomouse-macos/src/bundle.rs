@@ -25,10 +25,24 @@ pub fn is_bundle_executable(real: &Path) -> bool {
             .is_some_and(|extension| extension == "app")
 }
 
+/// The app bundle (`Name.app`) whose executable `real` is, if it is one.
+#[must_use]
+pub fn app_of(real: &Path) -> Option<&Path> {
+    if !is_bundle_executable(real) {
+        return None;
+    }
+    real.parent()?.parent()?.parent()
+}
+
 /// Replaces this process with the same command started from the real path of its executable,
 /// when it was started through a symlink to an app bundle's executable. Returns when there is
 /// nothing to do (started by its real path, or not from a bundle) or when starting it again
 /// failed, which is logged: the daemon then runs without a bundle, as before.
+///
+/// The `exec` happens before this process has touched AppKit, so the menu bar has never seen
+/// its old pid version and takes the new image's status item. That is why the restart after
+/// the first run's grant, which comes after its Welcome item was up, starts a new process
+/// instead (`relaunch` in the binary).
 #[cfg(target_os = "macos")]
 pub fn reexec_from_bundle() {
     use std::os::unix::process::CommandExt as _;
@@ -61,7 +75,7 @@ pub fn reexec_from_bundle() {
 mod tests {
     use std::path::Path;
 
-    use super::is_bundle_executable;
+    use super::{app_of, is_bundle_executable};
 
     #[test]
     fn the_executable_of_an_app_bundle_is_recognised() {
@@ -71,6 +85,17 @@ mod tests {
         assert!(is_bundle_executable(Path::new(
             "/Users/a/Applications/nomouse.app/Contents/MacOS/other"
         )));
+    }
+
+    #[test]
+    fn the_app_of_a_bundle_executable_is_the_bundle() {
+        assert_eq!(
+            app_of(Path::new(
+                "/Applications/nomouse Dev.app/Contents/MacOS/nomouse"
+            )),
+            Some(Path::new("/Applications/nomouse Dev.app"))
+        );
+        assert_eq!(app_of(Path::new("/usr/local/bin/nomouse")), None);
     }
 
     #[test]

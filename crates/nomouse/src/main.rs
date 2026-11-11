@@ -9,6 +9,7 @@ mod ipc;
 #[cfg(target_os = "linux")]
 mod launch;
 mod lock;
+mod relaunch;
 mod run;
 
 use std::fmt::Write as _;
@@ -461,8 +462,12 @@ fn file_changed(file: &mut ConfigFile) -> bool {
 fn daemon() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     nomouse_macos::bundle::reexec_from_bundle();
-    let _lock = lock::acquire(&lock::current_path()).map_err(|e| e.to_string())?;
-    first_run::before_daemon()?;
+    let lock = lock::acquire(&lock::current_path()).map_err(|e| e.to_string())?;
+    if let first_run::Next::StartAgain { terminal } = first_run::before_daemon()? {
+        let plan = relaunch::current_plan(terminal)?;
+        let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+        return relaunch::hand_over(lock, || relaunch::start(&plan, &args));
+    }
     let mut file = ConfigFile::open_default().map_err(|e| e.to_string())?;
     if let Some(problem) = file.problem() {
         return Err(problem.to_owned());

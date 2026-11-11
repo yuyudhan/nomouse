@@ -287,12 +287,14 @@ Until releases are signed with an Apple Developer ID, every new version needs th
 more, also after installing a source build of `nomouse.app` of another version:
 
 1. Open the new app: `open /Applications/nomouse.app` (the installer already did if nomouse
-   was running). The Welcome window, or the dimmed menu bar icon's
-   **Accessibility: not allowed. Allow…**, offers **Open System Settings**.
+   was running). The Welcome window, or the menu bar's warning sign (a triangle in place of
+   the icon) and its **Accessibility: not allowed: click to allow**, offers **Open System
+   Settings**.
 2. Click it. nomouse removes the old entry, macOS adds the new copy switched off, and the pane
    opens: **System Settings › Privacy & Security › Accessibility** (macOS 27 and later:
    **Device Control and Data Access**).
-3. Switch **nomouse** on. nomouse restarts by itself within a second or two.
+3. Switch **nomouse** on. nomouse starts again by itself within a second or two, and its
+   icon replaces the warning sign.
 
 If the list still shows nomouse switched on and nomouse keeps waiting, that switch belongs to
 the old version. Remove it by hand in Terminal, then start the app and switch it on again:

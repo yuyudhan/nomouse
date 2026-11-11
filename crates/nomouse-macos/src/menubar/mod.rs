@@ -14,7 +14,7 @@ mod window;
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nomouse_core::Hotkey;
 use nomouse_core::menu::{ItemKind, MenuAction, MenuItem, MenuState, UpdateLine, status_menu};
@@ -31,6 +31,7 @@ pub use screenshots::screenshots;
 pub use welcome::Onboarding;
 use window::{General, Handled, Outcome, SettingsWindow};
 
+use crate::icon_watch::{IconWatch, Verdict};
 use crate::keys;
 use crate::setup::{MacTrust, ask_for_accessibility};
 use crate::shortcuts;
@@ -42,6 +43,49 @@ const APP_ICON: &[u8] = include_bytes!("../../../../assets/logo/png/nomouse-256.
 
 /// The menu's Accessibility line (menu action ids are 1 to 14).
 const ACCESSIBILITY_TAG: isize = 50;
+
+/// The Accessibility line while it is missing; clicking it asks for it.
+const NOT_ALLOWED: &str = "Accessibility: not allowed: click to allow";
+
+/// The icon's tooltip after the name while Accessibility is missing.
+const NOT_ALLOWED_TIP: &str = "Accessibility not allowed";
+
+/// Looks at the menu bar item when `watch` says it is time, makes it again when the menu bar
+/// refused it, and takes it out for good after the last retry. The failure is logged when
+/// it starts and when it is given up, never once a second. Returns true when it gave up.
+fn tend(item: &mut StatusItem, watch: &mut IconWatch) -> bool {
+    match watch.check(Instant::now(), || item.is_on_screen()) {
+        Verdict::Wait => false,
+        Verdict::Appeared { retries: 0 } => {
+            tracing::debug!("the menu bar icon is on screen");
+            false
+        }
+        Verdict::Appeared { retries } => {
+            tracing::info!("the menu bar icon is on screen after {retries} new attempt(s)");
+            false
+        }
+        Verdict::Retry { first } => {
+            if first {
+                tracing::warn!(
+                    "the menu bar icon is not on screen (macOS's menu bar refused it); making \
+                     it again"
+                );
+            } else {
+                tracing::debug!("the menu bar icon is still not on screen; making it again");
+            }
+            item.recreate();
+            false
+        }
+        Verdict::GiveUp => {
+            item.remove();
+            tracing::error!(
+                "the menu bar icon never came up, so nomouse took it out; the hotkeys still \
+                 work. Quit nomouse (`nomouse quit`) and open it again"
+            );
+            true
+        }
+    }
+}
 
 /// The tag of the first result window button, above every other control's tag.
 const NOTICE_TAG: isize = 10_000;
@@ -123,6 +167,7 @@ pub enum Command {
 pub struct MenuBar {
     app: App,
     item: StatusItem,
+    watch: IconWatch,
     state: MenuState,
     trusted: bool,
     window: Option<SettingsWindow>,
@@ -222,7 +267,7 @@ fn lines(state: &MenuState, items: &[MenuItem], trusted: bool) -> Vec<MenuLine> 
                 title: if trusted {
                     "Accessibility: allowed".to_owned()
                 } else {
-                    "Accessibility: not allowed. Allow…".to_owned()
+                    NOT_ALLOWED.to_owned()
                 },
                 enabled: !trusted,
                 checked: false,
@@ -248,9 +293,10 @@ impl MenuBar {
             MENU_ICON,
             nomouse_core::Flavour::CURRENT.display_name(),
         );
-        let menu_bar = Self {
+        let mut menu_bar = Self {
             app,
             item,
+            watch: IconWatch::new(Instant::now()),
             state: MenuState {
                 start_at_login: start_at_login(),
                 ..state
@@ -279,13 +325,15 @@ impl MenuBar {
         self.redraw();
     }
 
-    fn redraw(&self) {
+    fn redraw(&mut self) {
         let shown = MenuState {
             paused: self.state.paused && !self.holding,
             ..self.state.clone()
         };
         self.item
             .set_menu(&lines(&shown, &status_menu(&shown), self.trusted));
+        self.item
+            .set_warning((!self.trusted).then_some(NOT_ALLOWED_TIP));
         self.item.set_dimmed(shown.paused || !shown.active);
         if let Some(window) = &self.window {
             window.set_general(&self.general());
@@ -300,7 +348,8 @@ impl MenuBar {
         }
     }
 
-    /// Re-reads what can change outside nomouse (the Accessibility grant, the login item).
+    /// Re-reads what can change outside nomouse (the Accessibility grant, the login item) and
+    /// checks that the menu bar shows the icon. When it never does, a window says so once.
     pub fn refresh(&mut self) {
         let trusted = ax::is_process_trusted(false);
         let login = start_at_login();
@@ -308,6 +357,17 @@ impl MenuBar {
             self.trusted = trusted;
             self.state.start_at_login = login;
             self.redraw();
+        }
+        if tend(&mut self.item, &mut self.watch) {
+            self.notify(
+                "nomouse's menu bar icon did not appear",
+                "macOS's menu bar refused nomouse's icon, so its menu and settings are out of \
+                 reach. The hotkeys still work. Quit nomouse (nomouse quit in Terminal) and \
+                 open it again.",
+                None,
+                vec![("OK", Click::Close)],
+                true,
+            );
         }
     }
 
@@ -712,7 +772,7 @@ mod tests {
             titles(&lines),
             [
                 "nomouse 0.1.4: on",
-                "Accessibility: not allowed. Allow…",
+                "Accessibility: not allowed: click to allow",
                 "-",
                 "Pause nomouse",
                 "Show Hints",

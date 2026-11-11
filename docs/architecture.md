@@ -180,8 +180,16 @@ and windows on the main thread, beside the overlay and the event tap
   waits for keys, so the menu stays live during and between activations, and without a
   backend (Accessibility missing) the menu still works.
 - **First run**: while Accessibility is missing, the `setup::Presenter` is
-  `menubar::Onboarding`: the item (dimmed) and a Welcome window that explains the permission,
-  opens its pane, and follows the grant before the daemon restarts itself.
+  `menubar::Onboarding`: the item (a warning sign, with **Accessibility: not allowed: click to
+  allow**) and a Welcome window that explains the permission, opens its pane, and follows the
+  grant. Then the daemon starts again as a new process (`crates/nomouse/src/relaunch.rs`):
+  it releases the single-instance lock, opens the app as a new instance (`open -n`; in a
+  terminal, a child it waits for), and ends. It never `exec`s in place, because macOS's menu
+  bar refuses status items from an image that replaced its process ("mismatched pid version").
+- **Icon check** (`icon_watch`): 3 s after the item is made, and every 10 s after that, the
+  daemon checks that the item's button window has a height. An item the menu bar refused is
+  logged once and made again 5, 20 and 60 s apart. After that it is removed, so AppKit stops
+  asking every second, and a window says the icon did not appear.
 
 ## Unsafe policy
 
@@ -353,7 +361,7 @@ exits non-zero when any check fails. When the daemon cannot start, the backend's
   code signature, so a stable signed `nomouse.app` is a prerequisite for a smooth first run
   (NM-DIST-02); the guided first run (NM-APP-10) opens the Accessibility pane
   (`x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility`), waits for
-  the grant by polling trust, then restarts itself.
+  the grant by polling trust, then starts nomouse again as a new process.
 - **Linux**: display server and compositor, the AT-SPI bus, the `org.a11y.Status.IsEnabled`
   switch (the daemon turns it on), the compositor's Wayland globals, `/dev/uinput` access when
   needed. Fixes that need root (the uinput udev rule) are printed, never run.
