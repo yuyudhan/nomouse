@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-11-11
+
 ### Changed
 
 - New one-line install: `curl -fsSL https://yuyudhan.github.io/nomouse/install | sh` (options
