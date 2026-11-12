@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-11-12
+
 ### Fixed
 
 - A stray Return right after `ctrl+space` no longer clicks anything: the labels came up with
