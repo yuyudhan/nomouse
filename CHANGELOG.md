@@ -7,6 +7,14 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Fixed
+
+- A stray Return right after `ctrl+space` no longer clicks anything: the labels came up with
+  the first one in reading order highlighted, often a window's close or Cancel button, so
+  Return closed the window. Nothing is highlighted now until Tab, an arrow, Ctrl-N/P or a
+  typed letter picks a label; Tab then starts on the first label and Shift-Tab on the last.
+  Escape, the hotkey and labels work as before (NM-HINT-11).
+
 ## [0.1.11] - 2026-11-11
 
 ### Changed

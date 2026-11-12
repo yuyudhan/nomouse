@@ -49,7 +49,9 @@ Every method is blocking and runs on the event-loop thread; errors are `Platform
    (`session.focused()`). Each `InputEvent::Key` goes to `session.key`, which narrows the
    labels (`LabelFilter`), moves the highlight (Tab/↓/Ctrl-N, Shift-Tab/↑/Ctrl-P), rejects keys
    that match nothing, or yields `SessionEvent::Perform(action)` (a complete label, or Return on
-   the highlight; with `hints.keys = "homerow"` a label only highlights, and Return yields
+   the highlight; nothing is highlighted until a focus move, a typed label prefix or a search
+   query picks a hint, so a stray Return is rejected; with `hints.keys = "homerow"` a label
+   only highlights, and Return yields
    `Armed` until the double-press time passes or a second Return makes it a double click). Drag
    takes two picks; scroll mode (core `ScrollSession`) starts on the largest scroll area,
    outlined through `Frame::area` (without one it picks an element first). Escape cancels, and

@@ -7,9 +7,12 @@
 //! - for click actions, `1` toggles Shift, `2` Ctrl, `3` Alt and `4` Super (Command on macOS,
 //!   the Windows key on Windows), held around the click (cmd/ctrl+click opens a link in a new
 //!   tab); labels never contain digits, so these keys never clash with a label;
-//! - focus-then-act: one hint is highlighted (the first in reading order to begin with);
-//!   Tab, Down and Ctrl-N move the highlight forward, Shift-Tab, Up and Ctrl-P back (wrapping),
-//!   and Return acts on it. Modifiers held with Return are held around the click.
+//! - focus-then-act: nothing is highlighted when the labels appear, so a stray Return does
+//!   nothing (it would otherwise click whatever comes first, often a window's close or Cancel
+//!   button). Tab, Down and Ctrl-N highlight the first hint and then move forward, Shift-Tab,
+//!   Up and Ctrl-P the last and then move back (wrapping); typing part of a label highlights
+//!   the first hint it matches. Return acts on the highlighted hint, and is ignored while none
+//!   is. Modifiers held with Return are held around the click.
 //!
 //! With the Homerow bindings ([`KeyBindings::Homerow`]) a typed label highlights its hint
 //! instead of acting; then Return clicks, Return twice double clicks, Shift-Return right clicks
@@ -90,7 +93,8 @@ pub struct HintSession {
     drag_from: Option<Point>,
     modifiers: Modifiers,
     search: Option<Search>,
-    /// Index into `hints` of the highlighted hint; always a visible one, `None` only when
+    /// Index into `hints` of the highlighted hint; always a visible one. `None` until the
+    /// user picks one (a focus move, a typed label prefix or a search query) and when
     /// nothing is visible.
     focus: Option<usize>,
     /// Homerow bindings: the click a second Return would turn into a double click.
@@ -241,7 +245,7 @@ impl HintSession {
     }
 
     /// Keeps the highlight on a visible hint: the current one while it is visible, else the
-    /// first visible one.
+    /// first visible one once the user has typed a label prefix or a search query, else none.
     fn refocus(&mut self) {
         let mut visible = self.filter.matching();
         let first = visible.next();
@@ -250,7 +254,12 @@ impl HintSession {
         {
             return;
         }
-        self.focus = first;
+        let typed = !self.filter.typed().is_empty()
+            || self
+                .search
+                .as_ref()
+                .is_some_and(|search| !search.query.is_empty());
+        self.focus = first.filter(|_| typed);
     }
 
     /// Relabels the search candidates matching the query, best match first.
@@ -284,7 +293,8 @@ impl HintSession {
             .collect()
     }
 
-    /// The highlighted hint, which Return acts on; always one of [`HintSession::visible`].
+    /// The highlighted hint, which Return acts on; always one of [`HintSession::visible`],
+    /// and `None` until the user has picked one.
     pub fn focused(&self) -> Option<&Hint> {
         self.focus.and_then(|index| self.hints.get(index))
     }
@@ -444,7 +454,8 @@ impl HintSession {
         }
     }
 
-    /// Moves the highlight to the next (`forward`) or previous visible hint, wrapping.
+    /// Moves the highlight to the next (`forward`) or previous visible hint, wrapping; with
+    /// nothing highlighted yet, to the first (`forward`) or last visible hint.
     fn move_focus(&mut self, forward: bool) -> SessionEvent {
         let visible: Vec<usize> = self.filter.matching().collect();
         let count = visible.len();
@@ -453,12 +464,12 @@ impl HintSession {
         }
         let at = self
             .focus
-            .and_then(|focus| visible.iter().position(|index| *index == focus))
-            .unwrap_or(0);
-        let next = if forward {
-            (at + 1) % count
-        } else {
-            (at + count - 1) % count
+            .and_then(|focus| visible.iter().position(|index| *index == focus));
+        let next = match (at, forward) {
+            (None, true) => 0,
+            (None, false) => count - 1,
+            (Some(at), true) => (at + 1) % count,
+            (Some(at), false) => (at + count - 1) % count,
         };
         self.focus = Some(visible[next]);
         SessionEvent::Highlighted
@@ -823,15 +834,37 @@ mod tests {
     }
 
     #[test]
-    fn highlight_starts_first_and_moves_with_tab_arrows_and_ctrl_n_p() {
+    fn return_right_after_opening_does_nothing_and_escape_still_cancels() {
+        for bindings in [KeyBindings::Nomouse, KeyBindings::Homerow] {
+            for kind in [ActionKind::Click, ActionKind::Drag, ActionKind::Scroll] {
+                let mut session = HintSession::new(&Alphabet::default(), elements(), kind)
+                    .with_bindings(bindings);
+                let before = session.visible();
+                assert_eq!(session.focused(), None);
+                for held in [Modifiers::NONE, Modifiers::SHIFT, Modifiers::META] {
+                    assert_eq!(
+                        session.key(KeyPress::Enter.with(held)),
+                        SessionEvent::Rejected
+                    );
+                }
+                assert_eq!(session.expire(), None);
+                assert_eq!(session.visible(), before);
+                assert_eq!(session.key(KeyPress::Escape), SessionEvent::Cancelled);
+            }
+        }
+    }
+
+    #[test]
+    fn highlight_starts_empty_and_moves_with_tab_arrows_and_ctrl_n_p() {
         let mut session = HintSession::new(&Alphabet::default(), row(3), ActionKind::Click);
-        assert_eq!(focused_id(&session), Some(0));
+        assert_eq!(focused_id(&session), None);
         let forward = [
             KeyPress::Tab.into(),
             KeyPress::Down.into(),
             KeyPress::Char('n').with(Modifiers::CTRL),
+            KeyPress::Tab.into(),
         ];
-        for (key, expected) in forward.into_iter().zip([1, 2, 0]) {
+        for (key, expected) in forward.into_iter().zip([0, 1, 2, 0]) {
             assert_eq!(session.key(key), SessionEvent::Highlighted);
             assert_eq!(focused_id(&session), Some(expected));
         }
@@ -853,8 +886,19 @@ mod tests {
     }
 
     #[test]
-    fn tab_twice_then_return_clicks_the_third_hint() {
+    fn shift_tab_with_nothing_highlighted_starts_at_the_last_hint() {
+        let mut session = HintSession::new(&Alphabet::default(), row(3), ActionKind::Click);
+        assert_eq!(
+            session.key(KeyPress::Tab.with(Modifiers::SHIFT)),
+            SessionEvent::Highlighted
+        );
+        assert_eq!(focused_id(&session), Some(2));
+    }
+
+    #[test]
+    fn tab_three_times_then_return_clicks_the_third_hint() {
         let mut session = HintSession::new(&Alphabet::default(), row(4), ActionKind::Click);
+        session.key(KeyPress::Tab);
         session.key(KeyPress::Tab);
         session.key(KeyPress::Tab);
         assert_eq!(
@@ -866,6 +910,7 @@ mod tests {
     #[test]
     fn return_holds_its_modifiers_and_the_toggled_ones() {
         let mut session = HintSession::new(&Alphabet::default(), row(2), ActionKind::Click);
+        session.key(KeyPress::Down);
         session.key(KeyPress::Down);
         session.key(KeyPress::Char('1'));
         let held = Modifiers {
@@ -884,7 +929,7 @@ mod tests {
         let mut session = HintSession::new(&Alphabet::default(), row(20), ActionKind::Click);
         let last = session.hints()[19].label.clone();
         let first_char = last.chars().next().unwrap();
-        assert_eq!(focused_id(&session), Some(0));
+        assert_eq!(focused_id(&session), None);
         assert_eq!(
             session.key(KeyPress::Char(first_char)),
             SessionEvent::Narrowed
@@ -933,6 +978,7 @@ mod tests {
     fn homerow_another_key_after_return_performs_the_single_click() {
         let mut session = HintSession::new(&Alphabet::default(), row(3), ActionKind::Click)
             .with_bindings(KeyBindings::Homerow);
+        assert_eq!(session.key(KeyPress::Char('a')), SessionEvent::Highlighted);
         session.key(KeyPress::Enter);
         assert_eq!(
             session.key(KeyPress::Char('s')),
@@ -953,6 +999,7 @@ mod tests {
             SessionEvent::Perform(Action::right_click(Point::new(5, 105)))
         );
         let mut session = homerow();
+        session.key(KeyPress::Char('a'));
         session.key(KeyPress::Char('2'));
         assert_eq!(
             session.key(KeyPress::Enter.with(Modifiers::META)),
@@ -968,7 +1015,11 @@ mod tests {
     fn homerow_escape_while_armed_cancels() {
         let mut session = HintSession::new(&Alphabet::default(), row(2), ActionKind::Click)
             .with_bindings(KeyBindings::Homerow);
-        session.key(KeyPress::Enter);
+        session.key(KeyPress::Char('a'));
+        assert!(matches!(
+            session.key(KeyPress::Enter),
+            SessionEvent::Armed(_)
+        ));
         assert_eq!(session.key(KeyPress::Escape), SessionEvent::Cancelled);
         assert_eq!(session.expire(), None);
     }
@@ -1034,7 +1085,13 @@ mod tests {
         let mut session = HintSession::new(&Alphabet::default(), elements(), ActionKind::Click);
         let pair = |name: &str, label: &str| (name.to_owned(), label.to_owned());
         assert_eq!(shown(&session), [pair("e0", "a"), pair("e1", "s")]);
-        // A button arrives above e1: it gets a free label, e0 and e1 keep theirs.
+        // A button arrives above e1: it gets a free label, e0 and e1 keep theirs, and the
+        // rescan highlights nothing on its own.
+        let mut untouched = session.clone();
+        assert!(untouched.rescan(with_button("late", 50)));
+        assert_eq!(untouched.focused(), None);
+        // A highlight the user moved onto e0 stays there.
+        assert_eq!(session.key(KeyPress::Tab), SessionEvent::Highlighted);
         assert!(session.rescan(with_button("late", 50)));
         assert_eq!(
             shown(&session),
@@ -1062,12 +1119,15 @@ mod tests {
     }
 
     #[test]
-    fn a_rescan_drops_gone_targets_and_moves_the_highlight_off_them() {
+    fn a_rescan_drops_gone_targets_and_the_highlight_on_them() {
         let mut session = HintSession::new(&Alphabet::default(), elements(), ActionKind::Click);
+        assert_eq!(session.key(KeyPress::Tab), SessionEvent::Highlighted);
         let only_e1: Vec<Element> = elements().into_iter().skip(1).collect();
         assert!(session.rescan(only_e1));
         assert_eq!(shown(&session), [("e1".to_owned(), "s".to_owned())]);
-        assert_eq!(session.focused().map(|hint| hint.label.as_str()), Some("s"));
+        // The highlighted target is gone; Return must not fall through to another one.
+        assert_eq!(session.focused(), None);
+        assert_eq!(session.key(KeyPress::Enter), SessionEvent::Rejected);
         assert!(session.rescan(Vec::new()));
         assert!(session.is_empty());
     }

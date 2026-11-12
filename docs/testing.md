@@ -207,7 +207,8 @@ without a left click; a double click adds two; a drag moves the Source onto the 
 mode labels both lists, starts on the larger one (`j` scrolls it, `G` shows its last row, `gg`
 its first, Shift-`j` dashes further than `jjj`) and Tab moves to the smaller one; search
 `seven` + Enter clicks `Seven`, and `keep a copy` + Enter clicks the untitled tooltip button;
-Tab moves the highlight to `Three` and Return clicks it; with `hints.keys = "homerow"` a label
+a stray Return before any Tab leaves the labels up, Tab moves the highlight to `Three` and
+Return clicks it; with `hints.keys = "homerow"` a label
 then Return clicks, Return twice double clicks, Shift-Return opens the context menu and
 Cmd-Return clicks with Command held; continuous mode ends after clicking the text field and
 the text typed next lands in it; `overlay.theme = "auto"` picks the colours of the system

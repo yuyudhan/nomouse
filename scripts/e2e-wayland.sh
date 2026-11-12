@@ -438,15 +438,16 @@ else
     fail "toggle: the binding did not reach the daemon"
 fi
 
-echo "--- focus-then-act: Tab twice, then Return, clicks the third label's button"
+echo "--- focus-then-act: a stray Return does nothing; Tab three times, then Return, clicks the third label's button"
 focus xdg_shell
 before="$(scans "$daemon_log")"
 if "$bin" hints && wait_for 5 scans_at_least "$daemon_log" $((before + 1)); then
     sleep 0.2
     # The last scan's hints in label order: the third line names the third label's element.
     third="$(awk '/scan [0-9]+:/ { n = 0 } /hint [a-z]+ = / { n++; if (n == 3) line = $0 } END { print line }' "$daemon_log" | sed -E 's/.*"(.*)"$/\1/')"
-    wtype -k Tab -k Tab -k Return
-    if [[ -n "$third" ]] && wait_for 3 title_is xdg_shell "left: $third #*"; then pass "Tab Tab Return clicked the third label ($third)"; else fail "focus-then-act: third '$third', title '$(title xdg_shell)'"; fi
+    # Nothing is highlighted until Tab, so the first Return must leave the labels up.
+    wtype -k Return -k Tab -k Tab -k Tab -k Return
+    if [[ -n "$third" ]] && wait_for 3 title_is xdg_shell "left: $third #*"; then pass "Return, Tab Tab Tab Return clicked the third label ($third)"; else fail "focus-then-act: third '$third', title '$(title xdg_shell)'"; fi
 else
     fail "focus-then-act: the daemon did not scan"
 fi

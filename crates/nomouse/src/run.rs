@@ -583,18 +583,36 @@ mod tests {
     }
 
     #[test]
-    fn tab_twice_then_return_clicks_the_third_label_and_draws_the_highlight() {
-        let mut p = fake(4, ">>=");
+    fn tab_three_times_then_return_clicks_the_third_label_and_draws_the_highlight() {
+        let mut p = fake(4, ">>>=");
         assert_eq!(
             run(&mut p, Mode::Once(ActionKind::Click)),
             Ok(Outcome::Performed(1))
         );
         assert_eq!(p.performed, vec![Action::click(Point::new(205, 5))]);
         let focused: Vec<Option<&str>> = p.focused.iter().map(Option::as_deref).collect();
-        assert_eq!(focused, vec![Some("a"), Some("s"), Some("d")]);
+        assert_eq!(focused, vec![None, Some("a"), Some("s"), Some("d")]);
         let mut back = fake(3, "^=");
         run(&mut back, Mode::Once(ActionKind::Click)).unwrap();
         assert_eq!(back.performed, vec![Action::click(Point::new(205, 5))]);
+    }
+
+    #[test]
+    fn a_stray_return_right_after_opening_keeps_the_hints_and_escape_closes_them() {
+        for mode in [
+            Mode::Once(ActionKind::Click),
+            Mode::Continuous(ActionKind::Click),
+            Mode::Scroll,
+        ] {
+            let mut p = fake(3, "=+=!");
+            assert_eq!(run(&mut p, mode), Ok(Outcome::Cancelled));
+            assert_eq!(p.performed, Vec::new());
+            assert!(!p.visible);
+        }
+        let mut homerow_return = fake(3, "=_=!");
+        assert_eq!(homerow(&mut homerow_return), Ok(Outcome::Cancelled));
+        assert_eq!(homerow_return.performed, Vec::new());
+        assert!(!homerow_return.visible);
     }
 
     #[test]

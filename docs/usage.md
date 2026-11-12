@@ -32,9 +32,9 @@ middle of the element (kept on screen when the element reaches past its edge).
 |-----|--------|
 | label letters | narrow the labels to those starting with what you typed; a complete label clicks its element and the labels go away |
 | Backspace | remove the last typed letter |
-| Tab, ↓, Ctrl-N | move the highlight to the next label |
-| Shift-Tab, ↑, Ctrl-P | move the highlight to the previous label |
-| Return | click the highlighted label (the highlight starts on the first label) |
+| Tab, ↓, Ctrl-N | move the highlight to the next label (the first, when none is highlighted) |
+| Shift-Tab, ↑, Ctrl-P | move the highlight to the previous label (the last, when none is highlighted) |
+| Return | click the highlighted label; nothing is highlighted when the labels appear, so a stray Return does nothing until Tab, an arrow or a typed letter picks one |
 | `1` `2` `3` `4` | hold Shift, Ctrl, Alt (Option) or Super (Command) for the next click |
 | Escape, or `ctrl+space` again | cancel |
 

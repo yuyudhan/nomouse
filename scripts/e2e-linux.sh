@@ -273,15 +273,16 @@ else
     fail "ctrl+click: no labels"
 fi
 
-echo "--- focus-then-act: Tab twice, then Return, clicks the third label's button"
+echo "--- focus-then-act: a stray Return does nothing; Tab three times, then Return, clicks the third label's button"
 focus "$gtk_win"
 log="$tmp/focus.log"
 if run_hints "$log" hints; then
-    # Hints are logged in label order; the highlight starts on the first.
+    # Hints are logged in label order; nothing is highlighted until Tab, which starts on the
+    # first, so the Return before it must leave the labels up.
     third="$(grep -E 'hint [a-z]+ = ' "$log" | sed -n 3p | sed -E 's/.*"(.*)"$/\1/')"
-    xdotool key --delay 30 Tab Tab Return
+    xdotool key --delay 30 Return Tab Tab Tab Return
     reap "$hints_pid" || true
-    if [[ -n "$third" ]] && wait_for 3 title_is "$gtk_win" "left: $third #*"; then pass "Tab Tab Return clicked the third label ($third)"; else fail "focus-then-act: third '$third', title '$(title "$gtk_win")'"; fi
+    if [[ -n "$third" ]] && wait_for 3 title_is "$gtk_win" "left: $third #*"; then pass "Return, Tab Tab Tab Return clicked the third label ($third)"; else fail "focus-then-act: third '$third', title '$(title "$gtk_win")'"; fi
 else
     fail "focus-then-act: no labels"
 fi

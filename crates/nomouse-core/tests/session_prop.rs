@@ -1,9 +1,10 @@
-//! Property tests of a hint session: whatever keys move the highlight or narrow the labels,
-//! the highlight stays on a visible hint, and there is one whenever a hint is visible.
+//! Property tests of a hint session: nothing is highlighted when the labels appear, so Return
+//! does nothing until the user picks a hint; whatever keys move the highlight or narrow the
+//! labels, the highlight stays on a visible hint, and Return does nothing while there is none.
 
 use nomouse_core::{
     ActionKind, Alphabet, Element, ElementId, HintSession, KeyBindings, KeyEvent, KeyPress,
-    Modifiers, Rect, Role,
+    Modifiers, Rect, Role, SessionEvent,
 };
 use proptest::prelude::*;
 
@@ -44,6 +45,22 @@ fn key() -> impl Strategy<Value = KeyEvent> {
 
 proptest! {
     #[test]
+    fn return_right_after_opening_does_nothing(
+        count in 0usize..80,
+        homerow in any::<bool>(),
+        held in prop::sample::select(vec![Modifiers::NONE, Modifiers::SHIFT, Modifiers::META]),
+    ) {
+        let bindings = if homerow { KeyBindings::Homerow } else { KeyBindings::Nomouse };
+        let mut session = HintSession::new(&Alphabet::default(), elements(count), ActionKind::Click)
+            .with_bindings(bindings);
+        let visible = session.visible();
+        prop_assert_eq!(session.focused(), None);
+        prop_assert_eq!(session.key(KeyPress::Enter.with(held)), SessionEvent::Rejected);
+        prop_assert_eq!(session.visible(), visible);
+        prop_assert_eq!(session.key(KeyPress::Escape), SessionEvent::Cancelled);
+    }
+
+    #[test]
     fn the_highlight_stays_on_a_visible_hint(
         count in 0usize..80,
         homerow in any::<bool>(),
@@ -55,9 +72,12 @@ proptest! {
         for key in keys {
             session.key(key);
             let visible = session.visible();
-            match session.focused() {
-                Some(focused) => prop_assert!(visible.contains(focused)),
-                None => prop_assert!(visible.is_empty()),
+            if let Some(focused) = session.focused() {
+                prop_assert!(visible.contains(focused));
+            } else {
+                // A typed label prefix always highlights one of the hints it matches.
+                prop_assert!(session.typed().is_empty() || visible.is_empty());
+                prop_assert_eq!(session.clone().key(KeyPress::Enter), SessionEvent::Rejected);
             }
         }
     }

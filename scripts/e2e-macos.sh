@@ -305,19 +305,21 @@ else
     fail "tooltip search: no search box"
 fi
 
-echo "--- focus-then-act: Tab moves the highlight, Return clicks the highlighted button"
+echo "--- focus-then-act: a stray Return does nothing; Tab moves the highlight, Return clicks the highlighted button"
 log="$tmp/focus.log"
 before="$(value count.Three)"
 if run_hints "$log" hints; then
-    # Hints are logged in label order and the highlight starts on the first; the menu bar's
-    # come first, so Three is some way down.
+    # Hints are logged in label order and nothing is highlighted until Tab, which starts on
+    # the first; the menu bar's come first, so Three is some way down. The Return before the
+    # Tabs must leave the labels up.
     position="$({ grep -E 'hint [a-z]+ = ' "$log" || true; } | { grep -nE '= Button "Three"$' || true; } | head -n1 | cut -d: -f1)"
     tabs=()
-    for ((i = 1; i < ${position:-0}; i++)); do tabs+=(tab); done
+    for ((i = 0; i < ${position:-0}; i++)); do tabs+=(tab); done
+    "$probe" key return
     if ((${#tabs[@]})); then "$probe" key "${tabs[@]}"; fi
     "$probe" key return
     reap "$hints_pid" || true
-    if [[ -n "$position" ]] && wait_for 3 value_is count.Three $((before + 1)); then pass "Tab $((position - 1)) times and Return clicked Three (label $position)"; else fail "focus-then-act: Three is label '${position}', count.Three went from $before to '$(value count.Three)'"; fi
+    if [[ -n "$position" ]] && wait_for 3 value_is count.Three $((before + 1)); then pass "Return, Tab $position times and Return clicked Three (label $position)"; else fail "focus-then-act: Three is label '${position}', count.Three went from $before to '$(value count.Three)'"; fi
 else
     fail "focus-then-act: no labels"
 fi
