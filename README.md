@@ -45,8 +45,8 @@ app or the Linux launcher entry; the prerequisites, and how to build the app, ar
    - macOS: `open /Applications/nomouse.app`. Its keycap icon appears in the menu bar and a
      Welcome window asks for **Accessibility** (System Settings › Privacy & Security ›
      Accessibility, called Device Control and Data Access on macOS 27 › switch on nomouse); it
-     restarts itself once allowed. Until releases are Developer ID signed, macOS asks again
-     after every update ([why, and the steps](docs/install.md#updating)).
+     restarts itself once allowed. The installer signs the app with a stable local
+     certificate, so macOS keeps the grant across updates ([details](docs/install.md#updating)).
    - Linux X11: `nomouse setup`, then pick **nomouse** in the app launcher (Super, type
      `nomouse`): it starts the daemon and opens its settings. `nomouse` in a terminal works too.
    - Linux Wayland: bind the modes in your compositor, e.g. Sway:

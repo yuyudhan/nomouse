@@ -18,9 +18,14 @@
 # anything is replaced, so a build this system cannot start leaves an installed copy as it was.
 #   macOS (Apple silicon and Intel): nomouse.app into /Applications (~/Applications when that
 #     is not writable), quarantine removed, and ~/.local/bin/nomouse linked into the app.
-#     Updating quits the running copy first and starts the new one after; when the code
-#     signature changed (every release until they are Developer ID signed) it removes the old
-#     copy's Accessibility entry, which macOS would keep showing switched on while ignoring it.
+#     Updating quits the running copy first and starts the new one after. The app is re-signed
+#     with a self-signed certificate the installer creates once in its own keychain file
+#     (~/Library/Keychains/nomouse-signing.keychain-db), so its designated requirement names
+#     that certificate, not the build's hash, and macOS keeps the Accessibility grant across
+#     updates; NOMOUSE_SIGN_IDENTITY=NAME signs with another identity, =none keeps the
+#     release's signature, and a release already signed with a Developer ID is left as it is.
+#     When the code signature still changed it removes the old copy's Accessibility entry,
+#     which macOS would keep showing switched on while ignoring it.
 #   Linux (x86_64, aarch64; glibc 2.35 or later): nomouse and nomouse-settings into
 #     ~/.local/bin, the app launcher entry and its icons into ${XDG_DATA_HOME:-~/.local/share}.
 #     Systems the build cannot run on (older glibc, musl, no glibc loader as on NixOS) are
@@ -126,6 +131,9 @@ Environment:
   GH_TOKEN, GITHUB_TOKEN  download through the GitHub API with this token
   NOMOUSE_API_BASE        the API for those downloads (default https://api.github.com)
   NO_COLOR                no colours
+  NOMOUSE_SIGN_IDENTITY   macOS: the code-signing identity for nomouse.app (default: a
+                          self-signed "nomouse local signing", created once; none keeps the
+                          release's own signature)
 EOF
 }
 
@@ -545,6 +553,102 @@ reset_accessibility() {
     fi
 }
 
+# The keychain file holding the self-signed identity: nomouse's own, so the login keychain and
+# the keychain search list stay untouched and nothing prompts, also in a headless session.
+signing_keychain() {
+    echo "${HOME}/Library/Keychains/nomouse-signing.keychain-db"
+}
+
+# Creates the self-signed code-signing certificate $1 in the keychain file $2, unless it is
+# already there. The keychain has an empty password, so signing needs no prompt. Returns 1 when
+# the identity cannot be had.
+ensure_signing_identity() {
+    si_name="$1"
+    si_keychain="$2"
+    if [ -f "$si_keychain" ]; then
+        security unlock-keychain -p "" "$si_keychain" </dev/null >/dev/null 2>&1 || return 1
+        if security find-identity -p codesigning "$si_keychain" </dev/null 2>/dev/null |
+            grep -qF "\"${si_name}\""; then
+            return 0
+        fi
+        rm -f "$si_keychain"
+    fi
+    command -v openssl >/dev/null 2>&1 || return 1
+    step "Creating the signing identity \"${si_name}\"" "($(tilde "$si_keychain"))"
+    si_dir="${work}/signing"
+    rm -rf "$si_dir"
+    mkdir -p "$si_dir" "$(dirname "$si_keychain")"
+    chmod 700 "$si_dir"
+    cat >"${si_dir}/cert.cnf" <<EOF
+[req]
+distinguished_name = dn
+x509_extensions = ext
+prompt = no
+[dn]
+CN = ${si_name}
+[ext]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature
+extendedKeyUsage = critical,codeSigning
+EOF
+    si_pass="$(openssl rand -hex 16 </dev/null)"
+    if openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -config "${si_dir}/cert.cnf" \
+        -keyout "${si_dir}/key.pem" -out "${si_dir}/cert.pem" </dev/null >/dev/null 2>&1 &&
+        openssl pkcs12 -export -inkey "${si_dir}/key.pem" -in "${si_dir}/cert.pem" \
+            -out "${si_dir}/id.p12" -passout "pass:${si_pass}" </dev/null >/dev/null 2>&1 &&
+        security create-keychain -p "" "$si_keychain" </dev/null >/dev/null 2>&1 &&
+        security set-keychain-settings "$si_keychain" </dev/null >/dev/null 2>&1 &&
+        security unlock-keychain -p "" "$si_keychain" </dev/null >/dev/null 2>&1 &&
+        security import "${si_dir}/id.p12" -k "$si_keychain" -P "$si_pass" -T /usr/bin/codesign \
+            </dev/null >/dev/null 2>&1 &&
+        security set-key-partition-list -S apple-tool:,apple: -s -k "" "$si_keychain" \
+            </dev/null >/dev/null 2>&1; then
+        rm -rf "$si_dir"
+        return 0
+    fi
+    rm -rf "$si_dir"
+    rm -f "$si_keychain"
+    return 1
+}
+
+# Signs the app at $1 so its designated requirement names a certificate, not the build's own
+# hash, and macOS keeps the Accessibility grant across updates and reinstalls. NOMOUSE_SIGN_IDENTITY
+# names another identity (taken from the keychain search list) or none to keep the release's
+# signature; a release already signed with a Developer ID is left as it is. A failure leaves the
+# release's ad-hoc signature and says so under Next.
+sign_app() {
+    sa_app="$1"
+    sa_identity="${NOMOUSE_SIGN_IDENTITY:-}"
+    sa_keychain=""
+    case "$sa_identity" in
+    none) return 0 ;;
+    "")
+        case "$(requirement_of "$sa_app")" in
+        "" | *cdhash*) ;;
+        *) return 0 ;;
+        esac
+        sa_identity="nomouse local signing"
+        sa_keychain="$(signing_keychain)"
+        if ! ensure_signing_identity "$sa_identity" "$sa_keychain"; then
+            next "nomouse could not create its signing identity, so it keeps the release's signature and macOS asks for Accessibility again after every update"
+            return 0
+        fi
+        ;;
+    esac
+    if [ -n "$sa_keychain" ]; then
+        codesign --force --keychain "$sa_keychain" --sign "$sa_identity" "$sa_app" \
+            </dev/null >/dev/null 2>&1 || sa_identity=""
+    else
+        codesign --force --sign "$sa_identity" "$sa_app" </dev/null >/dev/null 2>&1 ||
+            sa_identity=""
+    fi
+    if [ -z "$sa_identity" ]; then
+        next "nomouse could not sign the app with its identity, so it keeps the release's signature and macOS asks for Accessibility again after every update"
+        return 0
+    fi
+    step "Signed nomouse.app as \"${sa_identity}\"" "(Accessibility stays allowed across updates)"
+}
+
 # The next steps on macOS. APP; UPDATE: an installed copy was replaced; REGRANT: its
 # Accessibility entry was removed; STARTED: the new copy was started.
 macos_next_steps() {
@@ -555,7 +659,7 @@ macos_next_steps() {
         mn_start="Start it: open \"$1\""
     fi
     if [ "$3" = true ]; then
-        next "Switch on Accessibility once more: ${mn_pane} → nomouse (macOS asks after every update until releases are signed with an Apple Developer ID)"
+        next "Switch on Accessibility once more: ${mn_pane} → nomouse (the app's signature changed, so macOS treats it as a new program)"
     elif [ "$2" != true ]; then
         next "Switch on Accessibility: ${mn_pane} → nomouse"
     fi
@@ -604,6 +708,7 @@ install_macos() {
     fi
     rm -rf "${apps}/.nomouse.app.new"
     ditto "${work}/unpacked/nomouse.app" "${apps}/.nomouse.app.new" </dev/null
+    sign_app "${apps}/.nomouse.app.new"
     rm -rf "$app"
     mv "${apps}/.nomouse.app.new" "$app"
     step "Installed $(tilde "$app")"

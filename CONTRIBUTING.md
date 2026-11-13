@@ -149,7 +149,11 @@ Homebrew 7 loads casks only from a trusted tap, and the formula and the cask sha
     brew install --formula yuyudhan/tap/nomouse   # the command line only
 
 While releases are ad-hoc signed, the cask clears the quarantine flag, and macOS asks for
-Accessibility again after each `brew upgrade`.
+Accessibility again after each `brew upgrade` (the cask does not run `install.sh`).
+
+`scripts/install.sh` re-signs the installed `nomouse.app` with a self-signed certificate (see
+[docs/install.md](docs/install.md#updating)), so releases signed only ad hoc still keep a user's
+Accessibility grant across updates. `just install-local` does the same for a source build.
 
 ### macOS signing and notarization
 
@@ -158,9 +162,10 @@ signatures only. That is enough for the installer: curl sets no quarantine flag,
 does not stop it. A download through a browser is quarantined and blocked, and macOS ties the
 Accessibility grant to the code signature: an ad-hoc signature's designated requirement is its
 code hash, so the grant survives rebuilding the same binary (`scripts/test-app.sh` checks that)
-but not an update. Until the secrets below exist, every release run posts an "ad-hoc signed
-release" warning annotation, the installer resets the stale Accessibility entry on update, and
-users switch nomouse on again after each update.
+but not an update. `install.sh` therefore re-signs the app on the user's machine with a stable
+self-signed certificate; a Developer ID signed app is left as it is. A copy from the `.app.zip`
+or `.dmg` by hand, or from the Homebrew cask, still asks again after each update, and every
+release run posts an "ad-hoc signed release" warning annotation until the secrets below exist.
 
 Developer ID signing needs the owner's Apple Developer Program membership and these repository
 secrets:

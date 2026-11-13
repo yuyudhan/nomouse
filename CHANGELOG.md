@@ -7,6 +7,20 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: updating or reinstalling nomouse no longer asks for Accessibility again. The release's
+  ad-hoc signature identifies the app by its code hash, so every new build looked like a new
+  program to macOS. `scripts/install.sh` now re-signs `nomouse.app` with a self-signed
+  certificate it creates once in its own keychain file, so the designated requirement stays the
+  same across updates (the first signed install needs one more grant). `NOMOUSE_SIGN_IDENTITY`
+  picks another identity or `none`; a release signed with a Developer ID is left as it is.
+
+### Added
+
+- `just install-local` builds this checkout as `nomouse.app` and installs it through
+  `install.sh`, so source builds keep the grant too.
+
 ## [0.1.12] - 2026-11-12
 
 ### Fixed

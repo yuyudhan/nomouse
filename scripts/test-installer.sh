@@ -343,11 +343,11 @@ sandbox_path="${safe}:/usr/bin:/bin:/usr/sbin:/sbin"
 
 # Runs the installer with only HOME, PATH and TERM from outside (plus the arguments' NAME=VALUE
 # words, where a PATH must keep sandbox_path), so the decoys above can never reach it. macOS
-# apps go into HOME/Applications.
+# apps go into HOME/Applications, and the installer does not re-sign them (a test turns it on).
 sandbox() {
     local apps=()
     if [ "$os" = Darwin ]; then apps=(NOMOUSE_APP_DIR="${home}/Applications"); fi
-    env -i HOME="$home" PATH="$sandbox_path" TERM=dumb "${apps[@]}" "$@"
+    env -i HOME="$home" PATH="$sandbox_path" TERM=dumb NOMOUSE_SIGN_IDENTITY=none "${apps[@]}" "$@"
 }
 bin="${home}/.local/bin/nomouse"
 settings="${home}/.local/bin/nomouse-settings"
@@ -515,7 +515,7 @@ if out="$(sandbox sh "$installer" --from "$release" 2>&1)" && installed; then
             "tccutil reset Accessibility com.yuyudhan.nomouse" "$(cat "$calls")"
         if [[ "$out" == *"✓ Removed the old copy's Accessibility entry"* ]] &&
             [[ "$out" == *"Switch on Accessibility once more: ${pane} → nomouse"* ]] &&
-            [[ "$out" == *"Developer ID"* ]] && [[ "$out" == *"Start it: open"* ]]; then
+            [[ "$out" == *"signature changed"* ]] && [[ "$out" == *"Start it: open"* ]]; then
             pass "the update says to switch nomouse on once more in ${pane##*→ }"
         else
             fail "update wording: ${out}"
@@ -563,6 +563,42 @@ open ${home}/Applications/nomouse.app" "$(cat "$calls")"
     else
         fail "update with the same signature (calls: $(cat "$calls")): ${out}"
     fi
+
+    # The installer's own signing (the sandbox turns it off above): two different builds
+    # installed in turn get one designated requirement that names a certificate, not a hash.
+    variant="${work}/release-variant"
+    make_release "$variant" "${stub}
+# a different build"
+    sandbox sh "$installer" --uninstall >/dev/null 2>&1
+    : >"$calls"
+    app="${home}/Applications/nomouse.app"
+    if out="$(sandbox NOMOUSE_SIGN_IDENTITY= sh "$installer" --from "$release" 2>&1)" && installed &&
+        [[ "$out" == *'✓ Signed nomouse.app as "nomouse local signing"'* ]]; then
+        first="$(codesign -d -r- "$app" 2>/dev/null | sed -n 's/^designated => //p')"
+        first_exe="$(shasum -a 256 "${app}/Contents/MacOS/nomouse")"
+        if out="$(sandbox NOMOUSE_SIGN_IDENTITY= sh "$installer" --from "$variant" 2>&1)" && installed &&
+            [ "$first_exe" != "$(shasum -a 256 "${app}/Contents/MacOS/nomouse")" ]; then
+            second="$(codesign -d -r- "$app" 2>/dev/null | sed -n 's/^designated => //p')"
+            check "a rebuild signed by the installer keeps the designated requirement" "$first" "$second"
+            if [[ "$second" == 'identifier "com.yuyudhan.nomouse" and certificate leaf = H"'* ]]; then
+                pass "the requirement names the certificate, not the build's hash"
+            else
+                fail "requirement is not certificate based: ${second}"
+            fi
+            if [[ "$out" == *"✓ Kept the Accessibility switch (same signature)"* ]] &&
+                [[ "$out" != *"once more"* ]] && [ ! -s "$calls" ]; then
+                pass "an update of a signed build keeps the Accessibility entry"
+            else
+                fail "signed update (calls: $(cat "$calls")): ${out}"
+            fi
+        else
+            fail "second signed install: ${out}"
+        fi
+    else
+        fail "signed install: ${out}"
+    fi
+    sandbox sh "$installer" --uninstall >/dev/null 2>&1
+    sandbox sh "$installer" --from "$release" >/dev/null 2>&1
 fi
 
 # A build this system cannot start fails the install with the loader's message and leaves the

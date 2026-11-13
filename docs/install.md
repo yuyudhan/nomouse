@@ -280,6 +280,7 @@ curl -fsSL https://yuyudhan.github.io/nomouse/install | sh -s -- --version 0.1.0
 | `NOMOUSE_VERSION` | the release to install, as `--version` takes it (`--version` wins) |
 | `NOMOUSE_INSTALL_DIR` | where the `nomouse` command goes (default `~/.local/bin`) |
 | `NOMOUSE_APP_DIR` | macOS: where `nomouse.app` goes (default `/Applications`) |
+| `NOMOUSE_SIGN_IDENTITY` | macOS: the code-signing identity to sign the app with, from your keychains (default: the self-signed `nomouse local signing`, created once); `none` keeps the release's own signature |
 | `GH_TOKEN` or `GITHUB_TOKEN` | download through the GitHub API with this token (avoids anonymous rate limits) |
 | `NOMOUSE_INSTALL_BASE` | a URL holding the release assets, for mirrors |
 | `NOMOUSE_API_BASE` | the GitHub API base for token downloads (default `https://api.github.com`) |
@@ -289,10 +290,9 @@ curl -fsSL https://yuyudhan.github.io/nomouse/install | sh -s -- --version 0.1.0
 
 Run the one-line install again. Your config is never touched.
 
-- **macOS**: the installer quits the running nomouse, replaces the app and starts the new
-  one. Releases are not Developer ID signed yet, so macOS ties the Accessibility grant to each
-  version's own signature: the installer removes the old entry, and you switch nomouse on once
-  more (the Welcome window appears and opens the pane; see the steps below).
+- **macOS**: the installer quits the running nomouse, replaces the app, signs it with the same
+  certificate as before and starts the new one. macOS keeps the Accessibility grant (the steps
+  below are for a changed signature: the first signed install, or a signing failure).
 - **Linux**: the installer replaces the binaries; a running daemon keeps working until you
   restart it with `nomouse quit && nomouse launch`.
 
@@ -306,8 +306,14 @@ than the `.dmg` or `.app.zip` there, which a browser quarantines (see [macOS](#m
 
 ### Allowing nomouse again after an update (macOS)
 
-Until releases are signed with an Apple Developer ID, every new version needs the grant once
-more, also after installing a source build of `nomouse.app` of another version:
+`install.sh` signs the app with a self-signed certificate, `nomouse local signing`, that it
+creates once in `~/Library/Keychains/nomouse-signing.keychain-db` (empty password; your login
+keychain is not touched). The designated requirement then names that certificate, so updates
+keep the grant: check with `codesign -d -r- /Applications/nomouse.app`, which must print
+`identifier "com.yuyudhan.nomouse" and certificate leaf = H"…"`, not `cdhash`. The first signed
+install needs the grant once more, and so does an install that could not sign (the installer
+says so under Next), a deleted keychain file (it makes a new certificate), or an app copied
+in by hand or by Homebrew, which keep the release's ad-hoc signature:
 
 1. Open the new app: `open /Applications/nomouse.app` (the installer already did if nomouse
    was running). The Welcome window, or the menu bar's warning sign (a triangle in place of

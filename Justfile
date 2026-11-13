@@ -117,6 +117,14 @@ app:
     NOMOUSE_FLAVOUR=dev cargo build --release -p nomouse
     scripts/release/app.sh target/release/nomouse target/app
 
+# Build this checkout as nomouse.app and install it with scripts/install.sh (macOS), which
+# signs it with the stable "nomouse local signing" identity, so Accessibility grants survive
+# rebuilds (docs/install.md#updating). Never copy target/release/nomouse over the install.
+install-local:
+    cargo build --release --locked -p nomouse
+    scripts/release/app.sh target/release/nomouse target/install-local
+    scripts/install.sh --from target/install-local
+
 # Run a development build (debug: ~/.config/nomouse-dev/, nomouse-dev.sock, its own D-Bus names
 # and hotkeys), e.g. `just dev doctor`; no arguments runs the daemon.
 dev *args:
