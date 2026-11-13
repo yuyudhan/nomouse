@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-11-13
+
 ### Fixed
 
 - macOS: updating or reinstalling nomouse no longer asks for Accessibility again. The release's
