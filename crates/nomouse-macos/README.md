@@ -63,8 +63,10 @@ allowed, the Input Monitoring state and the Chromium/Electron opt-in list.
 
 ## Running the integration test
 
-`tests/macos_accessibility.rs` opens Finder, collects elements, shows and hides the overlay and
-hovers an element. It skips (and passes) when the test binary is not trusted for
+`tests/macos_accessibility.rs` opens Finder on a scratch folder of its own, collects elements,
+shows and hides the overlay and hovers an element, then closes that one window through
+Accessibility (also when it fails) and fails if it is still open; it never reuses or closes a
+window you opened. It skips (and passes) when the test binary is not trusted for
 Accessibility, which is the case on GitHub's runners. To run it for real, grant your terminal
 Accessibility, then:
 
