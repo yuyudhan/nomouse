@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.18] - 2026-11-14
+
 ### Fixed
 
 - macOS: nomouse.app started with `open` from a terminal (as the installer and `open -a nomouse`
