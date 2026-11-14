@@ -574,7 +574,6 @@ ensure_signing_identity() {
         rm -f "$si_keychain"
     fi
     command -v openssl >/dev/null 2>&1 || return 1
-    step "Creating the signing identity \"${si_name}\"" "($(tilde "$si_keychain"))"
     si_dir="${work}/signing"
     rm -rf "$si_dir"
     mkdir -p "$si_dir" "$(dirname "$si_keychain")"
@@ -592,9 +591,13 @@ keyUsage = critical,digitalSignature
 extendedKeyUsage = critical,codeSigning
 EOF
     si_pass="$(openssl rand -hex 16 </dev/null)"
+    # OpenSSL 3 and later (Homebrew's, first on PATH on many Macs) write PKCS#12 files with AES,
+    # PBKDF2 and an HMAC-SHA256 MAC, which `security import` rejects as "MAC verification
+    # failed"; the SHA-1/3DES algorithms below are what macOS reads, and LibreSSL takes them too.
     if openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -config "${si_dir}/cert.cnf" \
         -keyout "${si_dir}/key.pem" -out "${si_dir}/cert.pem" </dev/null >/dev/null 2>&1 &&
-        openssl pkcs12 -export -inkey "${si_dir}/key.pem" -in "${si_dir}/cert.pem" \
+        openssl pkcs12 -export -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
+            -inkey "${si_dir}/key.pem" -in "${si_dir}/cert.pem" \
             -out "${si_dir}/id.p12" -passout "pass:${si_pass}" </dev/null >/dev/null 2>&1 &&
         security create-keychain -p "" "$si_keychain" </dev/null >/dev/null 2>&1 &&
         security set-keychain-settings "$si_keychain" </dev/null >/dev/null 2>&1 &&
@@ -604,6 +607,7 @@ EOF
         security set-key-partition-list -S apple-tool:,apple: -s -k "" "$si_keychain" \
             </dev/null >/dev/null 2>&1; then
         rm -rf "$si_dir"
+        step "Created the signing identity \"${si_name}\"" "($(tilde "$si_keychain"))"
         return 0
     fi
     rm -rf "$si_dir"

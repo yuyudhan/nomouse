@@ -32,9 +32,10 @@ apps, shows real labels and asserts the clicks landed; [testing.md](testing.md) 
 | Permission | Accessibility only (the pane is called Device Control and Data Access on macOS 27 and later) |
 
 The `.app` runs without a Dock icon. Releases are ad-hoc signed and not notarized yet; the
-installer clears the quarantine flag, so Gatekeeper does not stop it. Because the signature
-changes with every version, macOS asks for Accessibility again after each update until
-releases are Developer ID signed; the installer and the Welcome window remove the stale entry
+installer clears the quarantine flag, so Gatekeeper does not stop it. The ad-hoc signature
+changes with every version, so the installer re-signs the app with a self-signed certificate it
+keeps, and macOS keeps the Accessibility grant across updates; a copy installed another way asks
+again, and the installer and the Welcome window remove the stale entry
 ([install.md](install.md#allowing-nomouse-again-after-an-update-macos)).
 
 Chromium-based browsers and Electron apps expose their tree once asked: the common Chromium

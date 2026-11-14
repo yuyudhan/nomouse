@@ -597,6 +597,35 @@ open ${home}/Applications/nomouse.app" "$(cat "$calls")"
     else
         fail "signed install: ${out}"
     fi
+
+    # The signing identity also comes out of an OpenSSL 3 or later (Homebrew's, first on PATH on
+    # many Macs), whose default PKCS#12 algorithms `security import` rejects (T1510).
+    modern_openssl=""
+    for candidate in /opt/homebrew/bin/openssl /usr/local/bin/openssl \
+        /opt/homebrew/opt/openssl@3/bin/openssl /usr/local/opt/openssl@3/bin/openssl; do
+        if [ -x "$candidate" ] && [[ "$("$candidate" version 2>/dev/null)" == "OpenSSL "[3-9]* ]]; then
+            modern_openssl="$candidate"
+            break
+        fi
+    done
+    if [ -n "$modern_openssl" ]; then
+        modern="${work}/modern-openssl"
+        mkdir -p "$modern"
+        ln -sf "$modern_openssl" "${modern}/openssl"
+        sandbox sh "$installer" --uninstall >/dev/null 2>&1
+        rm -f "${home}/Library/Keychains/nomouse-signing.keychain-db"
+        if out="$(sandbox PATH="${modern}:${sandbox_path}" NOMOUSE_SIGN_IDENTITY= \
+            sh "$installer" --from "$release" 2>&1)" && installed &&
+            [[ "$out" == *'✓ Created the signing identity "nomouse local signing"'* ]] &&
+            [[ "$out" == *'✓ Signed nomouse.app as "nomouse local signing"'* ]] &&
+            [[ "$(codesign -d -r- "$app" 2>/dev/null)" == *'certificate leaf = H"'* ]]; then
+            pass "the installer creates its signing identity with $("$modern_openssl" version)"
+        else
+            fail "signing with $("$modern_openssl" version): ${out}"
+        fi
+    else
+        echo "skip - no OpenSSL 3 or later on this Mac to create the signing identity with"
+    fi
     sandbox sh "$installer" --uninstall >/dev/null 2>&1
     sandbox sh "$installer" --from "$release" >/dev/null 2>&1
 fi

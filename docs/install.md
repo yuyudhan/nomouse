@@ -310,10 +310,12 @@ than the `.dmg` or `.app.zip` there, which a browser quarantines (see [macOS](#m
 creates once in `~/Library/Keychains/nomouse-signing.keychain-db` (empty password; your login
 keychain is not touched). The designated requirement then names that certificate, so updates
 keep the grant: check with `codesign -d -r- /Applications/nomouse.app`, which must print
-`identifier "com.yuyudhan.nomouse" and certificate leaf = H"…"`, not `cdhash`. The first signed
-install needs the grant once more, and so does an install that could not sign (the installer
-says so under Next), a deleted keychain file (it makes a new certificate), or an app copied
-in by hand or by Homebrew, which keep the release's ad-hoc signature:
+`identifier "com.yuyudhan.nomouse" and certificate leaf = H"…"`, not `cdhash`, and with
+`nomouse doctor`, whose `Accessibility (nomouse.app)` line says whether the running app is
+trusted. The first signed install needs the grant once more, and so does an install that could
+not sign (the installer says so under Next), a deleted keychain file (it makes a new
+certificate), or an app copied in by hand or by Homebrew, which keep the release's ad-hoc
+signature:
 
 1. Open the new app: `open /Applications/nomouse.app` (the installer already did if nomouse
    was running). The Welcome window, or the menu bar's warning sign (a triangle in place of
