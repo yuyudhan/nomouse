@@ -7,6 +7,23 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: the installer creates its signing identity again where Homebrew's OpenSSL 3 or later
+  comes first on `PATH`. That OpenSSL writes PKCS#12 files `security import` rejects ("MAC
+  verification failed"), so the app kept the release's ad-hoc signature and macOS asked for
+  Accessibility again after every update. The installer now writes the file with algorithms
+  macOS reads, and says "Created the signing identity" only once it exists. One more grant
+  after this update; later updates keep it.
+- `nomouse doctor` no longer reports a daemon waiting for Accessibility as stuck. The daemon
+  answers on the command socket during its first-run setup, and the doctor says it is "still in
+  its setup"; commands sent to it meanwhile run on their own, as without a daemon.
+
+### Added
+
+- macOS: `nomouse doctor` has an `Accessibility (nomouse.app)` line with the app's own grant,
+  asked from the running daemon (a doctor run from a terminal can only check the terminal).
+
 ## [0.1.16] - 2026-11-14
 
 ### Added

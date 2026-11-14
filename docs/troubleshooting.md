@@ -131,8 +131,10 @@ then switch nomouse on in the pane (or select nomouse there, click **−**, then
 **`nomouse doctor` says the terminal is not trusted**
 Run from a terminal, the doctor checks the terminal's grant, because macOS attributes the
 process to the terminal that started it; the line says so (`this terminal (Apple_Terminal) is
-not trusted …`). nomouse.app has its own grant: its menu shows it, and **Run doctor…** in the
-menu checks the app. Allow the terminal too only if you run nomouse from it.
+not trusted …`). nomouse.app has its own grant, on the doctor's `Accessibility (nomouse.app)`
+line, which the running app reports (`nomouse.app is trusted (its daemon, pid 4242,
+checked)`; `not checked` when the app is not running). Allow the terminal too only if you run
+nomouse from it.
 
 **The hotkeys stop working while a password field or Terminal's Secure Keyboard Entry is
 active**
@@ -248,10 +250,14 @@ Linux.
 **`daemon: a daemon … did not report its version`**
 A daemon from 0.1.7 or older, which cannot answer the question yet. Restart it the same way.
 
+**`daemon: a daemon (pid 4242, nomouse 0.1.17) is still in its setup`**
+It waits for a permission (on macOS, the Welcome window waiting for Accessibility): finish
+that window. Meanwhile `nomouse hints` and the other modes run on their own from a terminal.
+
 **`daemon: a daemon (pid 4242) holds the single-instance lock but does not answer on the
 command socket`**
-It is still in its setup (on macOS, the Welcome window waiting for Accessibility: finish it)
-or stuck. Stop it with `kill 4242` and start it again as the line says.
+It is stuck, or a nomouse from before 0.1.17 still in its setup. Stop it with `kill 4242` and
+start it again as the line says.
 
 **`daemon: not running`**
 Start it: `open -a nomouse` on macOS, `nomouse launch` (or pick nomouse in the app launcher)

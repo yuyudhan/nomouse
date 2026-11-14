@@ -266,7 +266,8 @@ fn activate(mode: Mode, standalone: bool) -> Result<String, String> {
         let path = ipc::current_path().map_err(|error| format!("command socket: {error}"))?;
         match ipc::send(&path, Request::Run(mode)) {
             Ok(()) => return Ok(String::new()),
-            Err(ipc::SendError::NoDaemon(_)) => {}
+            // A daemon still in its setup takes no requests: run the mode here, as without one.
+            Err(ipc::SendError::NoDaemon(_) | ipc::SendError::InSetup(_)) => {}
             Err(error) => return Err(error.to_string()),
         }
     }
@@ -467,9 +468,22 @@ fn daemon() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     nomouse_macos::bundle::reexec_from_bundle();
     let lock = lock::acquire(&lock::current_path()).map_err(|e| e.to_string())?;
+    // The command socket is up through the first-run setup, so `nomouse doctor` can tell a
+    // daemon waiting for a permission (and whether the app is trusted) from a stuck one.
+    #[cfg(unix)]
+    let bound = ipc::current_path().and_then(|socket| match ipc::Server::bind_in_setup(&socket) {
+        Ok(server) => Ok((socket, server)),
+        Err(error) => Err(std::io::Error::new(
+            error.kind(),
+            format!("{}: {error}", socket.display()),
+        )),
+    });
     if let first_run::Next::StartAgain { terminal } = first_run::before_daemon()? {
         let plan = relaunch::current_plan(terminal)?;
         let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+        // The next daemon binds the socket afresh; this one's must be gone first.
+        #[cfg(unix)]
+        drop(bound);
         return relaunch::hand_over(lock, || relaunch::start(&plan, &args));
     }
     let mut file = ConfigFile::open_default().map_err(|e| e.to_string())?;
@@ -499,13 +513,6 @@ fn daemon() -> Result<String, String> {
         .map_or("tray-only", |platform| platform.name());
     #[cfg(unix)]
     {
-        let bound = ipc::current_path().and_then(|socket| match ipc::Server::bind(&socket) {
-            Ok(server) => Ok((socket, server)),
-            Err(error) => Err(std::io::Error::new(
-                error.kind(),
-                format!("{}: {error}", socket.display()),
-            )),
-        });
         let (socket, server) = match bound {
             Ok(bound) => bound,
             Err(error) if !running.modes.is_empty() || desktop.is_up() => {
@@ -518,6 +525,7 @@ fn daemon() -> Result<String, String> {
                 ));
             }
         };
+        server.set_ready();
         tracing::info!(
             "{name} daemon ready with {} hotkey(s) and commands on {}",
             running.modes.len(),
@@ -718,6 +726,14 @@ pub(crate) fn doctor_report() -> Result<(String, bool), String> {
     checks.extend(backend::doctor(&config));
     #[cfg(target_os = "linux")]
     checks.push(desktop::doctor_line());
+    #[cfg(unix)]
+    {
+        let info = current_daemon_info();
+        checks.push(daemon_check(&info));
+        #[cfg(target_os = "macos")]
+        checks.push(app_accessibility_check(&info));
+    }
+    #[cfg(not(unix))]
     checks.push(daemon_check());
     checks.push(("config".to_owned(), status));
     let ignored = if config.ignore.apps.is_empty() {
@@ -846,8 +862,9 @@ fn pid_note(pid: Option<u32>) -> String {
 
 /// The doctor's `daemon` line: whether a daemon runs, its pid and version, and a version
 /// other than this command's `cli` version (a daemon left running across an update) as a
-/// failure with the restart command. `lock` says whether a daemon that does not answer on the
-/// command socket still holds the single-instance lock (stuck, or still in its setup).
+/// failure with the restart command, as is a daemon still in its first-run setup. `lock` says
+/// whether a daemon that does not answer on the command socket still holds the
+/// single-instance lock (stuck, or a nomouse from before the socket was up in its setup).
 #[cfg(unix)]
 fn daemon_status(info: &ipc::DaemonInfo, cli: &str, lock: &DaemonLock) -> Result<String, String> {
     let lock_pid = match lock {
@@ -859,20 +876,28 @@ fn daemon_status(info: &ipc::DaemonInfo, cli: &str, lock: &DaemonLock) -> Result
             DaemonLock::Free => Ok(format!("not running; start it with {START_DAEMON}")),
             DaemonLock::Held(pid) => Err(format!(
                 "a daemon{} holds the single-instance lock but does not answer on the command \
-                 socket: it is still in its setup (finish the window it shows) or stuck; stop \
-                 it{} and start it with {START_DAEMON}",
+                 socket: it is stuck, or an older nomouse still in its setup (finish the window \
+                 it shows); stop it{} and start it with {START_DAEMON}",
                 pid_note(*pid),
                 pid.map_or_else(String::new, |pid| format!(" with `kill {pid}`"))
             )),
             DaemonLock::Unknown(why) => Err(format!("no daemon answers, and {why}")),
         },
-        ipc::DaemonInfo::Running { pid, version } if version == cli => {
-            Ok(format!("running (pid {pid}, nomouse {version})"))
-        }
-        ipc::DaemonInfo::Running { pid, version } => Err(format!(
+        ipc::DaemonInfo::Running { pid, version, .. } if version != cli => Err(format!(
             "the running daemon (pid {pid}) is nomouse {version}, this command is nomouse \
              {cli}; restart it with {RESTART_DAEMON}"
         )),
+        ipc::DaemonInfo::Running {
+            pid,
+            version,
+            status: Some(ipc::Status { setup: true, .. }),
+        } => Err(format!(
+            "a daemon (pid {pid}, nomouse {version}) is still in its setup, waiting for a \
+             permission nomouse needs: finish the window it shows"
+        )),
+        ipc::DaemonInfo::Running { pid, version, .. } => {
+            Ok(format!("running (pid {pid}, nomouse {version})"))
+        }
         ipc::DaemonInfo::Unversioned(why) => Err(format!(
             "a daemon{} holds the command socket but did not report its version ({why}); \
              daemons older than this command do that, so restart it with {RESTART_DAEMON}",
@@ -881,18 +906,49 @@ fn daemon_status(info: &ipc::DaemonInfo, cli: &str, lock: &DaemonLock) -> Result
     }
 }
 
-/// The doctor's `daemon` check, asked over the command socket.
+/// What the daemon on the command socket says about itself.
 #[cfg(unix)]
-fn daemon_check() -> (String, Result<String, String>) {
-    let info = ipc::current_path().map_or_else(
+fn current_daemon_info() -> ipc::DaemonInfo {
+    ipc::current_path().map_or_else(
         |error| ipc::DaemonInfo::Unversioned(format!("command socket: {error}")),
         |path| ipc::daemon_info(&path),
-    );
+    )
+}
+
+/// The doctor's `daemon` check, from what the daemon said over the command socket.
+#[cfg(unix)]
+fn daemon_check(info: &ipc::DaemonInfo) -> (String, Result<String, String>) {
     let instance = daemon_lock(&lock::current_path());
     (
         "daemon".to_owned(),
-        daemon_status(&info, env!("CARGO_PKG_VERSION"), &instance),
+        daemon_status(info, env!("CARGO_PKG_VERSION"), &instance),
     )
+}
+
+/// The doctor's line on the app's own Accessibility grant, which only the app can check: the
+/// running daemon's word for it.
+#[cfg(target_os = "macos")]
+fn app_accessibility_check(info: &ipc::DaemonInfo) -> (String, Result<String, String>) {
+    use backend::setup::{APP_CHECK, DaemonGrant, GrantHolder, app_accessibility_check};
+    let daemon = match info {
+        ipc::DaemonInfo::Running {
+            pid,
+            status: Some(ipc::Status {
+                grant: Some(grant), ..
+            }),
+            ..
+        } => DaemonGrant::Reported {
+            pid: *pid,
+            holder: match grant.holder {
+                ipc::Holder::App => GrantHolder::App,
+                ipc::Holder::Terminal => GrantHolder::Terminal(None),
+                ipc::Holder::Binary => GrantHolder::Binary,
+            },
+            trusted: grant.trusted,
+        },
+        _ => DaemonGrant::Unknown,
+    };
+    (APP_CHECK.to_owned(), app_accessibility_check(&daemon))
 }
 
 /// The doctor's `daemon` check without a command socket: whether a daemon holds the
@@ -1076,11 +1132,25 @@ mod tests {
         let running = |version: &str| DaemonInfo::Running {
             pid: 42,
             version: version.to_owned(),
+            status: None,
         };
         let free = DaemonLock::Free;
         assert_eq!(
             daemon_status(&running("0.1.8"), "0.1.8", &free),
             Ok("running (pid 42, nomouse 0.1.8)".to_owned())
+        );
+        let in_setup = DaemonInfo::Running {
+            pid: 42,
+            version: "0.1.8".to_owned(),
+            status: Some(ipc::Status {
+                setup: true,
+                grant: None,
+            }),
+        };
+        let waiting = daemon_status(&in_setup, "0.1.8", &free).unwrap_err();
+        assert!(
+            waiting.contains("(pid 42, nomouse 0.1.8) is still in its setup"),
+            "{waiting}"
         );
         let stale = daemon_status(&running("0.1.7"), "0.1.8", &free).unwrap_err();
         assert!(
@@ -1124,6 +1194,34 @@ mod tests {
         drop(held);
         assert_eq!(daemon_lock(&path), DaemonLock::Free, "released");
         std::fs::remove_file(&path).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_app_accessibility_line_comes_from_the_running_daemon() {
+        use backend::setup::{APP, APP_CHECK};
+        let app = |trusted: bool| ipc::DaemonInfo::Running {
+            pid: 42,
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            status: Some(ipc::Status {
+                setup: !trusted,
+                grant: Some(ipc::Grant {
+                    holder: ipc::Holder::App,
+                    trusted,
+                }),
+            }),
+        };
+        assert_eq!(
+            app_accessibility_check(&app(true)),
+            (
+                APP_CHECK.to_owned(),
+                Ok(format!("{APP} is trusted (its daemon, pid 42, checked)"))
+            )
+        );
+        let (_, untrusted) = app_accessibility_check(&app(false));
+        assert!(untrusted.is_err_and(|why| why.starts_with(&format!("{APP} is not trusted"))));
+        let (_, unknown) = app_accessibility_check(&ipc::DaemonInfo::NotRunning);
+        assert!(unknown.is_ok_and(|note| note.starts_with("not checked")));
     }
 
     #[cfg(unix)]

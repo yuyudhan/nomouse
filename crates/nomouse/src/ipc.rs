@@ -12,7 +12,11 @@
 //! `scroll`, `search`, `reload`); the daemon answers `ok` before it acts, or
 //! `error: <reason>`. `ping` is answered `ok` and does nothing: `nomouse launch` uses it to see
 //! that a daemon it started is up. `version` is answered `ok <pid> <version>` and does nothing:
-//! `nomouse doctor` uses it to tell a daemon left running from before an update.
+//! `nomouse doctor` uses it to tell a daemon left running from before an update. `status` is
+//! answered `ok <ready|setup>`, followed on macOS by whose Accessibility grant the daemon runs
+//! under and whether macOS trusts it (`ok ready app trusted`): `nomouse doctor` uses it for
+//! nomouse.app's own grant, which a terminal cannot check. The socket is up during the first-run
+//! setup too; there `ping` and every request are answered [`IN_SETUP`].
 
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
@@ -38,6 +42,109 @@ const MAX_CLIENTS: usize = 8;
 const PING: &str = "ping";
 /// The request that asks the daemon who it is; answered `ok <pid> <version>`.
 const VERSION: &str = "version";
+/// The request that asks the daemon what state it is in; answered `ok <phase>[ <grant>]`.
+const STATUS: &str = "status";
+/// The reply of a daemon still in its first-run setup to `ping` and to every request.
+pub(crate) const IN_SETUP: &str =
+    "error: nomouse is still in its setup; finish the window it shows, then try again";
+
+/// Whose Accessibility grant a daemon runs under (macOS ties it to the program the user
+/// started: nomouse.app, the terminal it was started from, or a bare binary).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Holder {
+    /// nomouse.app opened as an app.
+    App,
+    /// A terminal started the daemon.
+    Terminal,
+    /// A nomouse binary outside the app, without a terminal.
+    Binary,
+}
+
+impl Holder {
+    const fn word(self) -> &'static str {
+        match self {
+            Self::App => "app",
+            Self::Terminal => "terminal",
+            Self::Binary => "binary",
+        }
+    }
+
+    fn parse(word: &str) -> Option<Self> {
+        [Self::App, Self::Terminal, Self::Binary]
+            .into_iter()
+            .find(|holder| holder.word() == word)
+    }
+}
+
+/// The daemon's Accessibility grant: whose, and whether macOS trusts it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Grant {
+    /// Whose grant it is.
+    pub(crate) holder: Holder,
+    /// Whether macOS trusts it.
+    pub(crate) trusted: bool,
+}
+
+/// What a daemon answers to `status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Status {
+    /// Still in its first-run setup, waiting for a permission.
+    pub(crate) setup: bool,
+    /// Its Accessibility grant, on an OS with one per program.
+    pub(crate) grant: Option<Grant>,
+}
+
+/// The `status` reply line for `status`, without the newline.
+fn status_reply(status: Status) -> String {
+    let phase = if status.setup { "setup" } else { "ready" };
+    status.grant.map_or_else(
+        || format!("ok {phase}"),
+        |grant| {
+            let trust = if grant.trusted {
+                "trusted"
+            } else {
+                "untrusted"
+            };
+            format!("ok {phase} {} {trust}", grant.holder.word())
+        },
+    )
+}
+
+/// The [`Status`] of a `status` reply line.
+fn parse_status_reply(reply: &str) -> Option<Status> {
+    let mut words = reply.trim_end().strip_prefix("ok ")?.split_whitespace();
+    let setup = match words.next()? {
+        "setup" => true,
+        "ready" => false,
+        _ => return None,
+    };
+    let grant = match (words.next(), words.next()) {
+        (None, None) => None,
+        (Some(holder), Some(trust)) => Some(Grant {
+            holder: Holder::parse(holder)?,
+            trusted: match trust {
+                "trusted" => true,
+                "untrusted" => false,
+                _ => return None,
+            },
+        }),
+        _ => return None,
+    };
+    words.next().is_none().then_some(Status { setup, grant })
+}
+
+/// This process's Accessibility grant.
+#[cfg(target_os = "macos")]
+fn own_grant() -> Grant {
+    use crate::backend::setup::GrantHolder;
+    let (holder, trusted) = crate::backend::setup::own_grant();
+    let holder = match holder {
+        GrantHolder::App => Holder::App,
+        GrantHolder::Terminal(_) => Holder::Terminal,
+        GrantHolder::Binary => Holder::Binary,
+    };
+    Grant { holder, trusted }
+}
 
 /// Where `flavour`'s socket lives: `$XDG_RUNTIME_DIR/<stem>.sock`, else `<stem>.sock` in a
 /// private per-user directory `<stem>-<uid>` in the temp dir, created (mode 0700) and checked
@@ -166,6 +273,9 @@ pub(crate) enum SendError {
     /// No daemon listens on the socket.
     #[error("no daemon is listening on {0}")]
     NoDaemon(PathBuf),
+    /// The daemon is still in its first-run setup and takes no requests yet.
+    #[error("the daemon at {0} is still in its setup; finish the window it shows, then try again")]
+    InSetup(PathBuf),
     /// The daemon refused or the exchange failed.
     #[error("daemon at {path}: {reason}")]
     Failed {
@@ -179,7 +289,8 @@ pub(crate) enum SendError {
 /// Sends `request` to the daemon at `path`.
 ///
 /// # Errors
-/// [`SendError::NoDaemon`] when nothing listens there (the caller then runs the mode itself).
+/// [`SendError::NoDaemon`] when nothing listens there (the caller then runs the mode itself),
+/// [`SendError::InSetup`] when the daemon is still in its first-run setup.
 pub(crate) fn send(path: &Path, request: Request) -> Result<(), SendError> {
     let failed = |reason: String| SendError::Failed {
         path: path.to_owned(),
@@ -207,6 +318,7 @@ pub(crate) fn send(path: &Path, request: Request) -> Result<(), SendError> {
         .read_line(&mut reply)
         .map_err(|e| failed(e.to_string()))?;
     match reply.trim_end() {
+        IN_SETUP => Err(SendError::InSetup(path.to_owned())),
         "ok" => Ok(()),
         other => Err(failed(
             other.strip_prefix("error: ").unwrap_or(other).to_owned(),
@@ -243,6 +355,8 @@ pub(crate) enum DaemonInfo {
         pid: u32,
         /// Its version (`CARGO_PKG_VERSION`).
         version: String,
+        /// Its answer to `status`; `None` from a daemon before that request.
+        status: Option<Status>,
     },
     /// Something listens but gave no version: a daemon from before the `version` request
     /// (it answers `error: unknown request`), or one that does not answer at all.
@@ -257,8 +371,12 @@ fn parse_version_reply(reply: &str) -> Option<(u32, String)> {
     words.next().is_none().then_some((pid, version))
 }
 
-/// Asks the daemon at `path` for its process id and version.
-pub(crate) fn daemon_info(path: &Path) -> DaemonInfo {
+/// Sends the request `line` to the daemon at `path` and returns its reply line, or `None`
+/// when nothing listens there.
+///
+/// # Errors
+/// What went wrong, worded for the doctor.
+fn ask(path: &Path, line: &str) -> Result<Option<String>, String> {
     let mut stream = match UnixStream::connect(path) {
         Ok(stream) => stream,
         Err(error)
@@ -267,27 +385,41 @@ pub(crate) fn daemon_info(path: &Path) -> DaemonInfo {
                 ErrorKind::NotFound | ErrorKind::ConnectionRefused
             ) =>
         {
-            return DaemonInfo::NotRunning;
+            return Ok(None);
         }
-        Err(error) => return DaemonInfo::Unversioned(format!("{}: {error}", path.display())),
+        Err(error) => return Err(format!("{}: {error}", path.display())),
     };
     let mut reply = String::new();
-    let exchanged = stream
+    stream
         .set_read_timeout(Some(TIMEOUT))
         .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)))
-        .and_then(|()| writeln!(stream, "{VERSION}"))
-        .and_then(|()| BufReader::new(&stream).read_line(&mut reply));
-    match exchanged {
-        Ok(_) => parse_version_reply(&reply).map_or_else(
-            || {
-                DaemonInfo::Unversioned(format!(
-                    "it answered {:?} instead of its version",
-                    reply.trim_end()
-                ))
-            },
-            |(pid, version)| DaemonInfo::Running { pid, version },
-        ),
-        Err(error) => DaemonInfo::Unversioned(format!("it did not answer: {error}")),
+        .and_then(|()| writeln!(stream, "{line}"))
+        .and_then(|()| BufReader::new(&stream).read_line(&mut reply))
+        .map_err(|error| format!("it did not answer: {error}"))?;
+    Ok(Some(reply))
+}
+
+/// Asks the daemon at `path` for its process id, version and status.
+pub(crate) fn daemon_info(path: &Path) -> DaemonInfo {
+    let reply = match ask(path, VERSION) {
+        Ok(Some(reply)) => reply,
+        Ok(None) => return DaemonInfo::NotRunning,
+        Err(why) => return DaemonInfo::Unversioned(why),
+    };
+    let Some((pid, version)) = parse_version_reply(&reply) else {
+        return DaemonInfo::Unversioned(format!(
+            "it answered {:?} instead of its version",
+            reply.trim_end()
+        ));
+    };
+    let status = ask(path, STATUS)
+        .ok()
+        .flatten()
+        .and_then(|reply| parse_status_reply(&reply));
+    DaemonInfo::Running {
+        pid,
+        version,
+        status,
     }
 }
 
@@ -297,16 +429,32 @@ pub(crate) fn daemon_info(path: &Path) -> DaemonInfo {
 pub(crate) struct Server {
     requests: Receiver<Request>,
     path: PathBuf,
+    /// Cleared while the daemon is in its first-run setup.
+    ready: Arc<AtomicBool>,
 }
 
 impl Server {
-    /// Listens on `path`. Call only while holding the single-instance lock: a leftover socket
-    /// from a crashed daemon, or a symlink (the link only, never its target), is replaced;
-    /// anything else at `path` is refused and left in place.
+    /// [`Server::bind_in_setup`] for a daemon already past its setup.
+    ///
+    /// # Errors
+    /// As [`Server::bind_in_setup`].
+    #[cfg(test)]
+    pub(crate) fn bind(path: &Path) -> std::io::Result<Self> {
+        let server = Self::bind_in_setup(path)?;
+        server.set_ready();
+        Ok(server)
+    }
+
+    /// Listens on `path` for a daemon still in its first-run setup: it answers `version` and
+    /// `status`, and [`IN_SETUP`] to everything else until [`Server::set_ready`], so `nomouse
+    /// doctor` can tell a daemon waiting for a permission from a stuck one. Call only while
+    /// holding the single-instance lock: a leftover socket from a crashed daemon, or a symlink
+    /// (the link only, never its target), is replaced; anything else at `path` is refused and
+    /// left in place.
     ///
     /// # Errors
     /// When something other than a socket or symlink is at `path`, or binding fails.
-    pub(crate) fn bind(path: &Path) -> std::io::Result<Self> {
+    pub(crate) fn bind_in_setup(path: &Path) -> std::io::Result<Self> {
         use std::os::unix::fs::FileTypeExt;
         match std::fs::symlink_metadata(path) {
             Ok(meta) if meta.file_type().is_socket() || meta.file_type().is_symlink() => {
@@ -328,13 +476,21 @@ impl Server {
         let listener = UnixListener::bind(path)?;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
         let (sender, requests) = mpsc::channel();
+        let ready = Arc::new(AtomicBool::new(false));
+        let serving = Arc::clone(&ready);
         std::thread::Builder::new()
             .name("nomouse-commands".to_owned())
-            .spawn(move || serve_socket(&listener, &sender))?;
+            .spawn(move || serve_socket(&listener, &sender, &serving))?;
         Ok(Self {
             requests,
             path: path.to_owned(),
+            ready,
         })
+    }
+
+    /// Takes requests from now on: the first-run setup is over.
+    pub(crate) fn set_ready(&self) {
+        self.ready.store(true, Ordering::Release);
     }
 
     /// The oldest request not yet taken.
@@ -361,8 +517,8 @@ impl Server {
 
 /// Accepts connections until the daemon's end of the channel is gone. Each connection is
 /// answered on its own thread (at most [`MAX_CLIENTS`]), so a client that connects and sends
-/// nothing delays nobody else.
-fn serve_socket(listener: &UnixListener, sender: &Sender<Request>) {
+/// nothing delays nobody else. `ready` is cleared while the daemon is in its first-run setup.
+fn serve_socket(listener: &UnixListener, sender: &Sender<Request>, ready: &Arc<AtomicBool>) {
     let active = Arc::new(AtomicUsize::new(0));
     let closed = Arc::new(AtomicBool::new(false));
     for stream in listener.incoming() {
@@ -386,10 +542,11 @@ fn serve_socket(listener: &UnixListener, sender: &Sender<Request>) {
             continue;
         }
         let (sender, slot, stop) = (sender.clone(), Arc::clone(&active), Arc::clone(&closed));
+        let ready = Arc::clone(ready);
         let spawned = std::thread::Builder::new()
             .name("nomouse-command".to_owned())
             .spawn(move || {
-                if let Some(request) = answer(&stream)
+                if let Some(request) = answer(&stream, &ready)
                     && sender.send(request).is_err()
                 {
                     stop.store(true, Ordering::Relaxed);
@@ -405,8 +562,9 @@ fn serve_socket(listener: &UnixListener, sender: &Sender<Request>) {
 }
 
 /// Reads one request (at most [`MAX_REQUEST`] bytes, within [`TIMEOUT`]) and acknowledges it,
-/// or explains why it is invalid.
-fn answer(stream: &UnixStream) -> Option<Request> {
+/// or explains why it is invalid. Before the daemon is `ready`, only `version` and `status`
+/// are answered; `ping` and requests get [`IN_SETUP`].
+fn answer(stream: &UnixStream, ready: &AtomicBool) -> Option<Request> {
     let setup = stream
         .set_read_timeout(Some(TIMEOUT))
         .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)));
@@ -426,11 +584,9 @@ fn answer(stream: &UnixStream) -> Option<Request> {
         let _ = writeln!(writer, "error: request too long");
         return None;
     }
-    if line.trim() == PING {
-        let _ = writeln!(writer, "ok");
-        return None;
-    }
-    if line.trim() == VERSION {
+    let line = line.trim();
+    let ready = ready.load(Ordering::Acquire);
+    if line == VERSION {
         let _ = writeln!(
             writer,
             "ok {} {}",
@@ -439,7 +595,28 @@ fn answer(stream: &UnixStream) -> Option<Request> {
         );
         return None;
     }
-    match decode(line.trim()) {
+    if line == STATUS {
+        #[cfg(target_os = "macos")]
+        let grant = Some(own_grant());
+        // No per-program Accessibility grant elsewhere.
+        #[cfg(not(target_os = "macos"))]
+        let grant = None;
+        let status = Status {
+            setup: !ready,
+            grant,
+        };
+        let _ = writeln!(writer, "{}", status_reply(status));
+        return None;
+    }
+    if !ready && (line == PING || decode(line).is_ok()) {
+        let _ = writeln!(writer, "{IN_SETUP}");
+        return None;
+    }
+    if line == PING {
+        let _ = writeln!(writer, "ok");
+        return None;
+    }
+    match decode(line) {
         Ok(request) => {
             // The client only waits for the acknowledgement, not for the request to finish.
             if let Err(error) = writeln!(writer, "ok") {
@@ -601,15 +778,100 @@ mod tests {
         let path = scratch("version.sock");
         assert_eq!(daemon_info(&path), DaemonInfo::NotRunning);
         let server = Server::bind(&path).unwrap();
+        let DaemonInfo::Running {
+            pid,
+            version,
+            status: Some(status),
+        } = daemon_info(&path)
+        else {
+            panic!("the daemon answers `version` and `status`");
+        };
         assert_eq!(
-            daemon_info(&path),
-            DaemonInfo::Running {
-                pid: std::process::id(),
-                version: env!("CARGO_PKG_VERSION").to_owned()
-            }
+            (pid, version.as_str()),
+            (std::process::id(), env!("CARGO_PKG_VERSION"))
         );
+        assert!(!status.setup);
+        assert_eq!(status.grant.is_some(), cfg!(target_os = "macos"));
         std::thread::sleep(Duration::from_millis(50));
         assert_eq!(server.poll(), None);
+    }
+
+    #[test]
+    fn a_daemon_in_its_setup_answers_the_doctor_and_refuses_requests() {
+        let path = scratch("setup.sock");
+        let server = Server::bind_in_setup(&path).unwrap();
+        let DaemonInfo::Running { pid, status, .. } = daemon_info(&path) else {
+            panic!("a daemon in its setup answers `version`");
+        };
+        assert_eq!(pid, std::process::id());
+        assert_eq!(status.map(|status| status.setup), Some(true));
+        assert!(
+            !ping(&path),
+            "not up for `nomouse launch` before its setup ends"
+        );
+        assert!(matches!(
+            send(&path, Request::Run(Mode::Scroll)),
+            Err(SendError::InSetup(_))
+        ));
+        assert_eq!(
+            request(&path, b"explode\n"),
+            "error: unknown request `explode`\n"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(server.poll(), None, "nothing is queued during the setup");
+        server.set_ready();
+        assert!(ping(&path));
+        assert!(matches!(
+            daemon_info(&path),
+            DaemonInfo::Running {
+                status: Some(Status { setup: false, .. }),
+                ..
+            }
+        ));
+        assert!(send(&path, Request::Run(Mode::Scroll)).is_ok());
+        assert_eq!(wait_poll(&server), Some(Request::Run(Mode::Scroll)));
+    }
+
+    #[test]
+    fn status_replies_round_trip() {
+        let grants = [Holder::App, Holder::Terminal, Holder::Binary]
+            .into_iter()
+            .flat_map(|holder| [true, false].map(|trusted| Some(Grant { holder, trusted })))
+            .chain([None]);
+        for grant in grants {
+            for setup in [true, false] {
+                let status = Status { setup, grant };
+                assert_eq!(parse_status_reply(&status_reply(status)), Some(status));
+            }
+        }
+        assert_eq!(
+            status_reply(Status {
+                setup: false,
+                grant: Some(Grant {
+                    holder: Holder::App,
+                    trusted: true
+                })
+            }),
+            "ok ready app trusted"
+        );
+        assert_eq!(
+            parse_status_reply("ok setup\n"),
+            Some(Status {
+                setup: true,
+                grant: None
+            })
+        );
+        for bad in [
+            "ok",
+            "ok busy",
+            "ok ready app",
+            "ok ready app maybe",
+            "ok ready cat trusted",
+            "ok ready app trusted extra",
+            "error: unknown request `status`",
+        ] {
+            assert_eq!(parse_status_reply(bad), None, "{bad}");
+        }
     }
 
     #[test]

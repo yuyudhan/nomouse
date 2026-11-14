@@ -154,7 +154,7 @@ pub fn accessibility_check(trusted: bool, holder: &GrantHolder) -> Result<String
         )),
         (GrantHolder::Terminal(name), true) => Ok(format!(
             "{} is trusted, so a nomouse started from it works. {APP} has its own grant; \
-             its menu shows it.",
+             the `{APP_CHECK}` line shows it.",
             terminal(name.as_deref())
         )),
         (GrantHolder::Terminal(name), false) => Err(format!(
@@ -169,6 +169,74 @@ pub fn accessibility_check(trusted: bool, holder: &GrantHolder) -> Result<String
             "this nomouse binary is not trusted. {requirement} Add the binary with + (a rebuilt \
              binary needs adding again), or run {APP} instead."
         )),
+    }
+}
+
+/// The name of the doctor's line on the app's own Accessibility grant.
+pub const APP_CHECK: &str = match Flavour::CURRENT {
+    Flavour::Release => "Accessibility (nomouse.app)",
+    Flavour::Dev => "Accessibility (nomouse Dev.app)",
+};
+
+/// What the running daemon told `nomouse doctor` about its own Accessibility grant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DaemonGrant {
+    /// No daemon answered with its grant: none runs, or one from before nomouse reported it.
+    Unknown,
+    /// The daemon `pid` runs under `holder`'s grant, `trusted` or not.
+    Reported {
+        /// The daemon's process id.
+        pid: u32,
+        /// Whose grant it runs under.
+        holder: GrantHolder,
+        /// Whether macOS trusts it.
+        trusted: bool,
+    },
+}
+
+/// The doctor's line on the app's own Accessibility grant. A doctor started from a terminal
+/// cannot check it itself (macOS answers for the terminal), so it takes the running daemon's
+/// word: the daemon of the app checks its own grant.
+///
+/// # Errors
+/// The problem and its fix when the app (or the daemon started outside it) is not trusted.
+pub fn app_accessibility_check(daemon: &DaemonGrant) -> Result<String, String> {
+    match daemon {
+        DaemonGrant::Unknown => Ok(format!(
+            "not checked: no {APP} daemon answers (the `daemon` line says why), and only {APP} \
+             itself can check its grant. Start it and run the doctor again."
+        )),
+        DaemonGrant::Reported {
+            pid,
+            holder: GrantHolder::App,
+            trusted,
+        } => accessibility_check(*trusted, &GrantHolder::App)
+            .map(|trusted| format!("{trusted} (its daemon, pid {pid}, checked)")),
+        DaemonGrant::Reported {
+            pid,
+            holder,
+            trusted,
+        } => {
+            let from = match holder {
+                GrantHolder::Terminal(_) => "a terminal",
+                GrantHolder::App | GrantHolder::Binary => "a nomouse binary outside the app",
+            };
+            let note = format!(
+                "the running daemon (pid {pid}) was started from {from}, not as {APP}, so it \
+                 runs under that program's grant"
+            );
+            if *trusted {
+                Ok(format!(
+                    "not checked: {note}, which is trusted. Quit it and start {APP} to check \
+                     the app's own grant."
+                ))
+            } else {
+                Err(format!(
+                    "{note}, which is not trusted: it cannot read other apps. Quit it and start \
+                     {APP}."
+                ))
+            }
+        }
     }
 }
 
@@ -214,7 +282,7 @@ pub fn secure_input_check(
 }
 
 #[cfg(target_os = "macos")]
-pub use live::{MacTrust, TrustProbe, grant_holder};
+pub use live::{MacTrust, TrustProbe, grant_holder, own_grant};
 
 #[cfg(target_os = "macos")]
 mod live {
@@ -240,6 +308,11 @@ mod live {
         } else {
             GrantHolder::Binary
         }
+    }
+
+    /// Whose Accessibility grant this process runs under, and whether macOS trusts it.
+    pub fn own_grant() -> (GrantHolder, bool) {
+        (grant_holder(), ax::is_process_trusted(false))
     }
 
     /// Accessibility trust of this process.
@@ -450,6 +523,37 @@ mod tests {
         assert!(app.contains("Device Control and Data Access"));
         let binary = accessibility_check(false, &GrantHolder::Binary).unwrap_err();
         assert!(binary.starts_with("this nomouse binary is not trusted"));
+    }
+
+    #[test]
+    fn the_app_line_takes_the_running_daemons_word_for_the_apps_own_grant() {
+        let reported = |holder: GrantHolder, trusted: bool| DaemonGrant::Reported {
+            pid: 4242,
+            holder,
+            trusted,
+        };
+        assert_eq!(
+            app_accessibility_check(&reported(GrantHolder::App, true)),
+            Ok(format!("{APP} is trusted (its daemon, pid 4242, checked)"))
+        );
+        let untrusted = app_accessibility_check(&reported(GrantHolder::App, false)).unwrap_err();
+        assert!(
+            untrusted.starts_with(&format!("{APP} is not trusted")),
+            "{untrusted}"
+        );
+        let unknown = app_accessibility_check(&DaemonGrant::Unknown).unwrap();
+        assert!(unknown.starts_with("not checked: no"), "{unknown}");
+        let terminal = reported(GrantHolder::Terminal(Some("tmux".to_owned())), true);
+        let from_terminal = app_accessibility_check(&terminal).unwrap();
+        assert!(
+            from_terminal.contains("started from a terminal"),
+            "{from_terminal}"
+        );
+        let binary = app_accessibility_check(&reported(GrantHolder::Binary, false)).unwrap_err();
+        assert!(binary.contains("is not trusted"), "{binary}");
+        assert!(APP_CHECK.contains(APP));
+        let terminal_line = accessibility_check(true, &GrantHolder::Terminal(None)).unwrap();
+        assert!(terminal_line.contains(APP_CHECK), "{terminal_line}");
     }
 
     #[test]
