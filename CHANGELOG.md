@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-11-14
+
 ### Added
 
 - `hints.early_rescan_ms` and `hints.late_rescan_ms` (1000 and 3000 by default, at most 10000,
