@@ -43,10 +43,10 @@ allowed, the Input Monitoring state and the Chromium/Electron opt-in list.
   ```
 
   The attribute is checked before every activation and set again when the app turned it off
-  (a relaunched Chromium starts with it off). The page's tree appears a moment after it is set,
-  so that activation walks the window again for up to 1.5 s until a web area shows up. An
-  activation that still finds none in such an app logs a hint once per process, and
-  `nomouse doctor` checks every open one.
+  (a relaunched Chromium starts with it off). The page's tree appears a moment after it is set
+  (~2.8 s in a relaunched Chrome 157), so that activation walks the window again for up to 4 s
+  until a web area has content. An activation that still finds none in such an app logs a hint
+  once per process, and `nomouse doctor` checks every open one.
 - **Hotkeys** on a character key match the key that types that character on the current
   keyboard layout (re-matched when the layout changes); characters no key types alone (digits
   on AZERTY, letters on Cyrillic) keep their ANSI position. Modifiers are exact; `meta` is

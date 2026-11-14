@@ -7,6 +7,14 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: the first activation after Chrome relaunches labels the page, not only the browser's
+  toolbar. A relaunched Chrome showed its page ~2.8 s after nomouse switched
+  `AXEnhancedUserInterface` on, past the 1.5 s wait; the scan now walks the window again for up
+  to 4 s until a web area has content (an empty web area no longer counts). Activations where
+  the attribute was already on do not wait, as before.
+
 ## [0.1.14] - 2026-11-14
 
 ### Fixed

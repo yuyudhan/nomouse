@@ -5,7 +5,28 @@
 //! relaunched browser starts with it off, so it is checked before every scan rather than once
 //! per process.
 
+use std::time::Duration;
+
 use nomouse_core::config::CHROMIUM_BROWSERS;
+
+/// How long a scan waits for a web page's tree after switching `AXEnhancedUserInterface` on.
+/// Chromium builds it a moment later: a relaunched Chrome 157 showed its page after ~2.8 s.
+pub const TREE_WAIT: Duration = Duration::from_secs(4);
+/// How often the window is walked again meanwhile.
+pub const TREE_POLL: Duration = Duration::from_millis(100);
+
+/// Whether a scan walks the window again after `elapsed`: only right after it switched the
+/// attribute on (`switched_on`), while a window (`has_window`) shows no web content yet
+/// (`web_areas` is zero), and while another walk still fits in [`TREE_WAIT`]. A page that is
+/// already readable never waits.
+pub fn keeps_waiting(
+    switched_on: bool,
+    has_window: bool,
+    web_areas: usize,
+    elapsed: Duration,
+) -> bool {
+    switched_on && has_window && web_areas == 0 && elapsed + TREE_POLL < TREE_WAIT
+}
 
 /// Whether the attribute must be set before a scan: the app is listed in
 /// `macos.enhanced_ui_apps` and does not report it on (`current` is `None` when unreadable).
@@ -86,6 +107,33 @@ mod tests {
             &["com.microsoft.VSCode".to_owned()]
         ));
         assert!(!is_web_app("com.apple.Safari", &[]));
+    }
+
+    #[test]
+    fn a_scan_waits_for_the_page_only_right_after_switching_it_on() {
+        let page_missing = |elapsed| keeps_waiting(true, true, 0, elapsed);
+        assert!(page_missing(Duration::ZERO));
+        assert!(
+            page_missing(Duration::from_millis(2800)),
+            "a relaunched Chrome 157 showed its page 2.8 s after the switch"
+        );
+        // The last walk starts at most one poll before the 4 s bound.
+        assert!(page_missing(Duration::from_millis(3899)));
+        assert!(!page_missing(Duration::from_millis(3900)), "bounded");
+        assert_eq!(TREE_WAIT, Duration::from_secs(4));
+        assert_eq!(TREE_POLL, Duration::from_millis(100));
+        assert!(
+            !keeps_waiting(true, true, 1, Duration::ZERO),
+            "the page is there"
+        );
+        assert!(
+            !keeps_waiting(false, true, 0, Duration::ZERO),
+            "already on: content is as ready as it gets, no wait"
+        );
+        assert!(
+            !keeps_waiting(true, false, 0, Duration::ZERO),
+            "no window to show a page"
+        );
     }
 
     #[test]

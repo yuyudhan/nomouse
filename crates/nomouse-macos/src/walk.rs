@@ -134,8 +134,9 @@ pub struct Walk<N> {
     pub visited: usize,
     /// Nodes reached a second time and skipped (cycles or shared children).
     pub repeats: usize,
-    /// `AXWebArea` nodes read: zero in a Chromium window means its web content has no
-    /// accessibility tree (`AXEnhancedUserInterface` is off).
+    /// `AXWebArea` nodes read that have children: zero in a Chromium window means its web
+    /// content has no accessibility tree yet (`AXEnhancedUserInterface` is off, or was just
+    /// switched on and the page is still being built).
     pub web_areas: usize,
     /// The first limit hit, if any.
     pub truncated: Option<Truncation>,
@@ -228,7 +229,7 @@ pub fn walk<T: AxTree>(
             Err(ReadError::Skip) => continue,
             Err(ReadError::Fatal(error)) => return Err(error),
         };
-        result.web_areas += usize::from(info.role == "AXWebArea");
+        result.web_areas += usize::from(info.role == "AXWebArea" && !info.children.is_empty());
         let out_of_view = is_out_of_view(info.frame, &pending, exhaustive);
         if out_of_view && !pending.offscreen {
             if pending.web.is_some() && exhaustive {
@@ -651,6 +652,12 @@ mod tests {
         let bare = walk(&mut tree, vec![root(1)], Limits::default(), no_time()).unwrap();
         assert_eq!(ids(&bare), [3]);
         assert_eq!(bare.web_areas, 0);
+        // Chromium shows the web area before it fills it: no web content yet.
+        let mut tree = FakeTree::default();
+        tree.add(1, "AXWindow", SCREEN, &[2]);
+        tree.add(2, "AXWebArea", SCREEN, &[]);
+        let empty = walk(&mut tree, vec![root(1)], Limits::default(), no_time()).unwrap();
+        assert_eq!(empty.web_areas, 0);
     }
 
     #[test]

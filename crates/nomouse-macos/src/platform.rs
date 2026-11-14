@@ -22,7 +22,7 @@ use nomouse_sys_macos::{
 };
 
 use crate::ax_tree::{LiveTree, RootSet, enhanced_ui, frame_of, not_trusted, roots};
-use crate::enhance::{is_web_app, missing_web_area, needs_enhancing};
+use crate::enhance::{TREE_POLL, is_web_app, keeps_waiting, missing_web_area, needs_enhancing};
 use crate::geometry::{
     label_corner, lerp, screen_rect, to_panel, to_panel_rects, union, wheel_deltas, whole_points,
 };
@@ -48,11 +48,6 @@ const REVEAL_POLL: Duration = Duration::from_millis(30);
 /// Readings in a row that must agree before the scroll counts as finished: browsers report
 /// the final frame while their smooth scroll still runs, and ignore a click meanwhile.
 const REVEAL_STEADY: u32 = 8;
-/// How long a scan waits for a web page's tree after switching `AXEnhancedUserInterface` on
-/// (Chromium builds it a moment later).
-const TREE_WAIT: Duration = Duration::from_millis(1500);
-/// How often the window is walked again meanwhile.
-const TREE_POLL: Duration = Duration::from_millis(100);
 
 /// One element of the last snapshot, kept for semantic clicks and for scrolling off-screen
 /// elements into view.
@@ -389,13 +384,9 @@ impl ElementSource for MacPlatform {
         let started = Instant::now();
         let (mut has_window, mut result) = self.walk_once(set, frontmost)?;
         // Chromium builds a page's tree a moment after the attribute is switched on: walk
-        // again until a web area shows up, so the first activation after a relaunch still
-        // labels the page.
-        while switched_on
-            && has_window
-            && result.web_areas == 0
-            && started.elapsed() + TREE_POLL < TREE_WAIT
-        {
+        // again until the web area has content, so the first activation after a relaunch
+        // still labels the page.
+        while keeps_waiting(switched_on, has_window, result.web_areas, started.elapsed()) {
             thread::sleep(TREE_POLL);
             (has_window, result) = self.walk_once(set, frontmost)?;
         }
