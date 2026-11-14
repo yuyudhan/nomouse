@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.14"
+version = "0.1.15"
 edition = "2024"
 # The oldest Rust that builds nomouse: kbvm (the Linux keymap reader) needs 1.95. The CI `msrv`
 # job checks the workspace with exactly this version on Linux, macOS and Windows.

@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-11-14
+
 ### Fixed
 
 - macOS: the first activation after Chrome relaunches labels the page, not only the browser's
