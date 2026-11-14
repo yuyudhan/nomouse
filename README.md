@@ -177,7 +177,7 @@ the fix for anything missing.
 |---------|-----|
 | macOS: `ctrl+space` does nothing | allow nomouse in Privacy & Security › Accessibility (Device Control and Data Access on macOS 27); if you use several keyboard layouts, macOS owns `ctrl+space`: free it or pick another hotkey |
 | macOS: switched on, but nomouse still asks (after an update) | click **Open System Settings** in its Welcome window and switch the new entry on; [by hand](docs/install.md#allowing-nomouse-again-after-an-update-macos) |
-| No labels in Chrome, Slack, VS Code | macOS: list them in `macos.enhanced_ui_apps`; Linux: start them with `--force-renderer-accessibility` |
+| No labels in Chrome, Slack, VS Code | macOS: run `nomouse doctor`; Chromium browsers are listed in `macos.enhanced_ui_apps` by default, add Electron apps after them; Linux: start them with `--force-renderer-accessibility` |
 | No labels in Qt apps on Linux | `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` in your session |
 | Wayland: the hotkey does nothing | Wayland has no global hotkeys for apps: bind `nomouse hints` in your compositor |
 | GNOME on Wayland | not supported yet: choose "GNOME on Xorg" ("Ubuntu on Xorg" on Ubuntu) under the gear at login |

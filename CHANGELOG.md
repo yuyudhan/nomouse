@@ -7,6 +7,26 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: web pages in Chrome get labels again after Chrome relaunches. A relaunched Chromium
+  starts with `AXEnhancedUserInterface` off, so its pages had no accessibility tree; nomouse now
+  checks the attribute before every activation and sets it again when it is off (it used to set
+  it once per process), and waits up to 1.5 s for the page's tree after switching it on, so the
+  first activation labels the page.
+
+### Changed
+
+- macOS: `macos.enhanced_ui_apps` defaults to the common Chromium browsers (Chrome, Beta, Dev,
+  Canary, Chromium, Arc, Brave, Edge, Vivaldi, Opera) instead of `[]`. A list in the config file
+  still replaces it; add Electron apps by copying the default and appending their bundle ids.
+
+### Added
+
+- macOS: `nomouse doctor` checks every open Chromium browser and listed app for web content and
+  says what to change when its windows show none; the daemon logs the same hint once per
+  process when an activation in such an app finds no web area.
+
 ## [0.1.13] - 2026-11-13
 
 ### Fixed

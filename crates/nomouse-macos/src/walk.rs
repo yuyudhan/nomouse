@@ -134,6 +134,9 @@ pub struct Walk<N> {
     pub visited: usize,
     /// Nodes reached a second time and skipped (cycles or shared children).
     pub repeats: usize,
+    /// `AXWebArea` nodes read: zero in a Chromium window means its web content has no
+    /// accessibility tree (`AXEnhancedUserInterface` is off).
+    pub web_areas: usize,
     /// The first limit hit, if any.
     pub truncated: Option<Truncation>,
 }
@@ -178,6 +181,7 @@ pub fn walk<T: AxTree>(
         found: Vec::new(),
         visited: 0,
         repeats: 0,
+        web_areas: 0,
         truncated: None,
     };
     let mut seen: HashSet<T::Node> = HashSet::new();
@@ -224,6 +228,7 @@ pub fn walk<T: AxTree>(
             Err(ReadError::Skip) => continue,
             Err(ReadError::Fatal(error)) => return Err(error),
         };
+        result.web_areas += usize::from(info.role == "AXWebArea");
         let out_of_view = is_out_of_view(info.frame, &pending, exhaustive);
         if out_of_view && !pending.offscreen {
             if pending.web.is_some() && exhaustive {
@@ -626,6 +631,26 @@ mod tests {
         .unwrap();
         assert_eq!(ids(&walk), [6]);
         assert!(!walk.found[0].offscreen);
+    }
+
+    #[test]
+    fn counts_web_areas() {
+        let page = walk(
+            &mut long_page(),
+            vec![root(1)],
+            Limits::default(),
+            no_time(),
+        )
+        .unwrap();
+        assert_eq!(page.web_areas, 1);
+        // A Chromium window whose web content has no accessibility tree: only its toolbar.
+        let mut tree = FakeTree::default();
+        tree.add(1, "AXWindow", SCREEN, &[2]);
+        tree.add(2, "AXToolbar", SCREEN, &[3]);
+        tree.add(3, "AXButton", SMALL, &[]);
+        let bare = walk(&mut tree, vec![root(1)], Limits::default(), no_time()).unwrap();
+        assert_eq!(ids(&bare), [3]);
+        assert_eq!(bare.web_areas, 0);
     }
 
     #[test]

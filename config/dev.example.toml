@@ -78,7 +78,20 @@ border = "#1c1c1c"
 apps = []
 
 [macos]
-# Default []. Bundle ids ("com.google.Chrome", "com.microsoft.VSCode") whose accessibility tree
-# nomouse switches on with AXEnhancedUserInterface (Chromium and Electron build it only when
-# asked; it can slow window animations). Ignored on other systems.
-enhanced_ui_apps = []
+# Default: the Chromium browsers below. Bundle ids whose accessibility tree nomouse switches on
+# with AXEnhancedUserInterface before every activation (Chromium and Electron build it only
+# when asked, and a relaunched browser turns it off; it can slow window animations). This list
+# replaces the default: add Electron apps ("com.microsoft.VSCode") after the browsers. Ignored on
+# other systems.
+enhanced_ui_apps = [
+    "com.google.Chrome",
+    "com.google.Chrome.beta",
+    "com.google.Chrome.dev",
+    "com.google.Chrome.canary",
+    "org.chromium.Chromium",
+    "company.thebrowser.Browser",
+    "com.brave.Browser",
+    "com.microsoft.edgemac",
+    "com.vivaldi.Vivaldi",
+    "com.operasoftware.Opera",
+]

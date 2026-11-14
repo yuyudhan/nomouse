@@ -38,14 +38,38 @@ pub struct IgnoreConfig {
     pub apps: Vec<String>,
 }
 
+/// Bundle ids of the common Chromium browsers: the default `macos.enhanced_ui_apps`. Their web
+/// content has no accessibility tree until `AXEnhancedUserInterface` is set.
+pub const CHROMIUM_BROWSERS: &[&str] = &[
+    "com.google.Chrome",
+    "com.google.Chrome.beta",
+    "com.google.Chrome.dev",
+    "com.google.Chrome.canary",
+    "org.chromium.Chromium",
+    "company.thebrowser.Browser",
+    "com.brave.Browser",
+    "com.microsoft.edgemac",
+    "com.vivaldi.Vivaldi",
+    "com.operasoftware.Opera",
+];
+
 /// `[macos]`
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MacosConfig {
     /// Bundle ids (such as `com.google.Chrome`) whose accessibility tree nomouse switches on
     /// with `AXEnhancedUserInterface`. Chromium and Electron apps build their tree only when
-    /// asked; the attribute can slow window animations, so it is opt-in per app.
+    /// asked; the attribute can slow window animations, so only listed apps get it. Defaults
+    /// to [`CHROMIUM_BROWSERS`]; a list in the file replaces it.
     pub enhanced_ui_apps: Vec<String>,
+}
+
+impl Default for MacosConfig {
+    fn default() -> Self {
+        Self {
+            enhanced_ui_apps: CHROMIUM_BROWSERS.iter().map(|&id| id.to_owned()).collect(),
+        }
+    }
 }
 
 /// `[hints]`
@@ -738,7 +762,28 @@ mod tests {
     #[test]
     fn macos_enhanced_ui_apps() {
         assert_eq!(Config::default().macos, MacosConfig::default());
-        assert_eq!(Config::default().macos.enhanced_ui_apps.len(), 0);
+        assert_eq!(
+            Config::default().macos.enhanced_ui_apps,
+            CHROMIUM_BROWSERS,
+            "Chromium browsers get web labels without any configuration"
+        );
+        assert!(CHROMIUM_BROWSERS.contains(&"com.google.Chrome"));
+        assert_eq!(
+            Config::from_toml("[hints]\n")
+                .unwrap()
+                .macos
+                .enhanced_ui_apps,
+            CHROMIUM_BROWSERS,
+            "a file without [macos] keeps the default"
+        );
+        assert!(
+            Config::from_toml("[macos]\nenhanced_ui_apps = []\n")
+                .unwrap()
+                .macos
+                .enhanced_ui_apps
+                .is_empty(),
+            "an empty list in the file turns it off everywhere"
+        );
         let config =
             Config::from_toml("[macos]\nenhanced_ui_apps = [\"com.google.Chrome\"]\n").unwrap();
         assert_eq!(config.macos.enhanced_ui_apps, ["com.google.Chrome"]);

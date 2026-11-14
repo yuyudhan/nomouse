@@ -384,7 +384,8 @@ pub const FIELDS: &[Field] = &[
                 "Chromium and Electron apps",
                 Kind::Apps,
             ),
-            "Apps whose accessibility tree nomouse switches on (AXEnhancedUserInterface).",
+            "Apps whose accessibility tree nomouse switches on (AXEnhancedUserInterface): the \
+             common Chromium browsers by default; add Electron apps here.",
         )
     },
 ];

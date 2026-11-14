@@ -32,16 +32,21 @@ allowed, the Input Monitoring state and the Chromium/Electron opt-in list.
   steppers, rows, standalone cells, disclosure triangles, plus any group, image or web element
   that lists `AXPress`.
 - **Chromium and Electron**: nomouse sets `AXManualAccessibility` on the frontmost app once per
-  process (Electron builds its tree only when asked). Chrome, Edge, Brave and similar need
-  `AXEnhancedUserInterface`, which can slow window animations, so it is opt-in per app:
+  process (Electron builds its tree only when asked). Chromium browsers need
+  `AXEnhancedUserInterface`, which can slow window animations, so only apps in
+  `macos.enhanced_ui_apps` get it; the default lists the common Chromium browsers (Chrome,
+  Chromium, Arc, Brave, Edge, Vivaldi, Opera). A list in the file replaces the default:
 
   ```toml
   [macos]
   enhanced_ui_apps = ["com.google.Chrome", "com.microsoft.VSCode"]
   ```
 
-  The tree appears a moment after the attribute is set, so the very first activation in such
-  an app may find few elements; activate again.
+  The attribute is checked before every activation and set again when the app turned it off
+  (a relaunched Chromium starts with it off). The page's tree appears a moment after it is set,
+  so that activation walks the window again for up to 1.5 s until a web area shows up. An
+  activation that still finds none in such an app logs a hint once per process, and
+  `nomouse doctor` checks every open one.
 - **Hotkeys** on a character key match the key that types that character on the current
   keyboard layout (re-matched when the layout changes); characters no key types alone (digits
   on AZERTY, letters on Cyrillic) keep their ANSI position. Modifiers are exact; `meta` is
@@ -79,7 +84,7 @@ daemon through Accessibility; see [docs/testing.md](../../docs/testing.md#end-to
 3. Create the config file: `target/release/nomouse config init` writes the defaults to
    `~/.config/nomouse/config.toml` (`$XDG_CONFIG_HOME/nomouse/` when set; `nomouse config path`
    prints it).
-   For the Chromium/Electron steps, add:
+   For the VS Code step, add (a list replaces the default browsers, so keep Chrome in it):
 
    ```toml
    [macos]
@@ -108,8 +113,9 @@ For each app below press the hints hotkey, type a label, and confirm the result.
    Scroll mode scrolls the list in the direction typed.
 4. **Safari**: a page with many links (for example a news site). Links, buttons, the address
    field and tabs are labelled; picking a link navigates. Labels stay inside the window.
-5. **Chrome**: without `macos.enhanced_ui_apps`, web content may have no hints; add
-   `com.google.Chrome`, restart nomouse, activate twice, and links in the page get hints.
+5. **Chrome**: with no config file, links in the page get hints on the first activation. Quit
+   and reopen Chrome, activate again: the page is still labelled. `nomouse doctor` reports
+   `Web content in com.google.Chrome` as ok.
 6. **VS Code** (Electron): the activity bar, editor tabs and explorer rows get hints thanks to
    `AXManualAccessibility`; if not, add `com.microsoft.VSCode` to `enhanced_ui_apps`.
 7. **Menu bar extras**: the clock, Control Center and third-party status items are labelled;

@@ -213,6 +213,25 @@ fn is_minimized(window: &AxElement) -> bool {
     )
 }
 
+/// The app element's `AXEnhancedUserInterface`; `None` when the app does not report it.
+pub(crate) fn enhanced_ui(app: &AxElement) -> Option<bool> {
+    match app.attribute("AXEnhancedUserInterface") {
+        Ok(Some(AxValue::Bool(on))) => Some(on),
+        _ => None,
+    }
+}
+
+/// The app's windows that are not minimized. Elements that are not `AXWindow`s are left out:
+/// Chrome lists its application element there while it has no window on screen (a locked
+/// session).
+pub(crate) fn open_windows(app: &AxElement) -> Vec<AxElement> {
+    read_list(app, "AXWindows")
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|window| role_of(window).as_deref() == Some("AXWindow") && !is_minimized(window))
+        .collect()
+}
+
 /// Collects the walk roots.
 ///
 /// # Errors

@@ -280,7 +280,8 @@ apps = []                    # apps where activation shows nothing: macOS bundle
                              # matches); no blanks
 
 [macos]
-enhanced_ui_apps = []        # bundle ids that get AXEnhancedUserInterface (Chromium browsers)
+enhanced_ui_apps = ["com.google.Chrome"]  # bundle ids that get AXEnhancedUserInterface
+                             # (default: the common Chromium browsers, CHROMIUM_BROWSERS)
 ```
 
 New keys land in `nomouse-core/src/config.rs` with a default, a validation rule when the type

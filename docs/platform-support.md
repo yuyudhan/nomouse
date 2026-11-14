@@ -37,8 +37,9 @@ changes with every version, macOS asks for Accessibility again after each update
 releases are Developer ID signed; the installer and the Welcome window remove the stale entry
 ([install.md](install.md#allowing-nomouse-again-after-an-update-macos)).
 
-Chromium-based browsers and Electron apps expose their tree once asked:
-list them in [`macos.enhanced_ui_apps`](configuration.md#macos-macos-only).
+Chromium-based browsers and Electron apps expose their tree once asked: the common Chromium
+browsers are asked by default, Electron apps once they are listed in
+[`macos.enhanced_ui_apps`](configuration.md#macos-macos-only).
 
 ## Linux X11
 

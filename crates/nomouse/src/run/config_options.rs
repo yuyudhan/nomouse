@@ -821,3 +821,42 @@ fn edits_reload_into_the_running_settings_and_hotkeys() {
         "a deleted file is the defaults"
     );
 }
+
+/// `macos.enhanced_ui_apps` follows the file: an edit is noticed by the watch and makes the
+/// reloaded configuration differ from the running one, which is what makes [`crate::reload`]
+/// start a new backend with the new list; deleting the key brings back the Chromium default.
+#[test]
+fn enhanced_ui_apps_edits_reload() {
+    let scratch = Scratch::new("reload-enhanced");
+    let path = scratch.write("[macos]\nenhanced_ui_apps = [\"com.google.Chrome\"]\n");
+    let mut file = ConfigFile::open(&path).unwrap();
+    let running = file.config().clone();
+    assert_eq!(running.macos.enhanced_ui_apps, ["com.google.Chrome"]);
+
+    std::fs::write(
+        &path,
+        "[macos]\nenhanced_ui_apps = [\"com.google.Chrome\", \"com.microsoft.VSCode\"]\n",
+    )
+    .unwrap();
+    let deadline = Instant::now() + WATCH_INTERVAL * 3;
+    while !crate::file_changed(&mut file) {
+        assert!(Instant::now() < deadline, "the edit was never noticed");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        file.config().macos.enhanced_ui_apps,
+        ["com.google.Chrome", "com.microsoft.VSCode"]
+    );
+    assert_ne!(
+        file.config(),
+        &running,
+        "the backend restarts with the new list"
+    );
+
+    std::fs::write(&path, "[hints]\n").unwrap();
+    assert!(matches!(file.reload(), Change::Reloaded));
+    assert_eq!(
+        file.config().macos.enhanced_ui_apps,
+        nomouse_core::config::CHROMIUM_BROWSERS
+    );
+}

@@ -148,9 +148,12 @@ which adds a quarantine flag, and the release is not notarized yet. Clear the fl
 `xattr -dr com.apple.quarantine /Applications/nomouse.app`, or click **Open Anyway** in
 System Settings › Privacy & Security. The one-line install sets no flag.
 
-**No labels in Chrome, Edge, Brave, Slack or VS Code**
-Chromium and Electron apps build their accessibility tree only when asked. List them in the
-config:
+**No labels in web pages (Chrome, Edge, Brave, Arc) or in Slack or VS Code**
+Chromium and Electron apps build their accessibility tree only when asked. The common Chromium
+browsers are listed in `macos.enhanced_ui_apps` by default, and nomouse switches the tree back
+on before each activation, also after the browser relaunched. Run `nomouse doctor`: it names
+each open browser or listed app whose windows show no web content, and what to change. A list
+in the file replaces the default, so to add an Electron app keep the browsers you use:
 
 ```toml
 [macos]

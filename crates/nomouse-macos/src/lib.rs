@@ -5,6 +5,7 @@
 //! OS; the pure logic (role mapping, coordinates, key codes, the tree walk) is tested everywhere.
 //!
 //! - [`roles`]: which Accessibility roles get hints.
+//! - [`enhance`]: when `AXEnhancedUserInterface` is set, and the hint when web content is missing.
 //! - [`geometry`]: global top-left (Accessibility, Quartz) versus Cocoa bottom-left coordinates.
 //! - [`keys`]: virtual key codes for hotkeys and typed keys.
 //! - [`icon_watch`]: whether the menu bar item came up, and its retries when it did not.
@@ -16,6 +17,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bundle;
+pub mod enhance;
 pub mod geometry;
 pub mod icon_watch;
 pub mod keys;
@@ -124,12 +126,68 @@ pub fn doctor(config: &Config) -> Vec<(String, Result<String, String>)> {
     checks.push((
         "Chromium/Electron opt-in".to_owned(),
         Ok(if apps.is_empty() {
-            "macos.enhanced_ui_apps is empty".to_owned()
+            "macos.enhanced_ui_apps is empty: no app gets AXEnhancedUserInterface".to_owned()
         } else {
             format!("AXEnhancedUserInterface for {}", apps.join(", "))
         }),
     ));
+    if trusted {
+        checks.extend(web_content_checks(apps));
+    }
     checks
+}
+
+/// One check per running Chromium browser or listed app: whether its open windows show a web
+/// area (an accessibility tree for their pages).
+#[cfg(target_os = "macos")]
+fn web_content_checks(listed: &[String]) -> Vec<(String, Result<String, String>)> {
+    use std::time::Instant;
+
+    use nomouse_core::Rect;
+    use nomouse_sys_macos::{app, ax::AxElement};
+
+    use crate::walk::{Limits, Root, walk};
+
+    // Windows on any screen, in any position.
+    let everywhere = Rect::new(-1_000_000, -1_000_000, 2_000_000, 2_000_000);
+    app::running_apps()
+        .into_iter()
+        .filter(|running| running.regular)
+        .filter_map(|running| {
+            let bundle_id = running.bundle_id?;
+            if !enhance::is_web_app(&bundle_id, listed) {
+                return None;
+            }
+            let element = AxElement::application(running.pid);
+            let windows = ax_tree::open_windows(&element);
+            let count = windows.len();
+            let roots = windows
+                .into_iter()
+                .map(|node| Root {
+                    node,
+                    visible: everywhere,
+                    max_depth: usize::MAX,
+                })
+                .collect();
+            let started = Instant::now();
+            let web_areas = walk(&mut ax_tree::LiveTree, roots, Limits::default(), || {
+                started.elapsed()
+            })
+            .map_or(0, |result| result.web_areas);
+            let is_listed = listed.contains(&bundle_id);
+            let check = enhance::web_check(
+                &bundle_id,
+                is_listed,
+                ax_tree::enhanced_ui(&element),
+                count,
+                web_areas,
+            );
+            Some((
+                format!("Web content in {bundle_id} (pid {})", running.pid),
+                check,
+            ))
+        })
+        .collect()
 }
 
 /// The pid and app name holding secure event input, from the console session in the I/O

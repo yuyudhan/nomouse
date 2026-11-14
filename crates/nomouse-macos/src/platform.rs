@@ -21,14 +21,15 @@ use nomouse_sys_macos::{
     Button, KeyLayout, Label, LabelStyle, ModifierFlags, Outline, TapEvent, layout,
 };
 
-use crate::ax_tree::{LiveTree, RootSet, frame_of, not_trusted, roots};
+use crate::ax_tree::{LiveTree, RootSet, enhanced_ui, frame_of, not_trusted, roots};
+use crate::enhance::{is_web_app, missing_web_area, needs_enhancing};
 use crate::geometry::{
     label_corner, lerp, screen_rect, to_panel, to_panel_rects, union, wheel_deltas, whole_points,
 };
 use crate::keys::{chord, held, key_press, modifier_flags};
 use crate::roles::{PRESS, SHOW_MENU};
 use crate::style::{Themed, appearance};
-use crate::walk::{Limits, walk};
+use crate::walk::{Limits, Walk, walk};
 
 /// Global Accessibility messaging timeout, in seconds: how long one call waits for a busy app.
 const AX_TIMEOUT: f32 = 0.25;
@@ -47,6 +48,11 @@ const REVEAL_POLL: Duration = Duration::from_millis(30);
 /// Readings in a row that must agree before the scroll counts as finished: browsers report
 /// the final frame while their smooth scroll still runs, and ignore a click meanwhile.
 const REVEAL_STEADY: u32 = 8;
+/// How long a scan waits for a web page's tree after switching `AXEnhancedUserInterface` on
+/// (Chromium builds it a moment later).
+const TREE_WAIT: Duration = Duration::from_millis(1500);
+/// How often the window is walked again meanwhile.
+const TREE_POLL: Duration = Duration::from_millis(100);
 
 /// One element of the last snapshot, kept for semantic clicks and for scrolling off-screen
 /// elements into view.
@@ -70,7 +76,10 @@ pub struct MacPlatform {
     opacity: f32,
     semantic_click: bool,
     enhanced_ui_apps: Vec<String>,
+    /// Processes already sent `AXManualAccessibility`.
     prepared_pids: HashSet<i32>,
+    /// Processes already warned that they show no web content.
+    hinted_pids: HashSet<i32>,
     snapshot: Vec<Snapshot>,
     next_hotkey: u32,
     /// Registered chords by id; a chord registered twice is [`PlatformError::HotkeyTaken`].
@@ -127,6 +136,7 @@ impl MacPlatform {
             semantic_click: config.hints.semantic_click,
             enhanced_ui_apps: config.macos.enhanced_ui_apps.clone(),
             prepared_pids: HashSet::new(),
+            hinted_pids: HashSet::new(),
             snapshot: Vec::new(),
             next_hotkey: 1,
             hotkeys: Vec::new(),
@@ -138,21 +148,54 @@ impl MacPlatform {
         })
     }
 
-    /// Asks Chromium and Electron apps to build their accessibility tree, once per process.
-    fn prepare_app(&mut self, pid: i32) {
-        if !self.prepared_pids.insert(pid) {
-            return;
-        }
+    /// Asks Chromium and Electron apps to build their accessibility tree: Electron's switch
+    /// once per process, and `AXEnhancedUserInterface` for listed apps (`listed`) before every
+    /// scan whenever the app does not report it on (a relaunched Chromium starts with it off).
+    /// Returns whether the attribute was just switched on, judged by reading it back: Chrome
+    /// 157 answers the set with `kAXErrorNotImplemented` although it takes effect.
+    fn prepare_app(&mut self, pid: i32, listed: bool) -> bool {
         let element = AxElement::application(pid);
-        // Electron's switch; other apps reject the unknown attribute, which is harmless.
-        element
-            .set_bool_attribute("AXManualAccessibility", true)
-            .ok();
-        let opted_in = app::bundle_id(pid).is_some_and(|id| self.enhanced_ui_apps.contains(&id));
-        if opted_in {
+        if self.prepared_pids.insert(pid) {
+            // Electron's switch; other apps reject the unknown attribute, which is harmless.
             element
-                .set_bool_attribute("AXEnhancedUserInterface", true)
+                .set_bool_attribute("AXManualAccessibility", true)
                 .ok();
+        }
+        let current = enhanced_ui(&element);
+        if !needs_enhancing(listed, current) {
+            return false;
+        }
+        let answer = element.set_bool_attribute("AXEnhancedUserInterface", true);
+        let now = enhanced_ui(&element);
+        tracing::debug!(
+            "AXEnhancedUserInterface for pid {pid} was {current:?}: set answered {answer:?}, \
+             now {now:?}"
+        );
+        now == Some(true)
+    }
+
+    /// Walks the roots of `set` once.
+    fn walk_once(
+        &self,
+        set: RootSet,
+        frontmost: Option<i32>,
+    ) -> Result<(bool, Walk<AxElement>), PlatformError> {
+        let found_roots = roots(set, frontmost, self.desktop())?;
+        let started = Instant::now();
+        let result = walk(&mut LiveTree, found_roots.roots, self.limits, || {
+            started.elapsed()
+        })?;
+        Ok((found_roots.has_window, result))
+    }
+
+    /// Logs once per process that the frontmost web app showed no web content.
+    fn hint_missing_web(&mut self, pid: i32, bundle_id: &str, listed: bool) {
+        if self.hinted_pids.insert(pid) {
+            let enhanced = enhanced_ui(&AxElement::application(pid));
+            tracing::warn!(
+                "{}; `nomouse doctor` checks every open browser",
+                missing_web_area(bundle_id, listed, enhanced)
+            );
         }
     }
 
@@ -327,20 +370,44 @@ impl ElementSource for MacPlatform {
     fn elements(&mut self, scope: Scope) -> Result<Vec<Element>, PlatformError> {
         self.follow_appearance();
         let frontmost = app::frontmost_pid();
-        if let Some(pid) = frontmost {
-            self.prepare_app(pid);
-        }
+        // The frontmost app's pid and bundle id, and whether it is listed for
+        // `AXEnhancedUserInterface`.
+        let target = frontmost.map(|pid| {
+            let bundle_id = app::bundle_id(pid);
+            let listed = bundle_id
+                .as_ref()
+                .is_some_and(|id| self.enhanced_ui_apps.contains(id));
+            (pid, bundle_id, listed)
+        });
+        let switched_on = target
+            .as_ref()
+            .is_some_and(|&(pid, _, listed)| self.prepare_app(pid, listed));
         let set = match scope {
             Scope::FocusedWindow => RootSet::FocusedWindow,
             Scope::Screen => RootSet::AllWindows,
         };
-        let found_roots = roots(set, frontmost, self.desktop())?;
         let started = Instant::now();
-        let result = walk(&mut LiveTree, found_roots.roots, self.limits, || {
-            started.elapsed()
-        })?;
-        if scope == Scope::FocusedWindow && !found_roots.has_window && result.found.is_empty() {
+        let (mut has_window, mut result) = self.walk_once(set, frontmost)?;
+        // Chromium builds a page's tree a moment after the attribute is switched on: walk
+        // again until a web area shows up, so the first activation after a relaunch still
+        // labels the page.
+        while switched_on
+            && has_window
+            && result.web_areas == 0
+            && started.elapsed() + TREE_POLL < TREE_WAIT
+        {
+            thread::sleep(TREE_POLL);
+            (has_window, result) = self.walk_once(set, frontmost)?;
+        }
+        if scope == Scope::FocusedWindow && !has_window && result.found.is_empty() {
             return Err(PlatformError::NoFocusedWindow);
+        }
+        if let Some((pid, Some(bundle_id), listed)) = &target
+            && has_window
+            && result.web_areas == 0
+            && is_web_app(bundle_id, &self.enhanced_ui_apps)
+        {
+            self.hint_missing_web(*pid, bundle_id, *listed);
         }
         tracing::debug!(
             "walked {} nodes in {:?}: {} elements, {} of them off-screen{}",

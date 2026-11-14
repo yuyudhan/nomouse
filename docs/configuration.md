@@ -125,7 +125,21 @@ the rest between light and dark.
 
 | Key | Default | Values |
 |-----|---------|--------|
-| `macos.enhanced_ui_apps` | `[]` | bundle ids (such as `"com.google.Chrome"`) whose accessibility tree nomouse switches on with `AXEnhancedUserInterface`. Chromium and Electron apps only build their tree when asked; the attribute can slow window animations, so it is opt-in per app. No blank entries. Ignored on other systems |
+| `macos.enhanced_ui_apps` | `["com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.dev", "com.google.Chrome.canary", "org.chromium.Chromium", "company.thebrowser.Browser", "com.brave.Browser", "com.microsoft.edgemac", "com.vivaldi.Vivaldi", "com.operasoftware.Opera"]` | bundle ids whose accessibility tree nomouse switches on with `AXEnhancedUserInterface`, checked before every activation (a relaunched browser turns it off). The default covers Chrome (stable, Beta, Dev, Canary), Chromium, Arc, Brave, Edge, Vivaldi and Opera. A list in the file replaces the default, so to add an Electron app copy the default and append its bundle id (`osascript -e 'id of app "Slack"'` prints it); `[]` turns it off. The attribute can slow window animations, which is why it is per app. No blank entries. Ignored on other systems |
+
+```toml
+[macos]
+# The default browsers plus two Electron apps.
+enhanced_ui_apps = [
+  "com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.dev", "com.google.Chrome.canary",
+  "org.chromium.Chromium", "company.thebrowser.Browser", "com.brave.Browser", "com.microsoft.edgemac",
+  "com.vivaldi.Vivaldi", "com.operasoftware.Opera",
+  "com.microsoft.VSCode", "com.tinyspeck.slackmacgap",
+]
+```
+
+`nomouse doctor` checks every open Chromium browser and listed app for web content and says what
+to change when a window shows none.
 
 ## Logs
 
