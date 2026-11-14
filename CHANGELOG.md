@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-11-14
+
 ### Fixed
 
 - macOS: web pages in Chrome get labels again after Chrome relaunches. A relaunched Chromium
