@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-11-14
+
 ### Fixed
 
 - macOS: the installer creates its signing identity again where Homebrew's OpenSSL 3 or later
