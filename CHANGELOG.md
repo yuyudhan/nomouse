@@ -7,6 +7,14 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: nomouse.app started with `open` from a terminal (as the installer and `open -a nomouse`
+  do) counts as the app, not the terminal: `open` passes the terminal's `TERM_PROGRAM` on, which
+  made the app clear no stale Accessibility entry and made the doctor's
+  `Accessibility (nomouse.app)` line say the daemon was started from a terminal. Launch Services
+  names the app it launched in `__CFBundleIdentifier`, which nomouse now checks first.
+
 ## [0.1.17] - 2026-11-14
 
 ### Fixed

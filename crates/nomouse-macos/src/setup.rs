@@ -139,6 +139,41 @@ pub enum GrantHolder {
     Binary,
 }
 
+/// How this process was started, for [`holder_of`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Origin {
+    /// `TERM_PROGRAM`, when set and not empty.
+    pub term_program: Option<String>,
+    /// Whether stderr is a terminal.
+    pub stderr_terminal: bool,
+    /// The bundle id of the app this executable belongs to, when it is in one.
+    pub own_bundle: Option<String>,
+    /// `__CFBundleIdentifier`: Launch Services sets it to the app it launches; in a terminal it
+    /// names the terminal app.
+    pub launched_bundle: Option<String>,
+}
+
+/// Whose grant a process started as `origin` runs under. An app Launch Services launched
+/// (Finder, `open`, a login item) is its own: `open` run in a terminal passes the terminal's
+/// environment on, `TERM_PROGRAM` included, but Launch Services names the launched app in
+/// `__CFBundleIdentifier`, and macOS attributes the app to itself. Otherwise a terminal on
+/// stderr or a `TERM_PROGRAM` means the terminal that started the process.
+pub fn holder_of(origin: Origin) -> GrantHolder {
+    let launched_as_app = origin
+        .own_bundle
+        .as_ref()
+        .is_some_and(|own| origin.launched_bundle.as_ref() == Some(own));
+    if launched_as_app && !origin.stderr_terminal {
+        GrantHolder::App
+    } else if origin.term_program.is_some() || origin.stderr_terminal {
+        GrantHolder::Terminal(origin.term_program)
+    } else if origin.own_bundle.is_some() {
+        GrantHolder::App
+    } else {
+        GrantHolder::Binary
+    }
+}
+
 /// The doctor's Accessibility line: who was checked, and what to do when it is not trusted.
 ///
 /// # Errors
@@ -292,22 +327,19 @@ mod live {
     use nomouse_core::setup::{Permission, Probe};
     use nomouse_sys_macos::{app, ax};
 
-    use super::{ACCESSIBILITY_SETTINGS, GrantHolder, TrustSystem, ask_for_accessibility};
+    use super::{
+        ACCESSIBILITY_SETTINGS, GrantHolder, Origin, TrustSystem, ask_for_accessibility, holder_of,
+    };
 
-    /// Whose grant this process's trust checks measure. macOS attributes a process to the
-    /// terminal app that started it, even with its output piped, so a terminal on stderr or a
-    /// `TERM_PROGRAM` set by one means the terminal's grant.
+    /// Whose grant this process's trust checks measure ([`holder_of`] this process's start).
     pub fn grant_holder() -> GrantHolder {
-        let term_program = std::env::var("TERM_PROGRAM")
-            .ok()
-            .filter(|name| !name.is_empty());
-        if term_program.is_some() || std::io::stderr().is_terminal() {
-            GrantHolder::Terminal(term_program)
-        } else if app::own_bundle_id().is_some() {
-            GrantHolder::App
-        } else {
-            GrantHolder::Binary
-        }
+        let var = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+        holder_of(Origin {
+            term_program: var("TERM_PROGRAM"),
+            stderr_terminal: std::io::stderr().is_terminal(),
+            own_bundle: app::own_bundle_id(),
+            launched_bundle: var("__CFBundleIdentifier"),
+        })
     }
 
     /// Whose Accessibility grant this process runs under, and whether macOS trusts it.
@@ -523,6 +555,46 @@ mod tests {
         assert!(app.contains("Device Control and Data Access"));
         let binary = accessibility_check(false, &GrantHolder::Binary).unwrap_err();
         assert!(binary.starts_with("this nomouse binary is not trusted"));
+    }
+
+    #[test]
+    fn an_app_opened_from_a_terminal_holds_its_own_grant() {
+        let nomouse = || Some("com.yuyudhan.nomouse".to_owned());
+        // `open` in tmux: LaunchServices passes TERM_PROGRAM on but names the app it launched.
+        let opened = Origin {
+            term_program: Some("tmux".to_owned()),
+            stderr_terminal: false,
+            own_bundle: nomouse(),
+            launched_bundle: nomouse(),
+        };
+        assert_eq!(holder_of(opened), GrantHolder::App);
+        // The app's binary run in that terminal (`nomouse` through the symlink).
+        let typed = Origin {
+            term_program: Some("tmux".to_owned()),
+            stderr_terminal: true,
+            own_bundle: nomouse(),
+            launched_bundle: Some("com.mitchellh.ghostty".to_owned()),
+        };
+        assert_eq!(
+            holder_of(typed),
+            GrantHolder::Terminal(Some("tmux".to_owned()))
+        );
+        let piped = Origin {
+            term_program: Some("Apple_Terminal".to_owned()),
+            own_bundle: nomouse(),
+            launched_bundle: Some("com.apple.Terminal".to_owned()),
+            ..Origin::default()
+        };
+        assert_eq!(
+            holder_of(piped),
+            GrantHolder::Terminal(Some("Apple_Terminal".to_owned()))
+        );
+        let login_item = Origin {
+            own_bundle: nomouse(),
+            ..Origin::default()
+        };
+        assert_eq!(holder_of(login_item), GrantHolder::App);
+        assert_eq!(holder_of(Origin::default()), GrantHolder::Binary);
     }
 
     #[test]
