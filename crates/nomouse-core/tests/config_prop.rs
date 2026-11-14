@@ -1,9 +1,14 @@
 //! Property tests: every valid configuration survives a TOML round trip, out-of-range values are
-//! rejected, and fuzzy search accepts exactly the queries that are subsequences of the name.
+//! rejected, the label stages run in order, and fuzzy search accepts exactly the queries that
+//! are subsequences of the name.
 
-use nomouse_core::config::{BrowserMode, Config, HintsConfig, OverlayConfig, ScrollConfig, Theme};
+use std::time::Duration;
+
+use nomouse_core::config::{
+    BrowserMode, Config, HintsConfig, MAX_RESCAN_MS, OverlayConfig, ScrollConfig, Theme,
+};
 use nomouse_core::search::fuzzy_score;
-use nomouse_core::{ActionKind, ConfigError, KeyBindings, Scope};
+use nomouse_core::{ActionKind, ConfigError, KeyBindings, RescanSchedule, Scope};
 use proptest::prelude::*;
 
 fn alphabet() -> impl Strategy<Value = String> {
@@ -27,6 +32,8 @@ prop_compose! {
         semantic_click in any::<bool>(),
         keys in prop::sample::select(vec![KeyBindings::Nomouse, KeyBindings::Homerow]),
         browser in prop::sample::select(vec![BrowserMode::Fast, BrowserMode::Exhaustive]),
+        early_rescan_ms in 0u32..=5000,
+        late_gap in prop::option::of(1u32..=5000),
         step in 1u32..=50,
         dash_step in 1u32..=100,
         font_size in 6u32..=72,
@@ -41,7 +48,16 @@ prop_compose! {
     ) -> Config {
         let [background, foreground, typed_foreground, border] = colours;
         Config {
-            hints: HintsConfig { alphabet, scope, action, semantic_click, keys, browser },
+            hints: HintsConfig {
+                alphabet,
+                scope,
+                action,
+                semantic_click,
+                keys,
+                browser,
+                early_rescan_ms,
+                late_rescan_ms: late_gap.map_or(0, |gap| early_rescan_ms + gap),
+            },
             scroll: ScrollConfig { step, dash_step },
             overlay: OverlayConfig {
                 font_size,
@@ -63,6 +79,22 @@ proptest! {
         prop_assert_eq!(config.validate().ok(), Some(()));
         let parsed = Config::from_toml(&config.to_toml());
         prop_assert_eq!(parsed.ok(), Some(config));
+    }
+
+    #[test]
+    fn rescan_stages_are_accepted_exactly_when_in_range_and_in_order(
+        early in 0u32..12_000,
+        late in 0u32..12_000,
+    ) {
+        let text = format!("[hints]\nearly_rescan_ms = {early}\nlate_rescan_ms = {late}\n");
+        let in_range = early <= MAX_RESCAN_MS && late <= MAX_RESCAN_MS;
+        let in_order = early == 0 || late == 0 || early < late;
+        prop_assert_eq!(Config::from_toml(&text).is_ok(), in_range && in_order);
+        // Whatever the values, the stages run in strictly increasing order from the
+        // immediate re-scan.
+        let times = RescanSchedule::new(early, late).times().to_vec();
+        prop_assert_eq!(times.first().copied(), Some(Duration::ZERO));
+        prop_assert!(times.windows(2).all(|pair| pair[0] < pair[1]), "{:?}", times);
     }
 
     #[test]

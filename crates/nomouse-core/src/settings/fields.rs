@@ -98,6 +98,17 @@ pub enum Kind {
     Apps,
 }
 
+impl Kind {
+    /// How far one stepper click moves a [`Kind::Number`]: 100 for ranges in the thousands
+    /// (milliseconds), else 1; 1 for the other kinds.
+    pub const fn step(self) -> u32 {
+        match self {
+            Self::Number { max, .. } if max >= 1000 => 100,
+            _ => 1,
+        }
+    }
+}
+
 /// One configuration key as a settings window shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Field {
@@ -277,6 +288,32 @@ pub const FIELDS: &[Field] = &[
             Kind::Choice(SCOPES),
         ),
         "Which windows get labels.",
+    ),
+    helped(
+        field(
+            "hints.early_rescan_ms",
+            Section::Labels,
+            "More labels after (ms)",
+            Kind::Number {
+                min: 0,
+                max: crate::config::MAX_RESCAN_MS,
+            },
+        ),
+        "Labels show at once; what appeared since gets labels this long after the hotkey. \
+         0: off.",
+    ),
+    helped(
+        field(
+            "hints.late_rescan_ms",
+            Section::Labels,
+            "Last labels after (ms)",
+            Kind::Number {
+                min: 0,
+                max: crate::config::MAX_RESCAN_MS,
+            },
+        ),
+        "Slow content (a browser building its page) gets labels this long after the hotkey; \
+         later than the first. 0: off.",
     ),
     helped(
         field(

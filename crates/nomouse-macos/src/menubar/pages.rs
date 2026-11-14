@@ -101,7 +101,7 @@ fn spec(field: &Field) -> Spec {
             tag,
             min,
             max,
-            step: 1,
+            step: field.kind.step(),
         },
         Kind::Toggle => Spec::Toggle {
             tag,

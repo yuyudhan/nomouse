@@ -172,7 +172,8 @@ fn number(
     } else {
         format!("{} {min} to {max}.", field.help)
     };
-    let (row, spin) = widgets::spin_row(field.title, &subtitle, min, max);
+    let limits = (min, max, field.kind.step());
+    let (row, spin) = widgets::spin_row(field.title, &subtitle, limits);
     group.add(&row);
     let edit = Rc::clone(state);
     spin.connect_value_changed(move |spin| {

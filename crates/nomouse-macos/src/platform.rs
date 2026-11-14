@@ -1,6 +1,6 @@
 //! [`MacPlatform`]: the core traits implemented on Accessibility, Quartz events and AppKit.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -22,7 +22,7 @@ use nomouse_sys_macos::{
 };
 
 use crate::ax_tree::{LiveTree, RootSet, enhanced_ui, frame_of, not_trusted, roots};
-use crate::enhance::{TREE_POLL, is_web_app, keeps_waiting, missing_web_area, needs_enhancing};
+use crate::enhance::{is_web_app, missing_web_area, needs_enhancing, reports_missing_web};
 use crate::geometry::{
     label_corner, lerp, screen_rect, to_panel, to_panel_rects, union, wheel_deltas, whole_points,
 };
@@ -75,6 +75,8 @@ pub struct MacPlatform {
     prepared_pids: HashSet<i32>,
     /// Processes already warned that they show no web content.
     hinted_pids: HashSet<i32>,
+    /// When this process last switched `AXEnhancedUserInterface` on, per app process.
+    switched_at: HashMap<i32, Instant>,
     snapshot: Vec<Snapshot>,
     next_hotkey: u32,
     /// Registered chords by id; a chord registered twice is [`PlatformError::HotkeyTaken`].
@@ -132,6 +134,7 @@ impl MacPlatform {
             enhanced_ui_apps: config.macos.enhanced_ui_apps.clone(),
             prepared_pids: HashSet::new(),
             hinted_pids: HashSet::new(),
+            switched_at: HashMap::new(),
             snapshot: Vec::new(),
             next_hotkey: 1,
             hotkeys: Vec::new(),
@@ -374,29 +377,29 @@ impl ElementSource for MacPlatform {
                 .is_some_and(|id| self.enhanced_ui_apps.contains(id));
             (pid, bundle_id, listed)
         });
-        let switched_on = target
-            .as_ref()
-            .is_some_and(|&(pid, _, listed)| self.prepare_app(pid, listed));
+        if let Some(&(pid, _, listed)) = target.as_ref()
+            && self.prepare_app(pid, listed)
+        {
+            self.switched_at.insert(pid, Instant::now());
+        }
         let set = match scope {
             Scope::FocusedWindow => RootSet::FocusedWindow,
             Scope::Screen => RootSet::AllWindows,
         };
         let started = Instant::now();
-        let (mut has_window, mut result) = self.walk_once(set, frontmost)?;
-        // Chromium builds a page's tree a moment after the attribute is switched on: walk
-        // again until the web area has content, so the first activation after a relaunch
-        // still labels the page.
-        while keeps_waiting(switched_on, has_window, result.web_areas, started.elapsed()) {
-            thread::sleep(TREE_POLL);
-            (has_window, result) = self.walk_once(set, frontmost)?;
-        }
+        // One walk, never a wait: a page Chromium is still building joins at the hint
+        // session's re-scans.
+        let (has_window, result) = self.walk_once(set, frontmost)?;
         if scope == Scope::FocusedWindow && !has_window && result.found.is_empty() {
             return Err(PlatformError::NoFocusedWindow);
         }
         if let Some((pid, Some(bundle_id), listed)) = &target
-            && has_window
-            && result.web_areas == 0
             && is_web_app(bundle_id, &self.enhanced_ui_apps)
+            && reports_missing_web(
+                self.switched_at.get(pid).map(Instant::elapsed),
+                has_window,
+                result.web_areas,
+            )
         {
             self.hint_missing_web(*pid, bundle_id, *listed);
         }

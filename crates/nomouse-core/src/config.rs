@@ -92,7 +92,16 @@ pub struct HintsConfig {
     /// How much of a web page is collected: `fast` (what is in the viewport) or `exhaustive`
     /// (the whole document, so search finds links scrolled out of view).
     pub browser: BrowserMode,
+    /// Milliseconds after the hotkey when labels are added for targets that appeared since
+    /// the first scan (a page still loading); 0 turns this stage off.
+    pub early_rescan_ms: u32,
+    /// Milliseconds after the hotkey of the last stage, for slow targets (a browser that is
+    /// building its page's accessibility tree); later than `early_rescan_ms`, 0 turns it off.
+    pub late_rescan_ms: u32,
 }
+
+/// The largest `hints.early_rescan_ms` and `hints.late_rescan_ms`, in milliseconds.
+pub const MAX_RESCAN_MS: u32 = 10_000;
 
 /// How much of a web document (a browser page, an Electron app) a scan collects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -116,6 +125,8 @@ impl Default for HintsConfig {
             semantic_click: false,
             keys: KeyBindings::Nomouse,
             browser: BrowserMode::Fast,
+            early_rescan_ms: 1000,
+            late_rescan_ms: 3000,
         }
     }
 }
@@ -385,6 +396,17 @@ pub enum ConfigError {
         /// The field.
         field: &'static str,
     },
+    /// `hints.late_rescan_ms` is not later than `hints.early_rescan_ms` (both non-zero).
+    #[error(
+        "hints.late_rescan_ms = {late} must be later than hints.early_rescan_ms = {early} \
+         (or 0 to turn that stage off)"
+    )]
+    RescanOrder {
+        /// `hints.early_rescan_ms`.
+        early: u32,
+        /// `hints.late_rescan_ms`.
+        late: u32,
+    },
 }
 
 fn check_range(field: &'static str, value: u32, min: u32, max: u32) -> Result<(), ConfigError> {
@@ -455,6 +477,22 @@ impl Config {
         check_range("overlay.font_size", self.overlay.font_size, 6, 72)?;
         check_range("overlay.opacity", self.overlay.opacity, 10, 100)?;
         self.overlay.colours(Appearance::Light).map(|_| ())?;
+        check_range(
+            "hints.early_rescan_ms",
+            self.hints.early_rescan_ms,
+            0,
+            MAX_RESCAN_MS,
+        )?;
+        check_range(
+            "hints.late_rescan_ms",
+            self.hints.late_rescan_ms,
+            0,
+            MAX_RESCAN_MS,
+        )?;
+        let (early, late) = (self.hints.early_rescan_ms, self.hints.late_rescan_ms);
+        if early > 0 && late > 0 && late <= early {
+            return Err(ConfigError::RescanOrder { early, late });
+        }
         if self.ignore.apps.iter().any(|app| app.trim().is_empty()) {
             return Err(ConfigError::EmptyEntry {
                 field: "ignore.apps",
@@ -517,6 +555,52 @@ fn path_from_env(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rescan_stages_default_to_one_and_three_seconds_and_are_validated() {
+        let hints = Config::default().hints;
+        assert_eq!((hints.early_rescan_ms, hints.late_rescan_ms), (1000, 3000));
+        let config =
+            Config::from_toml("[hints]\nearly_rescan_ms = 500\nlate_rescan_ms = 10000\n").unwrap();
+        assert_eq!(
+            (config.hints.early_rescan_ms, config.hints.late_rescan_ms),
+            (500, 10_000)
+        );
+        // 0 turns a stage off, in any combination.
+        for text in [
+            "early_rescan_ms = 0",
+            "late_rescan_ms = 0",
+            "early_rescan_ms = 0\nlate_rescan_ms = 0",
+            "early_rescan_ms = 5000\nlate_rescan_ms = 0",
+        ] {
+            assert!(
+                Config::from_toml(&format!("[hints]\n{text}\n")).is_ok(),
+                "{text}"
+            );
+        }
+        for (field, text) in [
+            ("hints.early_rescan_ms", "early_rescan_ms = 10001"),
+            ("hints.late_rescan_ms", "late_rescan_ms = 60000"),
+        ] {
+            assert!(
+                matches!(
+                    Config::from_toml(&format!("[hints]\n{text}\n")),
+                    Err(ConfigError::OutOfRange { field: f, max: MAX_RESCAN_MS, .. }) if f == field
+                ),
+                "{text}"
+            );
+        }
+        for (early, late) in [(3000, 1000), (2000, 2000), (1000, 4000)] {
+            let result = Config::from_toml(&format!(
+                "[hints]\nearly_rescan_ms = {early}\nlate_rescan_ms = {late}\n"
+            ));
+            if early < late {
+                assert!(result.is_ok());
+            } else {
+                assert!(matches!(result, Err(ConfigError::RescanOrder { .. })));
+            }
+        }
+    }
 
     #[test]
     fn empty_file_is_defaults() {

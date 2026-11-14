@@ -106,6 +106,7 @@ picks up a saved file within two seconds.
 [hints]
 alphabet = "fjdksagh"      # label letters, most comfortable first
 keys = "homerow"           # a label highlights; Return clicks, as in Homerow
+late_rescan_ms = 4000      # labels show at once; slow pages get theirs by 4 s (default 3 s)
 
 [hotkeys]
 hints = "cmd+shift+space"

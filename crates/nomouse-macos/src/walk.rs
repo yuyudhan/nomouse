@@ -138,8 +138,37 @@ pub struct Walk<N> {
     /// content has no accessibility tree yet (`AXEnhancedUserInterface` is off, or was just
     /// switched on and the page is still being built).
     pub web_areas: usize,
+    /// `AXWebArea` nodes read without children: blank tabs, or a page Chromium has not
+    /// filled yet.
+    pub blank_web_areas: usize,
     /// The first limit hit, if any.
     pub truncated: Option<Truncation>,
+}
+
+impl<N> Walk<N> {
+    /// Nothing found or read yet.
+    const fn empty() -> Self {
+        Self {
+            found: Vec::new(),
+            visited: 0,
+            repeats: 0,
+            web_areas: 0,
+            blank_web_areas: 0,
+            truncated: None,
+        }
+    }
+
+    /// Counts a node read with `role`: an `AXWebArea` with children is web content, one
+    /// without is blank.
+    fn count_web_area(&mut self, role: &str, has_children: bool) {
+        if role == "AXWebArea" {
+            if has_children {
+                self.web_areas += 1;
+            } else {
+                self.blank_web_areas += 1;
+            }
+        }
+    }
 }
 
 /// One starting point: a node and the region its content is visible in.
@@ -178,13 +207,7 @@ pub fn walk<T: AxTree>(
     limits: Limits,
     mut elapsed: impl FnMut() -> Duration,
 ) -> Result<Walk<T::Node>, PlatformError> {
-    let mut result = Walk {
-        found: Vec::new(),
-        visited: 0,
-        repeats: 0,
-        web_areas: 0,
-        truncated: None,
-    };
+    let mut result = Walk::empty();
     let mut seen: HashSet<T::Node> = HashSet::new();
     let mut stack: Vec<Pending<T::Node>> = roots
         .into_iter()
@@ -229,7 +252,7 @@ pub fn walk<T: AxTree>(
             Err(ReadError::Skip) => continue,
             Err(ReadError::Fatal(error)) => return Err(error),
         };
-        result.web_areas += usize::from(info.role == "AXWebArea" && !info.children.is_empty());
+        result.count_web_area(&info.role, !info.children.is_empty());
         let out_of_view = is_out_of_view(info.frame, &pending, exhaustive);
         if out_of_view && !pending.offscreen {
             if pending.web.is_some() && exhaustive {
@@ -643,7 +666,7 @@ mod tests {
             no_time(),
         )
         .unwrap();
-        assert_eq!(page.web_areas, 1);
+        assert_eq!((page.web_areas, page.blank_web_areas), (1, 0));
         // A Chromium window whose web content has no accessibility tree: only its toolbar.
         let mut tree = FakeTree::default();
         tree.add(1, "AXWindow", SCREEN, &[2]);
@@ -651,13 +674,13 @@ mod tests {
         tree.add(3, "AXButton", SMALL, &[]);
         let bare = walk(&mut tree, vec![root(1)], Limits::default(), no_time()).unwrap();
         assert_eq!(ids(&bare), [3]);
-        assert_eq!(bare.web_areas, 0);
+        assert_eq!((bare.web_areas, bare.blank_web_areas), (0, 0));
         // Chromium shows the web area before it fills it: no web content yet.
         let mut tree = FakeTree::default();
         tree.add(1, "AXWindow", SCREEN, &[2]);
         tree.add(2, "AXWebArea", SCREEN, &[]);
         let empty = walk(&mut tree, vec![root(1)], Limits::default(), no_time()).unwrap();
-        assert_eq!(empty.web_areas, 0);
+        assert_eq!((empty.web_areas, empty.blank_web_areas), (0, 1));
     }
 
     #[test]

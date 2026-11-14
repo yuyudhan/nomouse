@@ -353,10 +353,15 @@ fn every_choice_and_number_limit_matches_validation() {
                 }
             }
             Kind::Number { min, max } => {
+                // Each number from a file with both label stages off, so neither stage's
+                // order rule (`hints.late_rescan_ms` after `hints.early_rescan_ms`) gets in the
+                // way of the other's limits; `rescan_stages_are_set_in_order` checks the rule.
+                dir.write("[hints]\nearly_rescan_ms = 0\nlate_rescan_ms = 0\n");
+                let mut settings = Settings::open(dir.file()).unwrap();
                 for good in [min, max] {
                     settings.set(field.key, Value::Number(good)).unwrap();
                 }
-                for bad in [min - 1, max + 1] {
+                for bad in min.checked_sub(1).into_iter().chain([max + 1]) {
                     assert!(
                         matches!(
                             settings.set(field.key, Value::Number(bad)),
@@ -370,4 +375,58 @@ fn every_choice_and_number_limit_matches_validation() {
             Kind::Text | Kind::Toggle | Kind::Hotkey | Kind::Colour | Kind::Apps => {}
         }
     }
+}
+
+#[test]
+fn rescan_stages_are_set_in_order() {
+    let dir = Dir::new("rescans");
+    let mut settings = Settings::open(dir.file()).unwrap();
+    assert_eq!(
+        settings.value("hints.early_rescan_ms").unwrap(),
+        Value::Number(1000)
+    );
+    assert_eq!(
+        settings.value("hints.late_rescan_ms").unwrap(),
+        Value::Number(3000)
+    );
+    assert!(matches!(
+        settings.set("hints.early_rescan_ms", Value::Number(3000)),
+        Err(SettingsError::Rejected(ConfigError::RescanOrder { .. }))
+    ));
+    assert!(
+        settings
+            .set("hints.late_rescan_ms", Value::Number(5000))
+            .unwrap()
+    );
+    assert!(
+        settings
+            .set("hints.early_rescan_ms", Value::Number(2000))
+            .unwrap()
+    );
+    assert_eq!(
+        dir.read(),
+        "[hints]\nlate_rescan_ms = 5000\nearly_rescan_ms = 2000\n"
+    );
+    // Back to the defaults: the keys leave the file.
+    assert!(
+        settings
+            .set("hints.early_rescan_ms", Value::Number(1000))
+            .unwrap()
+    );
+    assert!(
+        settings
+            .set("hints.late_rescan_ms", Value::Number(3000))
+            .unwrap()
+    );
+    assert!(!dir.read().contains("rescan"));
+    assert_eq!(settings.config().hints.late_rescan_ms, 3000);
+}
+
+#[test]
+fn millisecond_fields_step_by_a_hundred() {
+    let step = |key| field_for(key).map(|field| field.kind.step());
+    assert_eq!(step("hints.early_rescan_ms"), Some(100));
+    assert_eq!(step("hints.late_rescan_ms"), Some(100));
+    assert_eq!(step("overlay.font_size"), Some(1));
+    assert_eq!(step("hints.alphabet"), Some(1));
 }

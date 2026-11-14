@@ -31,6 +31,13 @@ keys = "nomouse"
 # what is in view; "exhaustive" the whole document, so search also finds links scrolled out of
 # view and picking one scrolls it into view first. Linux and macOS.
 browser = "fast"
+# Default 1000. Labels show at once; while nothing is typed, elements that appeared since get
+# labels this many milliseconds after the hotkey (a page still loading). Labels already shown
+# never change. 0 turns this stage off; at most 10000.
+early_rescan_ms = 1000
+# Default 3000. The last stage, for slow content (a browser building its page's tree): later
+# than early_rescan_ms, 0 turns it off, at most 10000. Typing or closing stops the stages.
+late_rescan_ms = 3000
 
 [hotkeys]
 # A hotkey is modifiers (ctrl/control, alt/option, shift, super/cmd/command/meta/win; at least

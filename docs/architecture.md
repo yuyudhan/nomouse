@@ -57,8 +57,9 @@ Every method is blocking and runs on the event-loop thread; errors are `Platform
    outlined through `Frame::area` (without one it picks an element first). Escape cancels, and
    so does an activation hotkey or a command-socket request arriving while the labels are up
    (toggle).
-   Until the first key, `nomouse_core::Rescans` runs `RESCAN_SCHEDULE` (right after the first
-   scan, then 1 s and 3 s after the hotkey, or after the scan that follows each continuous-mode
+   Until the first key, `nomouse_core::Rescans` runs a `RescanSchedule` (right after the first
+   scan, then `hints.early_rescan_ms` and `hints.late_rescan_ms` after the hotkey, 1 s and 3 s
+   by default, or after the scan that follows each continuous-mode
    click): each re-scan goes through `HintSession::rescan`, whose `reassign_hints` keeps the
    label of every target still there (same role, name and bounds, else same role and name),
    gives new targets the shortest free labels and drops gone ones; the overlay is redrawn only
@@ -253,6 +254,8 @@ keys = "nomouse"             # nomouse: a label acts at once | homerow: a label 
                              # Return clicks, twice double clicks, Shift-Return right clicks
 browser = "fast"             # fast: web pages read in view only | exhaustive: the whole page,
                              # so search finds links scrolled away (and scrolls them in)
+early_rescan_ms = 1000       # labels for what appeared since the first scan; 0 = off
+late_rescan_ms = 3000        # last stage, for slow pages; later than early, 0 = off, max 10000
 
 [hotkeys]                    # modifiers: ctrl, alt (Option), shift, meta (Command / Super)
 hints = "ctrl+space"

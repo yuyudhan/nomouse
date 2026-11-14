@@ -89,12 +89,11 @@ pub fn switch_row(title: &str, subtitle: &str) -> (adw::ActionRow, gtk::Switch) 
     (row, switch)
 }
 
-/// A row with a whole-number spin button from `min` to `max`.
+/// A row with a whole-number spin button from `min` to `max`, moving by `step`.
 pub fn spin_row(
     title: &str,
     subtitle: &str,
-    min: u32,
-    max: u32,
+    (min, max, step): (u32, u32, u32),
 ) -> (adw::ActionRow, gtk::SpinButton) {
     let row = row(title, subtitle);
     let spin: gtk::SpinButton = named(title);
@@ -102,8 +101,8 @@ pub fn spin_row(
         f64::from(min),
         f64::from(min),
         f64::from(max),
-        1.0,
-        10.0,
+        f64::from(step),
+        f64::from(step) * 10.0,
         0.0,
     ));
     spin.set_valign(gtk::Align::Center);
@@ -113,7 +112,7 @@ pub fn spin_row(
     (row, spin)
 }
 
-/// The spin button's value as a `u32` (it never goes below its minimum of at least 1).
+/// The spin button's value as a `u32` (its minimum is never negative).
 pub fn spin_value(spin: &gtk::SpinButton) -> u32 {
     u32::try_from(spin.value_as_int()).unwrap_or(0)
 }

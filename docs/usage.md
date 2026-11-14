@@ -156,7 +156,7 @@ The settings window has these pages:
 |------|----------|
 | General | Accessibility status, start at login, updates, the doctor, About |
 | Hotkeys | one recorder per mode: click it and press the chord; a chord macOS already uses (Spotlight, input sources, screenshots) is flagged, Escape keeps the old one |
-| Labels | the label letters, the label keys (Homerow bindings), what picking a label does, which windows get labels |
+| Labels | the label letters, the label keys (Homerow bindings), what picking a label does, which windows get labels, and when late content gets labels (`hints.early_rescan_ms`, `hints.late_rescan_ms`: 1000 and 3000 ms by default, 0 turns a stage off) |
 | Appearance | theme (auto, light, dark, original), label size and opacity, the four colours, with a live preview |
 | Scroll | the step and the Shift step |
 | Search | web pages: `fast` (what is in view) or `exhaustive` (the whole page) |

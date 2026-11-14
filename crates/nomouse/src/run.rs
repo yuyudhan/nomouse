@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use nomouse_core::{
     Action, ActionKind, Alphabet, Frame, Hint, HintSession, InputEvent, KeyBindings, Platform,
-    PlatformError, Rect, Rescans, Scope, ScrollEvent, ScrollSession, SessionEvent,
+    PlatformError, Rect, RescanSchedule, Rescans, Scope, ScrollEvent, ScrollSession, SessionEvent,
 };
 
 /// How long continuous mode waits after a click before re-scanning, so the app can update.
@@ -78,6 +78,8 @@ pub(crate) struct Settings {
     pub(crate) keys: KeyBindings,
     /// `ignore.apps`: apps where activation shows nothing.
     pub(crate) ignore: Vec<String>,
+    /// When the labels are scanned again while nothing is typed.
+    pub(crate) rescans: RescanSchedule,
 }
 
 /// What waiting for the next key produced.
@@ -257,8 +259,9 @@ fn rescan(
 
 /// Runs one activation in `mode`. `started` is when the trigger arrived, for the
 /// hotkey-to-labels timing logged at info level and the re-scans ([`Rescans`]): while no key
-/// is typed the elements are scanned again right after the first scan and at 1 s and 3 s
-/// (in continuous mode, counted from the scan after each action), so a page still loading
+/// is typed the elements are scanned again right after the first scan and at the configured
+/// stages (`settings.rescans`, 1 s and 3 s by default; in continuous mode, counted from the
+/// scan after each action), so a page still loading
 /// gets its labels. `dismissed` reports a request to toggle the labels off that arrives
 /// outside the platform's events (the daemon's command socket). When the focused window's
 /// app is in `ignore.apps`, nothing is scanned or shown.
@@ -316,7 +319,7 @@ fn activate_on_clock(
         draw(platform, &session)?;
         scans += 1;
         log_scan(session.hints(), scans, started);
-        let mut rescans = Rescans::new(shown_from);
+        let mut rescans = Rescans::new(shown_from, settings.rescans);
         let action = loop {
             if rescans.take_due(now()) {
                 rescan(platform, settings, &mut session)?;
@@ -555,6 +558,7 @@ mod tests {
             dash_step: 15,
             keys: KeyBindings::Nomouse,
             ignore: Vec::new(),
+            rescans: RescanSchedule::default(),
         }
     }
 
@@ -1063,6 +1067,81 @@ mod tests {
             ]
         );
         assert_eq!(p.performed, [Action::click(Point::new(55, 5))]);
+    }
+
+    /// A browser right after its accessibility tree is switched on: the toolbar is there at
+    /// once, the page's first targets by 1 s, the slow rest by 3 s.
+    fn growing_page(keys: &str) -> Fake {
+        let mut p = fake(2, keys);
+        let mut by_one = p.elements.clone();
+        by_one.push(button(7, 50, 0));
+        let mut by_three = by_one.clone();
+        by_three.push(button(8, 150, 0));
+        p.pages = vec![(ms(1000), by_one), (ms(3000), by_three)];
+        p
+    }
+
+    #[test]
+    fn labels_show_at_once_and_late_targets_join_at_one_and_three_seconds() {
+        let mut p = growing_page(&after_polls(70, "!"));
+        assert_eq!(
+            run(&mut p, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Cancelled)
+        );
+        assert_eq!(p.scanned_at, [ms(0), ms(0), ms(1000), ms(3000)]);
+        // The first labels are drawn from the first scan; each stage only adds labels.
+        assert_eq!(
+            p.frames,
+            [
+                frame(&[("a", 0), ("s", 100)]),
+                frame(&[("a", 0), ("d", 50), ("s", 100)]),
+                frame(&[("a", 0), ("d", 50), ("s", 100), ("f", 150)]),
+            ]
+        );
+    }
+
+    #[test]
+    fn no_stage_runs_after_the_labels_close() {
+        // Escape two seconds in, between the 1 s and the 3 s stage.
+        let mut p = growing_page(&after_polls(40, "!"));
+        assert_eq!(
+            run(&mut p, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Cancelled)
+        );
+        assert_eq!(p.scanned_at, [ms(0), ms(0), ms(1000)]);
+        assert!(!p.visible);
+        assert_eq!(p.frames.len(), 2);
+    }
+
+    #[test]
+    fn the_stages_follow_the_configured_delays() {
+        // Early stage off, late stage at 2 s: the targets that arrived at 1 s join then; the
+        // page's 3 s arrival comes after the last stage and gets no label.
+        let staged = Settings {
+            rescans: RescanSchedule::new(0, 2000),
+            ..settings()
+        };
+        let mut p = growing_page(&after_polls(70, "!"));
+        assert_eq!(
+            run_with(&mut p, &staged, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Cancelled)
+        );
+        assert_eq!(p.scanned_at, [ms(0), ms(0), ms(2000)]);
+        assert_eq!(
+            p.frames.last(),
+            Some(&frame(&[("a", 0), ("d", 50), ("s", 100)]))
+        );
+        // Both off: only the immediate re-scan.
+        let off = Settings {
+            rescans: RescanSchedule::new(0, 0),
+            ..settings()
+        };
+        let mut p = growing_page(&after_polls(70, "!"));
+        assert_eq!(
+            run_with(&mut p, &off, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Cancelled)
+        );
+        assert_eq!(p.scanned_at, [ms(0), ms(0)]);
     }
 
     #[test]

@@ -225,6 +225,10 @@ fn settings(config: &Config) -> Result<Settings, String> {
         dash_step: i32::try_from(config.scroll.dash_step).unwrap_or(15),
         keys: config.hints.keys,
         ignore: config.ignore.apps.clone(),
+        rescans: nomouse_core::RescanSchedule::new(
+            config.hints.early_rescan_ms,
+            config.hints.late_rescan_ms,
+        ),
     })
 }
 

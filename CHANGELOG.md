@@ -7,6 +7,24 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Added
+
+- `hints.early_rescan_ms` and `hints.late_rescan_ms` (1000 and 3000 by default, at most 10000,
+  0 turns a stage off, late after early): when elements that appeared after the first scan get
+  labels. Both are on the settings window's Labels page, saved to `config.toml` and picked up
+  by a running daemon; `nomouse doctor` reports an invalid pair.
+
+### Fixed
+
+- macOS: labels show at once again in a browser whose page tree nomouse just switched on.
+  0.1.15 held the first labels for up to 4 s while Chrome built its page; now the first scan
+  shows what is there, the page joins at the 1 s and 3 s stages, and labels already shown never
+  change, so a label being typed stays put.
+- macOS: `nomouse doctor` no longer fails on Chrome while labels work. It checks every running
+  instance of a browser together (passing when any shows a page), walks again for up to 4 s
+  while Chrome builds the page tree it drops when idle, and reports blank tabs as "no page
+  open" rather than a failure.
+
 ## [0.1.15] - 2026-11-14
 
 ### Fixed

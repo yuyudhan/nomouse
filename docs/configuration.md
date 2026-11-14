@@ -64,6 +64,8 @@ every build, so this page cannot fall behind it.
 | `hints.semantic_click` | `false` | `true` presses the element through the accessibility API (AT-SPI `do_action`, `AXPress`, UI Automation `Invoke`) when it offers that, so the pointer does not move; `false` moves the pointer and clicks |
 | `hints.keys` | `"nomouse"` | `"nomouse"`: typing a complete label acts at once. `"homerow"`: a complete label only highlights; Return clicks, Return twice double-clicks, Shift-Return right-clicks, Cmd-Return (Super-Return) cmd-clicks |
 | `hints.browser` | `"fast"` | how much of a web page (a browser tab, an Electron window) a scan reads. `"fast"`: only what is in view. `"exhaustive"`: the whole document, so search also finds links and buttons scrolled out of view, and picking one scrolls it into view first. Hint mode labels only what is in view either way. Linux and macOS |
+| `hints.early_rescan_ms` | `1000` | labels show at once for everything already there; while nothing is typed, elements that appeared since get labels this many milliseconds after the hotkey (a page still loading). Labels already shown never change. `0` turns this stage off; at most `10000` |
+| `hints.late_rescan_ms` | `3000` | the last stage, for slow content (a browser building its page's accessibility tree right after nomouse switched it on): later than `hints.early_rescan_ms`, `0` turns it off, at most `10000`. Typing a label or closing the labels stops the stages early |
 
 ### `[hotkeys]`: the global shortcuts
 
@@ -138,8 +140,10 @@ enhanced_ui_apps = [
 ]
 ```
 
-`nomouse doctor` checks every open Chromium browser and listed app for web content and says what
-to change when a window shows none.
+`nomouse doctor` checks every running instance of each Chromium browser and listed app for web
+content: it passes when any instance shows a page, reports blank tabs as "no page open", and
+otherwise says what to change. It also validates the file, including the `hints.*_rescan_ms`
+stages (in range, in order).
 
 ## Logs
 

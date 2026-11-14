@@ -387,6 +387,14 @@ const BAD_VALUES: &[(&str, &[&str])] = &[
         "[macos]\nenhanced_ui_apps = [\"\"]\n",
         &["macos.enhanced_ui_apps", "empty entry"],
     ),
+    (
+        "[hints]\nlate_rescan_ms = 10001\n",
+        &["hints.late_rescan_ms", "10001"],
+    ),
+    (
+        "[hints]\nearly_rescan_ms = 3000\nlate_rescan_ms = 1000\n",
+        &["hints.late_rescan_ms", "later than hints.early_rescan_ms"],
+    ),
 ];
 
 #[test]
@@ -858,5 +866,40 @@ fn enhanced_ui_apps_edits_reload() {
     assert_eq!(
         file.config().macos.enhanced_ui_apps,
         nomouse_core::config::CHROMIUM_BROWSERS
+    );
+}
+
+/// `hints.early_rescan_ms` and `hints.late_rescan_ms` set the label stages of the next
+/// activation, also when edited while the daemon runs.
+#[test]
+fn rescan_stages_come_from_the_file_and_reload() {
+    assert_eq!(
+        settings_for("").rescans,
+        nomouse_core::RescanSchedule::new(1000, 3000)
+    );
+    let scratch = Scratch::new("reload-rescans");
+    let path = scratch.write("[hints]\nearly_rescan_ms = 500\nlate_rescan_ms = 2000\n");
+    let mut file = ConfigFile::open(&path).unwrap();
+    assert_eq!(
+        crate::settings(file.config()).unwrap().rescans.times(),
+        [
+            Duration::ZERO,
+            Duration::from_millis(500),
+            Duration::from_millis(2000)
+        ]
+    );
+    std::fs::write(
+        &path,
+        "[hints]\nearly_rescan_ms = 0\nlate_rescan_ms = 4000\n",
+    )
+    .unwrap();
+    let deadline = Instant::now() + WATCH_INTERVAL * 3;
+    while !crate::file_changed(&mut file) {
+        assert!(Instant::now() < deadline, "the edit was never noticed");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        crate::settings(file.config()).unwrap().rescans.times(),
+        [Duration::ZERO, Duration::from_millis(4000)]
     );
 }
