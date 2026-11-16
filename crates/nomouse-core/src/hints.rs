@@ -248,7 +248,8 @@ fn pair_up(shown: &[Hint], elements: &[Element]) -> (Vec<Option<usize>>, Vec<boo
 /// How far the page moved since `shown` were labelled, when it did: the most common move of
 /// the targets whose role, name and size are those of exactly one hint and exactly one
 /// element (a named link; an unnamed file name cell, whose width follows its text), ties
-/// going to the smallest move. `None` when none of them moved.
+/// going to the smallest move. `None` unless at least two of them moved that way: one target
+/// that went and another like it that came elsewhere is no scroll.
 fn scroll_offset(shown: &[Hint], elements: &[Element]) -> Option<(i32, i32)> {
     type Signature<'a> = (Role, &'a str, u32, u32);
     fn by_signature<'a>(
@@ -277,6 +278,7 @@ fn scroll_offset(shown: &[Hint], elements: &[Element]) -> Option<(i32, i32)> {
     }
     moves
         .into_iter()
+        .filter(|&(_, count)| count >= 2)
         .max_by_key(|&((dx, dy), count)| {
             let size = i64::from(dx).abs() + i64::from(dy).abs();
             (count, std::cmp::Reverse(size), std::cmp::Reverse((dx, dy)))
@@ -447,8 +449,9 @@ mod tests {
             ],
         );
         assert_eq!(labels(&first), [("more", "a"), ("more", "s"), ("", "d")]);
-        // An image above loads and pushes everything down 200 px: the links already have their
-        // labels (the unnamed one moved as far as the page did), a third "more" is new.
+        // An image above loads and pushes everything down 200 px: the named links already have
+        // their labels, a third "more" and the unnamed one are new targets (one unnamed link
+        // alone tells nothing about how far the page moved).
         let moved = vec![
             link(4, "more", 0, 200),
             link(5, "more", 0, 210),
@@ -456,8 +459,8 @@ mod tests {
             link(7, "more", 0, 230),
         ];
         let added = merge_hints(&alphabet, &first, moved);
-        assert_eq!(labels(&added), [("more", "f")]);
-        assert_eq!(added[0].element.bounds, Rect::new(0, 230, 5, 5));
+        assert_eq!(labels(&added), [("", "f"), ("more", "g")]);
+        assert_eq!(added[1].element.bounds, Rect::new(0, 230, 5, 5));
     }
 
     #[test]
