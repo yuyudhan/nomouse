@@ -147,5 +147,8 @@ stages (in range, in order).
 
 ## Logs
 
-Set `NOMOUSE_LOG=info` (or `debug`) in the environment the daemon starts from to log to stderr,
-including why a reloaded file was rejected.
+The daemon logs timings and events (no element names, no keys) to `~/Library/Logs/nomouse/nomouse.log`
+on macOS (`~/.local/state/nomouse/nomouse.log` on Linux, `%LOCALAPPDATA%\nomouse\logs` on
+Windows), kept under 1 MiB with three older files beside it. Set `NOMOUSE_LOG=debug` in the
+environment the daemon starts from for more, or `NOMOUSE_LOG=info` for stderr logs from the
+other commands, including why a reloaded file was rejected.

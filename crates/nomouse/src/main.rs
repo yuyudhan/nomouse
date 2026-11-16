@@ -2,6 +2,7 @@
 //! the app launcher's `launch`, and configuration commands.
 #![forbid(unsafe_code)]
 
+mod daemon_log;
 mod desktop;
 mod first_run;
 #[cfg(unix)]
@@ -169,25 +170,43 @@ enum ConfigCommand {
     },
 }
 
-fn init_logging() {
-    let level = std::env::var("NOMOUSE_LOG")
+/// Logs to stderr at `NOMOUSE_LOG` (default `warn`). The daemon also logs to its rotating
+/// file ([`daemon_log`]), at `NOMOUSE_LOG` or else `info`: timings and events, never keys.
+fn init_logging(daemon: bool) {
+    use tracing_subscriber::filter::LevelFilter;
+    use tracing_subscriber::fmt::writer::MakeWriterExt as _;
+
+    let configured = std::env::var("NOMOUSE_LOG")
         .ok()
-        .and_then(|value| {
-            value
-                .parse::<tracing_subscriber::filter::LevelFilter>()
-                .ok()
-        })
-        .unwrap_or(tracing_subscriber::filter::LevelFilter::WARN);
-    tracing_subscriber::fmt()
-        .with_max_level(level)
-        .with_writer(std::io::stderr)
-        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
-        .init();
+        .and_then(|value| value.parse::<LevelFilter>().ok());
+    let file = daemon.then(daemon_log::path).flatten().map(|path| {
+        daemon_log::RotatingFile::open(path.clone(), daemon_log::MAX_BYTES, daemon_log::KEEP)
+            .map_err(|error| format!("{}: {error}", path.display()))
+    });
+    match file {
+        Some(Ok(file)) => {
+            tracing_subscriber::fmt()
+                .with_max_level(configured.unwrap_or(LevelFilter::INFO))
+                .with_writer(std::io::stderr.and(std::sync::Mutex::new(file)))
+                .with_ansi(false)
+                .init();
+        }
+        failed => {
+            tracing_subscriber::fmt()
+                .with_max_level(configured.unwrap_or(LevelFilter::WARN))
+                .with_writer(std::io::stderr)
+                .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+                .init();
+            if let Some(Err(error)) = failed {
+                tracing::warn!("no log file: {error}");
+            }
+        }
+    }
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    init_logging();
+    init_logging(matches!(cli.command, None | Some(Command::Daemon)));
     match run_command(cli.command.unwrap_or(Command::Daemon), cli.standalone) {
         Ok(text) => {
             let mut stdout = std::io::stdout().lock();

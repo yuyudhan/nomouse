@@ -272,7 +272,7 @@ fn rescan(
         }
     };
     if session.rescan(elements, platform.last_scan_complete()) {
-        tracing::debug!("re-scan: {} hints", session.hints().len());
+        tracing::info!("re-scan drew labels: {} hints", session.hints().len());
         draw(platform, session)?;
     }
     Ok(())

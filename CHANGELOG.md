@@ -7,6 +7,13 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Added
+
+- The daemon keeps a log file: `~/Library/Logs/nomouse/nomouse.log` on macOS
+  (`~/.local/state/nomouse/` on Linux, `%LOCALAPPDATA%\nomouse\logs` on Windows), with when
+  labels were shown and each batch drawn, but no element names or keys. It is rotated at 1 MiB
+  and three older files are kept. nomouse.app's daemon used to log nowhere.
+
 ## [0.1.20] - 2026-11-16
 
 0.1.20 supersedes 0.1.19, which was tagged but never published, so it also brings 0.1.19's

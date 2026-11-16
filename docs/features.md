@@ -129,7 +129,7 @@ neither layer-shell, virtual pointer nor client hotkeys, so nomouse refuses ther
 | NM-APP-01 | Background daemon, single instance, command socket | daemon + socket | daemon + socket | P0 | done (all; Windows without socket) |
 | NM-APP-02 | `nomouse doctor`: platform backend, permissions, display server, compositor abilities, config validity | AX trust, synthetic input, Input Monitoring | display server, AT-SPI bus and switch, compositor globals, uinput | P0 | done (all) |
 | NM-APP-03 | Config in `~/.config/nomouse/config.toml` (`$XDG_CONFIG_HOME` honoured) with defaults for every key, validated, `config init|path|show|check` | XDG path | XDG path | P0 | done (Windows: `%APPDATA%`) |
-| NM-APP-04 | Logging: `NOMOUSE_LOG=info|debug` to stderr | `tracing` | `tracing` | P0 | done (all) |
+| NM-APP-04 | Logging: `NOMOUSE_LOG=info|debug` to stderr; the daemon also to a rotating file (1 MiB, 3 kept) | `tracing` | `tracing` | P0 | done (all) |
 | NM-APP-05 | Ignored apps: no activation in listed apps (bundle id / app id / process name) | frontmost bundle id or executable name | `WM_CLASS` and `/proc/<pid>/comm` (X11); compositor app id, `WM_CLASS` (Sway, Hyprland) | P1 | done / done / done (Sway, Hyprland) / missing |
 | NM-APP-06 | Per-app settings overrides (alphabet, action, scope, semantic click) | bundle id | app id | P2 | partial (only `macos.enhanced_ui_apps`) |
 | NM-APP-07 | Config reload without restarting the daemon (file watch or `nomouse reload`) | mtime watch / socket | mtime watch / socket | P1 | done / done / done / partial (file watch only, not run) |

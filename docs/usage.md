@@ -199,4 +199,5 @@ daemon, the mode runs in the command's own process.
 | `nomouse --version` | print the version (`(dev)` after it for a development build) |
 
 `--standalone` before or after a mode runs it in the calling process even when a daemon runs.
-Set `NOMOUSE_LOG=info` or `debug` for logs on stderr.
+Set `NOMOUSE_LOG=info` or `debug` for logs on stderr; the daemon also keeps a log file (see
+[configuration](configuration.md#logs)).

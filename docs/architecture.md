@@ -367,9 +367,13 @@ How a save writes the file:
 ## Logging
 
 `tracing` to stderr, level from `NOMOUSE_LOG` (`error`, `warn` (default), `info`, `debug`,
-`trace`), ANSI colours only on a terminal. The daemon run by launchd, systemd or XDG autostart
-inherits stderr into that service manager's log (`log show`, `journalctl --user`). Rule for new
-log lines: element names and typed keys only at `debug` or below, because they can be private.
+`trace`), ANSI colours only on a terminal. The daemon also writes to its own file
+(`crates/nomouse/src/daemon_log.rs`), at `NOMOUSE_LOG` or else `info`: macOS
+`~/Library/Logs/nomouse/nomouse.log`, Linux `$XDG_STATE_HOME/nomouse/nomouse.log` (else
+`~/.local/state/...`), Windows `%LOCALAPPDATA%\nomouse\logs\nomouse.log` (`nomouse-dev` for a
+development build). Before a write would take it past 1 MiB it is moved to `nomouse.log.1`, the
+older ones one further, and `.3` dropped. Rule for new log lines: element names and typed keys
+only at `debug` or below, because they can be private; `info` is timings and events.
 
 ## Permissions and onboarding
 
