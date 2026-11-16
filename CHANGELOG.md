@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-11-16
+
 ### Added
 
 - Labels are refreshed every 3 s after the 1, 2 and 3 s batches (at 6, 9, 12 s, ...) for as
