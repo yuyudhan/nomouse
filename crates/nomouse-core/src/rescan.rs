@@ -112,11 +112,93 @@ impl Rescans {
     }
 }
 
+/// The least time between two scans a change of the tree starts: a loading page reports many
+/// changes in a row, and each scan is a walk of the window.
+pub const CHANGE_GAP: Duration = Duration::from_millis(200);
+
+/// Scans asked for by the platform reporting that the tree changed
+/// ([`crate::InputEvent::TreeChanged`]: a page loaded, elements went away): one runs as soon
+/// as the last scan is at least [`CHANGE_GAP`] old, so a page that arrives between two
+/// scheduled re-scans gets its labels at once rather than at the next stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Changes {
+    /// When the last scan started.
+    last_scan: Instant,
+    /// When the first change not yet covered by a scan was reported.
+    changed: Option<Instant>,
+}
+
+impl Changes {
+    /// No change pending; the last scan started at `scanned`.
+    pub const fn new(scanned: Instant) -> Self {
+        Self {
+            last_scan: scanned,
+            changed: None,
+        }
+    }
+
+    /// The tree changed at `now`.
+    pub fn changed(&mut self, now: Instant) {
+        self.changed.get_or_insert(now);
+    }
+
+    /// A scan started at `at`: it covers every change reported before it.
+    pub fn scanned(&mut self, at: Instant) {
+        self.last_scan = at;
+        if self.changed.is_some_and(|changed| changed <= at) {
+            self.changed = None;
+        }
+    }
+
+    /// Whether a scan for a change is due at `now`.
+    pub fn is_due(&self, now: Instant) -> bool {
+        self.until_due(now).is_some_and(|wait| wait.is_zero())
+    }
+
+    /// How long from `now` until a scan for a change is due (zero when one is due); `None`
+    /// when no change is pending.
+    pub fn until_due(&self, now: Instant) -> Option<Duration> {
+        self.changed
+            .map(|_| (self.last_scan + CHANGE_GAP).saturating_duration_since(now))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const MS: Duration = Duration::from_millis(1);
+
+    #[test]
+    fn a_change_scans_at_once_unless_the_last_scan_is_recent() {
+        let start = Instant::now();
+        let mut changes = Changes::new(start);
+        assert!(!changes.is_due(start + 5000 * MS), "no change, no scan");
+        assert_eq!(changes.until_due(start + 5000 * MS), None);
+        // A change 400 ms after the last scan: due at once.
+        changes.changed(start + 400 * MS);
+        assert!(changes.is_due(start + 400 * MS));
+        changes.scanned(start + 400 * MS);
+        assert!(!changes.is_due(start + 400 * MS));
+        // Changes 50 ms after a scan wait until it is 200 ms old, then one scan covers them.
+        changes.changed(start + 450 * MS);
+        changes.changed(start + 500 * MS);
+        assert_eq!(changes.until_due(start + 450 * MS), Some(150 * MS));
+        assert!(!changes.is_due(start + 599 * MS));
+        assert!(changes.is_due(start + 600 * MS));
+        changes.scanned(start + 600 * MS);
+        assert_eq!(changes.until_due(start + 600 * MS), None);
+    }
+
+    #[test]
+    fn a_scan_that_started_before_a_change_does_not_cover_it() {
+        let start = Instant::now();
+        let mut changes = Changes::new(start);
+        changes.changed(start + 1100 * MS);
+        // The 1 s stage started before the change: the change still needs its own scan.
+        changes.scanned(start + 1000 * MS);
+        assert!(changes.is_due(start + 1200 * MS));
+    }
 
     #[test]
     fn rescans_come_at_once_then_every_second_until_three_seconds() {

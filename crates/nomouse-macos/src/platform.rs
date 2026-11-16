@@ -15,6 +15,7 @@ use nomouse_core::{
 use nomouse_sys_macos::app::{self, App};
 use nomouse_sys_macos::ax::{AxElement, AxValue, is_process_trusted};
 use nomouse_sys_macos::input::{self, MouseEventKind};
+use nomouse_sys_macos::observe::AppObserver;
 use nomouse_sys_macos::overlay::{Overlay as Panels, label_sizer};
 use nomouse_sys_macos::tap::EventTap;
 use nomouse_sys_macos::{
@@ -55,6 +56,16 @@ const REVEAL_STEADY: u32 = 8;
 /// show at once, the hint session's immediate re-scan adds the rest.
 const FIRST_PASS: Duration = Duration::from_millis(100);
 
+/// The notifications of a web app that make hint mode scan again while labels are shown: a
+/// page finished loading, its layout changed, elements went away, or another window came
+/// forward.
+const TREE_NOTIFICATIONS: &[&str] = &[
+    "AXLoadComplete",
+    "AXLayoutChanged",
+    "AXUIElementDestroyed",
+    "AXFocusedWindowChanged",
+];
+
 /// One element of the last snapshot, kept for semantic clicks and for scrolling off-screen
 /// elements into view.
 struct Snapshot {
@@ -93,6 +104,9 @@ pub struct MacPlatform {
     limits: Limits,
     /// When the frontmost web app's page is next read to keep its tree built.
     warm: Ticker,
+    /// Notifications of the frontmost web app, reported as [`InputEvent::TreeChanged`] while
+    /// labels are shown.
+    observer: Option<AppObserver>,
 }
 
 impl std::fmt::Debug for MacPlatform {
@@ -152,6 +166,7 @@ impl MacPlatform {
                 ..Limits::default()
             },
             warm: Ticker::default(),
+            observer: None,
         };
         platform.warm_up();
         // A browser frontmost at start gets its page tree switched on and read now.
@@ -181,9 +196,9 @@ impl MacPlatform {
     }
 
     /// While a listed web app (a Chromium browser, an Electron app) is frontmost: switches its
-    /// page tree on if it is off and, about once a second ([`crate::warm`]), reads the page's
-    /// web area, so the tree is still built when the hotkey comes and the first pass labels
-    /// the page. Other apps are left alone.
+    /// page tree on if it is off, watches its notifications ([`Self::watch`]) and, about once
+    /// a second ([`crate::warm`]), reads the page's web area, so the tree is still built when
+    /// the hotkey comes and the first pass labels the page. Other apps are left alone.
     fn keep_page_warm(&mut self) {
         if !self.warm.take_due(Instant::now()) {
             return;
@@ -195,8 +210,10 @@ impl MacPlatform {
             return;
         };
         if !is_web_app(&bundle_id, &self.enhanced_ui_apps) {
+            self.observer = None;
             return;
         }
+        self.watch(pid);
         let listed = self.enhanced_ui_apps.contains(&bundle_id);
         if self.prepare_app(pid, listed) {
             self.switched_at.insert(pid, Instant::now());
@@ -211,6 +228,26 @@ impl MacPlatform {
                 page.is_some()
             );
         }
+    }
+
+    /// Watches web app `pid`'s notifications of a page loading or changing
+    /// ([`TREE_NOTIFICATIONS`]), replacing the watch of another app. A failure is logged and
+    /// leaves the app unwatched; the timed re-scans still find its page.
+    fn watch(&mut self, pid: i32) {
+        if self
+            .observer
+            .as_ref()
+            .is_some_and(|observer| observer.pid() == pid)
+        {
+            return;
+        }
+        self.observer = match AppObserver::new(pid, TREE_NOTIFICATIONS) {
+            Ok(observer) => Some(observer),
+            Err(error) => {
+                tracing::debug!("cannot watch pid {pid} for page changes: {error}");
+                None
+            }
+        };
     }
 
     /// Asks Chromium and Electron apps to build their accessibility tree: `AXManualAccessibility`
@@ -505,6 +542,10 @@ impl MacPlatform {
             .as_ref()
             .and_then(|(_, bundle_id, _)| bundle_id.as_deref())
             .is_some_and(|id| is_web_app(id, &self.enhanced_ui_apps));
+        if web && let Some(&(pid, _, _)) = target.as_ref() {
+            // Its page arriving later is then scanned at once ([`InputEvent::TreeChanged`]).
+            self.watch(pid);
+        }
         let (has_window, result) = self.walk_once(set, frontmost, limits, quick && web)?;
         if scope == Scope::FocusedWindow && !has_window && result.found.is_empty() {
             return Err(PlatformError::NoFocusedWindow);
@@ -717,6 +758,15 @@ impl HotkeySource for MacPlatform {
                         }
                     }
                 }
+            }
+            // A page that loaded (or elements that went) while labels are up: scan now.
+            if self
+                .observer
+                .as_ref()
+                .is_some_and(AppObserver::take_changed)
+                && self.panels.is_visible()
+            {
+                return Ok(Some(InputEvent::TreeChanged));
             }
             let now = Instant::now();
             if now >= deadline {

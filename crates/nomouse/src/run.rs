@@ -3,8 +3,9 @@
 use std::time::{Duration, Instant};
 
 use nomouse_core::{
-    Action, ActionKind, Alphabet, Frame, Hint, HintSession, InputEvent, KeyBindings, Platform,
-    PlatformError, Rect, RescanSchedule, Rescans, Scope, ScrollEvent, ScrollSession, SessionEvent,
+    Action, ActionKind, Alphabet, Changes, Frame, Hint, HintSession, InputEvent, KeyBindings,
+    Platform, PlatformError, Rect, RescanSchedule, Rescans, Scope, ScrollEvent, ScrollSession,
+    SessionEvent,
 };
 
 /// How long continuous mode waits after a click before re-scanning, so the app can update.
@@ -90,6 +91,8 @@ enum Wait {
     Dismissed,
     /// Nothing within the timeout.
     Timeout,
+    /// The tree changed ([`InputEvent::TreeChanged`]).
+    Changed,
 }
 
 /// Waits up to `timeout` for a key; a hotkey, or `dismissed()` turning true meanwhile, ends
@@ -102,9 +105,27 @@ fn wait(
     Ok(match platform.next_event(timeout)? {
         Some(InputEvent::Key(key)) => Wait::Key(key),
         Some(InputEvent::Hotkey(_)) => Wait::Dismissed,
+        Some(InputEvent::TreeChanged) => Wait::Changed,
         None if dismissed() => Wait::Dismissed,
         None => Wait::Timeout,
     })
+}
+
+/// [`wait`] for a key only: tree changes are let pass until `timeout` is up.
+fn wait_for_key(
+    platform: &mut dyn Platform,
+    timeout: Duration,
+    dismissed: &dyn Fn() -> bool,
+) -> Result<Wait, PlatformError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match wait(platform, left, dismissed)? {
+            Wait::Changed if !left.is_zero() => {}
+            Wait::Changed => return Ok(Wait::Timeout),
+            other => return Ok(other),
+        }
+    }
 }
 
 /// How an activation ended.
@@ -179,7 +200,7 @@ fn scroll_mode(
         let key = match wait(platform, POLL, dismissed)? {
             Wait::Key(key) => key,
             Wait::Dismissed => return Ok(scrolls),
-            Wait::Timeout => continue,
+            Wait::Timeout | Wait::Changed => continue,
         };
         match scroll.key(key) {
             ScrollEvent::Done => return Ok(scrolls),
@@ -257,6 +278,33 @@ fn rescan(
     Ok(())
 }
 
+/// When the labels are scanned again: the re-scan stages ([`Rescans`]) and the tree changes
+/// the platform reports ([`Changes`]).
+struct Stages {
+    rescans: Rescans,
+    changes: Changes,
+}
+
+impl Stages {
+    /// Whether a stage or a change scan is due at `at`; a due one counts as started.
+    fn take_due(&mut self, at: Instant) -> bool {
+        let due = self.rescans.take_due(at) || self.changes.is_due(at);
+        if due {
+            self.changes.scanned(at);
+        }
+        due
+    }
+
+    /// How long to wait for a key from `at`: until the next stage or change scan, and at
+    /// most [`POLL`].
+    fn wake(&self, at: Instant) -> Duration {
+        [self.rescans.until_next(at), self.changes.until_due(at)]
+            .into_iter()
+            .flatten()
+            .fold(POLL, Duration::min)
+    }
+}
+
 /// Runs one activation in `mode`. `started` is when the trigger arrived, for the
 /// hotkey-to-labels timing logged at info level and the re-scans ([`Rescans`]): the labels of
 /// a quick first pass show at once ([`nomouse_core::ElementSource::first_elements`]), then the
@@ -326,19 +374,25 @@ fn activate_on_clock(
         draw(platform, &session)?;
         scans += 1;
         log_scan(session.hints(), scans, started);
-        let mut rescans = Rescans::new(shown_from, settings.rescans);
+        let mut stages = Stages {
+            rescans: Rescans::new(shown_from, settings.rescans),
+            changes: Changes::new(now()),
+        };
         let action = loop {
-            if rescans.take_due(now()) {
+            if stages.take_due(now()) {
                 rescan(platform, settings, &mut session)?;
             }
-            if session.is_empty() && !rescans.is_pending() {
+            if session.is_empty() && !stages.rescans.is_pending() {
                 return Ok(emptied(performed));
             }
-            let timeout = rescans.until_next(now()).map_or(POLL, |due| due.min(POLL));
-            let key = match wait(platform, timeout, dismissed)? {
+            let key = match wait(platform, stages.wake(now()), dismissed)? {
                 Wait::Key(key) => key,
                 Wait::Dismissed => return Ok(ended(performed)),
                 Wait::Timeout => continue,
+                Wait::Changed => {
+                    stages.changes.changed(now());
+                    continue;
+                }
             };
             match session.key(key) {
                 SessionEvent::Rejected => {}
@@ -362,14 +416,16 @@ fn activate_on_clock(
                         .map_or(Ok(0), |scroll| scroll_mode(platform, scroll, dismissed))?;
                     return Ok(Outcome::Performed(performed + scrolls));
                 }
-                SessionEvent::Armed(single) => match wait(platform, DOUBLE_PRESS, dismissed)? {
-                    Wait::Key(key) => match session.key(key) {
-                        SessionEvent::Perform(action) => break action,
-                        _ => return Ok(ended(performed)),
-                    },
-                    Wait::Dismissed => return Ok(ended(performed)),
-                    Wait::Timeout => break session.expire().unwrap_or(single),
-                },
+                SessionEvent::Armed(single) => {
+                    match wait_for_key(platform, DOUBLE_PRESS, dismissed)? {
+                        Wait::Key(key) => match session.key(key) {
+                            SessionEvent::Perform(action) => break action,
+                            _ => return Ok(ended(performed)),
+                        },
+                        Wait::Dismissed => return Ok(ended(performed)),
+                        Wait::Timeout | Wait::Changed => break session.expire().unwrap_or(single),
+                    }
+                }
                 SessionEvent::Perform(action) => break action,
             }
         };
@@ -428,6 +484,11 @@ mod tests {
         pages: Vec<(Duration, Vec<Element>)>,
         /// The labels of each frame drawn, with their elements' centres.
         frames: Vec<Vec<(String, Point)>>,
+        /// When each frame was drawn, on `clock`.
+        drawn_at: Vec<Duration>,
+        /// How long one scan takes: a slow Accessibility tree. The clock moves on by this much
+        /// after each scan has read its page.
+        scan_cost: Duration,
     }
 
     impl ElementSource for Fake {
@@ -440,8 +501,10 @@ mod tests {
                 .iter()
                 .rev()
                 .find(|(at, _)| *at <= now)
-                .map_or(&self.elements, |(_, elements)| elements);
-            Ok(page.clone())
+                .map_or(&self.elements, |(_, elements)| elements)
+                .clone();
+            self.clock.set(now + self.scan_cost);
+            Ok(page)
         }
 
         fn focused_app(&mut self) -> Result<Option<AppIdentity>, PlatformError> {
@@ -452,6 +515,7 @@ mod tests {
     impl Overlay for Fake {
         fn show(&mut self, hints: &[Hint], typed: &str) -> Result<(), PlatformError> {
             self.shown.push((hints.len(), typed.to_owned()));
+            self.drawn_at.push(self.clock.get());
             self.frames.push(
                 hints
                     .iter()
@@ -525,13 +589,14 @@ mod tests {
             })
             .collect();
         // `!` Escape, `<` Backspace, `=` Enter, `>` Tab, `^` Shift-Tab, `+` Shift-Enter,
-        // `@` an activation hotkey, `_` a poll that times out, an upper-case letter that letter
-        // with Shift; anything else types itself.
+        // `@` an activation hotkey, `~` the tree changed, `_` a poll that times out, an
+        // upper-case letter that letter with Shift; anything else types itself.
         let keys = keys
             .chars()
             .map(|c| {
                 let key = match c {
                     '@' => return Some(InputEvent::Hotkey(HotkeyId(1))),
+                    '~' => return Some(InputEvent::TreeChanged),
                     '_' => return None,
                     '!' => KeyPress::Escape.into(),
                     '<' => KeyPress::Backspace.into(),
@@ -1140,6 +1205,79 @@ mod tests {
                 "{mode:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_page_that_arrives_between_stages_is_labelled_when_the_tree_reports_it() {
+        for mode in [
+            Mode::Once(ActionKind::Click),
+            Mode::Continuous(ActionKind::Click),
+        ] {
+            // The page arrives at 300 ms; the platform says so at 400 ms (8 polls of 50 ms).
+            let mut p = fake(2, &format!("{}~{}!", "_".repeat(8), "_".repeat(4)));
+            let mut loaded = p.elements.clone();
+            loaded.push(button(7, 50, 0));
+            p.pages = vec![(ms(300), loaded)];
+            assert_eq!(run(&mut p, mode), Ok(Outcome::Cancelled), "{mode:?}");
+            assert_eq!(p.scanned_at, [ms(0), ms(0), ms(400)], "{mode:?}");
+            assert_eq!(p.drawn_at, [ms(0), ms(400)], "{mode:?}");
+            assert_eq!(
+                p.frames.last(),
+                Some(&frame(&[("a", 0), ("s", 100), ("d", 50)])),
+                "{mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn changes_right_after_a_scan_wait_for_the_gap_and_share_one_scan() {
+        // Changes at 50, 100 and 150 ms after the scans at 0: one scan at 200 ms.
+        let mut p = fake(2, "_~_~_~____!");
+        assert_eq!(
+            run(&mut p, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Cancelled)
+        );
+        assert_eq!(p.scanned_at, [ms(0), ms(0), ms(200)]);
+    }
+
+    #[test]
+    fn a_change_while_return_is_armed_does_not_end_the_double_press_wait() {
+        let homerow = Settings {
+            keys: KeyBindings::Homerow,
+            ..settings()
+        };
+        // Homerow: `a` highlights, Return arms, a change arrives, the second Return double-clicks.
+        let mut p = fake(3, "a=~=");
+        assert_eq!(
+            run_with(&mut p, &homerow, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Performed(1))
+        );
+        assert!(matches!(
+            p.performed.as_slice(),
+            [Action::Click { count: 2, .. }]
+        ));
+    }
+
+    #[test]
+    fn a_slow_tree_still_draws_each_stage_one_scan_after_its_tick() {
+        // Every scan takes 300 ms, and a target arrives just before each stage.
+        let mut p = fake(2, &after_polls(80, "!"));
+        p.scan_cost = ms(300);
+        let mut page = p.elements.clone();
+        let mut pages = Vec::new();
+        for (id, at) in [(7, 900), (8, 1900), (9, 2900)] {
+            page.push(button(id, i32::try_from(id).unwrap() * 100, 0));
+            pages.push((ms(at), page.clone()));
+        }
+        p.pages = pages;
+        assert_eq!(
+            run(&mut p, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Cancelled)
+        );
+        assert_eq!(p.scanned_at, [ms(0), ms(300), ms(1000), ms(2000), ms(3000)]);
+        // The first labels at 300 ms, then one batch per stage as soon as its scan is read.
+        assert_eq!(p.drawn_at, [ms(300), ms(1300), ms(2300), ms(3300)]);
+        assert_eq!(p.frames.last().map(Vec::len), Some(5));
     }
 
     #[test]

@@ -61,7 +61,10 @@ Every method is blocking and runs on the event-loop thread; errors are `Platform
    browser's page before its toolbar, see `nomouse_macos::warm`) whose
    labels show at once. Then `nomouse_core::Rescans` runs a `RescanSchedule`: right after the
    first scan, then every `hints.early_rescan_ms` up to `hints.late_rescan_ms` after the hotkey
-   (1, 2 and 3 s by default), or after the scan that follows each continuous-mode click. Each
+   (1, 2 and 3 s by default), or after the scan that follows each continuous-mode click; and
+   `nomouse_core::Changes` adds a scan whenever the platform reports `InputEvent::TreeChanged`
+   (macOS: `AXObserver` notifications of the frontmost web app, `nomouse_sys_macos::observe`),
+   at most one per `CHANGE_GAP` (200 ms). Each
    re-scan goes through `HintSession::rescan`, whose `merge_hints` labels only the targets no
    shown hint has (same role, name and bounds, else same role and name) with the shortest
    free labels; shown hints never change or go. `assign_hints` and `merge_hints` always leave

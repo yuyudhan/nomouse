@@ -24,6 +24,8 @@ pub mod layout;
 #[cfg(target_os = "macos")]
 pub mod login;
 #[cfg(target_os = "macos")]
+pub mod observe;
+#[cfg(target_os = "macos")]
 pub mod overlay;
 #[cfg(target_os = "macos")]
 pub mod tap;

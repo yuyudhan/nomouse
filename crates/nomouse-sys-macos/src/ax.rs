@@ -76,6 +76,11 @@ impl AxElement {
         Self(unsafe { AXUIElement::new_application(pid) })
     }
 
+    /// The underlying `AXUIElement`, for other wrappers in this crate.
+    pub(crate) fn raw(&self) -> &AXUIElement {
+        &self.0
+    }
+
     /// Reads one attribute; `Ok(None)` when the element lacks it or it has no value.
     ///
     /// # Errors

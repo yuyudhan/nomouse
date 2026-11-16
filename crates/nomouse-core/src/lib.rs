@@ -58,7 +58,7 @@ pub use platform::{
     ElementSource, Frame, HotkeyId, HotkeySource, InputEvent, InputInjector, Overlay, Platform,
     PlatformError, Scope,
 };
-pub use rescan::{RescanSchedule, Rescans};
+pub use rescan::{CHANGE_GAP, Changes, RescanSchedule, Rescans};
 pub use scroll::{ScrollEvent, ScrollSession};
 pub use session::{HintSession, KeyBindings, SessionEvent};
 pub use settings::{Settings, SettingsError};

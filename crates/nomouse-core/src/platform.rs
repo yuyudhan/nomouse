@@ -153,6 +153,10 @@ pub enum InputEvent {
     Hotkey(HotkeyId),
     /// A key was pressed while the [`Overlay`] held the keyboard.
     Key(KeyEvent),
+    /// The accessibility tree of the app the labels are over changed (a page finished
+    /// loading, elements went away), reported only while labels are shown: hint mode scans
+    /// again ([`crate::Changes`]) instead of waiting for its next re-scan.
+    TreeChanged,
 }
 
 /// Registers global hotkeys and delivers input events.

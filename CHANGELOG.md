@@ -20,6 +20,10 @@ the release's section; add entries under Unreleased as changes land.
   pass walks the page before the toolbar.
 - macOS: nomouse sets `AXManualAccessibility` on Chromium browsers at start, before every
   scan and once a second while one is frontmost, not only once per process.
+- macOS: while labels are shown over a browser, a page that finishes loading (after a click
+  in continuous mode, say) gets its labels as soon as the browser reports it (Accessibility
+  notifications: load complete, layout changed, element gone, window changed), at most one
+  scan per 200 ms, instead of at the next 1 s stage. Labels already shown stay as they are.
 
 ### Changed
 
