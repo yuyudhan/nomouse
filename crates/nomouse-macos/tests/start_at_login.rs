@@ -10,7 +10,10 @@
 //! removed, whatever happened.
 //!
 //! It needs the user's login session (the login item belongs to the user, not to a build
-//! directory), so it skips on GitHub Actions' macOS runners, which have none.
+//! directory), so it skips on GitHub Actions' macOS runners, which have none. And it really
+//! registers a login item, which macOS announces with a notification every time, so on a
+//! developer's Mac it runs only when asked: `just test-login-item` (sets `OPT_IN`), part of
+//! the macOS release checklist in CONTRIBUTING.md.
 
 use std::io::Write as _;
 use std::process::ExitCode;
@@ -50,6 +53,8 @@ mod macos {
     const BUNDLE_ID: &str = "com.yuyudhan.nomouse.logintest";
     /// How long the system may take to show a change.
     const DEADLINE: Duration = Duration::from_secs(10);
+    /// Set to run the test: registering a login item notifies the user every time.
+    pub(super) const OPT_IN: &str = "NOMOUSE_LOGIN_ITEM_TEST";
 
     pub(super) fn main() -> ExitCode {
         if std::env::var_os(CHILD).is_some() {
@@ -59,6 +64,13 @@ mod macos {
         }
         if std::env::var_os("GITHUB_ACTIONS").is_some() {
             note("SKIP: a login item needs the user's login session; GitHub Actions has none");
+            return ExitCode::SUCCESS;
+        }
+        if std::env::var_os(OPT_IN).is_none() {
+            note(&format!(
+                "SKIP: registers a real login item (macOS notifies each time); \
+                 run it with `just test-login-item` ({OPT_IN}=1)"
+            ));
             return ExitCode::SUCCESS;
         }
         let dir =

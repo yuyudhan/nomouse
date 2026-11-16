@@ -32,6 +32,13 @@ pub fn needs_enhancing(listed: bool, current: Option<bool>) -> bool {
     listed && current != Some(true)
 }
 
+/// Whether `AXManualAccessibility` is set before a scan: every time for a listed app (Chromium
+/// can drop the switch and the page's tree with it, and setting it again costs one call), once
+/// per process (`first_time`) for any other app, as Electron's switch.
+pub const fn sets_manual_accessibility(listed: bool, first_time: bool) -> bool {
+    listed || first_time
+}
+
 /// Whether the app `bundle_id` draws its content in web areas: a known Chromium browser, or
 /// any app the user listed (Electron apps).
 pub fn is_web_app(bundle_id: &str, listed: &[String]) -> bool {
@@ -127,6 +134,17 @@ mod tests {
         assert!(!needs_enhancing(true, Some(true)));
         assert!(!needs_enhancing(false, None));
         assert!(!needs_enhancing(false, Some(false)));
+    }
+
+    #[test]
+    fn listed_apps_get_manual_accessibility_every_time_others_once() {
+        assert!(sets_manual_accessibility(true, true));
+        assert!(
+            sets_manual_accessibility(true, false),
+            "Chrome keeps its page tree only while the switch stays set"
+        );
+        assert!(sets_manual_accessibility(false, true));
+        assert!(!sets_manual_accessibility(false, false));
     }
 
     #[test]

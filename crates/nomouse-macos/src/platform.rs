@@ -22,7 +22,9 @@ use nomouse_sys_macos::{
 };
 
 use crate::ax_tree::{LiveTree, RootSet, enhanced_ui, frame_of, not_trusted, roots};
-use crate::enhance::{is_web_app, missing_web_area, needs_enhancing, reports_missing_web};
+use crate::enhance::{
+    is_web_app, missing_web_area, needs_enhancing, reports_missing_web, sets_manual_accessibility,
+};
 use crate::geometry::{
     label_corner, lerp, screen_rect, to_panel, to_panel_rects, union, wheel_deltas, whole_points,
 };
@@ -129,7 +131,7 @@ impl MacPlatform {
             themed.appearance(),
             themed.background()
         );
-        let platform = Self {
+        let mut platform = Self {
             app,
             tap,
             panels: Panels::new(),
@@ -152,6 +154,8 @@ impl MacPlatform {
             warm: Ticker::default(),
         };
         platform.warm_up();
+        // A browser frontmost at start gets its page tree switched on and read now.
+        platform.keep_page_warm();
         Ok(platform)
     }
 
@@ -209,18 +213,22 @@ impl MacPlatform {
         }
     }
 
-    /// Asks Chromium and Electron apps to build their accessibility tree: Electron's switch
-    /// once per process, and `AXEnhancedUserInterface` for listed apps (`listed`) before every
-    /// scan whenever the app does not report it on (a relaunched Chromium starts with it off).
-    /// Returns whether the attribute was just switched on, judged by reading it back: Chrome
-    /// 157 answers the set with `kAXErrorNotImplemented` although it takes effect.
+    /// Asks Chromium and Electron apps to build their accessibility tree: `AXManualAccessibility`
+    /// (which Chromium keeps the page's tree built for) for listed apps (`listed`) every time,
+    /// so before every scan and once a second while one is frontmost, and once per process for
+    /// any other app (Electron's switch); and `AXEnhancedUserInterface` for listed apps whenever
+    /// the app does not report it on (a relaunched Chromium starts with it off).
+    /// Returns whether `AXEnhancedUserInterface` was just switched on, judged by reading it
+    /// back: Chrome 157 answers the set with `kAXErrorNotImplemented` although it takes effect.
     fn prepare_app(&mut self, pid: i32, listed: bool) -> bool {
         let element = AxElement::application(pid);
-        if self.prepared_pids.insert(pid) {
-            // Electron's switch; other apps reject the unknown attribute, which is harmless.
-            element
-                .set_bool_attribute("AXManualAccessibility", true)
-                .ok();
+        let first_time = self.prepared_pids.insert(pid);
+        if sets_manual_accessibility(listed, first_time) {
+            // Apps without the attribute reject it, which is harmless.
+            let answer = element.set_bool_attribute("AXManualAccessibility", true);
+            if first_time {
+                tracing::debug!("AXManualAccessibility for pid {pid}: set answered {answer:?}");
+            }
         }
         let current = enhanced_ui(&element);
         if !needs_enhancing(listed, current) {

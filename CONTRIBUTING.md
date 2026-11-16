@@ -112,6 +112,10 @@ origin: sets the version, refreshes `Cargo.lock`, dates the Unreleased changelog
 release, so it runs only when the owner says so. Any failure before the commit restores the
 files.
 
+Before tagging a release, on a Mac: `just test-login-item`, the real Start at login test. It
+registers a login item, which macOS announces with a notification every time, so `just test`
+(and with it `just verify` and CI, whose runners have no login session anyway) skips it.
+
 The tag push runs `.github/workflows/release.yml`:
 
 | Job | Builds |

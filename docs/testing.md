@@ -248,15 +248,17 @@ daemon does: a Show Hints pick is handed out by the menu bar and a configuration
 while both windows are open, and OK closes each. A modal window never returns from the first
 call, so the test kills it after a minute and fails.
 
-Start at login has a real test, `crates/nomouse-macos/tests/start_at_login.rs` (`cargo test -p
-nomouse-macos --features testing --test start_at_login`, part of `just test`): it wraps its own
+Start at login has a real test, `crates/nomouse-macos/tests/start_at_login.rs` (`just
+test-login-item`): it wraps its own
 executable in a signed `nomouse.app` with a separate bundle identifier (`scripts/release/app.sh`),
 runs the menu's Start at login pick in it, and checks `SMAppService` status and that System
 Events lists the app as a login item, then picks it again and checks both are gone. It does
 this twice: started by its path in the bundle and through a symlink to it, as `install.sh`
 links `nomouse` (the daemon starts itself again from the real path, `bundle::reexec_from_bundle`).
 The installed nomouse's login item is never touched. It needs the user's login session, so it
-skips on GitHub Actions.
+skips on GitHub Actions. Registering a login item makes macOS post a "Login Items" notification
+every time, so `just test` skips it unless `NOMOUSE_LOGIN_ITEM_TEST=1` is set (which `just
+test-login-item` does); it is on the release checklist (CONTRIBUTING.md, Releases) instead.
 
 The documentation's pictures of the menu and every settings page, light and dark
 (`docs/media/macos/`), come from `scripts/screenshots-macos.sh`: the app draws its own

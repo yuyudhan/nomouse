@@ -61,11 +61,12 @@ pre-commit: fmt-check guards typos shellcheck clippy
 check: fmt-check guards typos shellcheck clippy-all
 
 # Unit, integration and property tests, install.sh against a fake release, the documented
-# one-line install against a local server, and just dev-config.
+# one-line install against a local server, the release notes, and just dev-config.
 test:
     cargo test --workspace --all-features
     scripts/test-installer.sh
     scripts/test-install-command.sh
+    scripts/test-release-notes.sh
     scripts/test-dev-config.sh
 
 # Licences, advisories, duplicate dependencies, sources.
@@ -85,6 +86,11 @@ e2e-desktop *args:
 # Accessibility grant; moves the real pointer). `--bin <path>` tests another nomouse binary.
 e2e-macos *args:
     scripts/e2e-macos.sh {{args}}
+
+# macOS: the real Start at login test. It registers a login item, and macOS posts a "Login
+# Items" notification each time, so `just test` skips it; run it before tagging a release.
+test-login-item:
+    NOMOUSE_LOGIN_ITEM_TEST=1 cargo test -p nomouse-macos --features testing --test start_at_login
 
 # Line coverage of nomouse-core and the binary's non-OS logic; fails below the floors.
 coverage *args:

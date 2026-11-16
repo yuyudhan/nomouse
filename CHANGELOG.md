@@ -18,6 +18,14 @@ the release's section; add entries under Unreleased as changes land.
   toolbar and the page came a second or more later. While a listed web app is frontmost,
   nomouse now reads its page about once a second, which keeps the tree built, and the first
   pass walks the page before the toolbar.
+- macOS: nomouse sets `AXManualAccessibility` on Chromium browsers at start, before every
+  scan and once a second while one is frontmost, not only once per process.
+
+### Changed
+
+- The real Start at login test runs only with `just test-login-item` (on the release
+  checklist): it registers a login item, and macOS posted a "Login Items" notification on
+  every `just test`.
 
 ## [0.1.19] - 2026-11-16
 
