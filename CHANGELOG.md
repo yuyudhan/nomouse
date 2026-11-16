@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-11-16
+
 ### Changed
 
 - Labels arrive in batches and never change once shown, for both `ctrl+space` (hints) and
