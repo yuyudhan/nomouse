@@ -26,6 +26,18 @@ pub fn reports_missing_web(
     has_window && web_areas == 0 && since_switch.is_none_or(|since| since >= PAGE_BUILD)
 }
 
+/// How often a web app whose page has no tree yet is scanned again while labels are shown:
+/// Chrome builds a new page's tree a second or two after a click, and does not always post a
+/// notification when it is there.
+pub const PAGE_POLL: Duration = Duration::from_millis(200);
+
+/// Whether a scan of a web app (`web`) found a window (`has_window`) but no page content in
+/// it (`web_areas` with content: none), so its page is still being built and is polled
+/// for every [`PAGE_POLL`] while labels are shown.
+pub const fn page_pending(web: bool, has_window: bool, web_areas: usize) -> bool {
+    web && has_window && web_areas == 0
+}
+
 /// Whether the attribute must be set before a scan: the app is listed in
 /// `macos.enhanced_ui_apps` and does not report it on (`current` is `None` when unreadable).
 pub fn needs_enhancing(listed: bool, current: Option<bool>) -> bool {
@@ -134,6 +146,20 @@ mod tests {
         assert!(!needs_enhancing(true, Some(true)));
         assert!(!needs_enhancing(false, None));
         assert!(!needs_enhancing(false, Some(false)));
+    }
+
+    #[test]
+    fn a_browser_window_without_page_content_is_polled() {
+        assert!(
+            page_pending(true, true, 0),
+            "toolbar only: the page is coming"
+        );
+        assert!(!page_pending(true, true, 1), "the page is there");
+        assert!(!page_pending(true, false, 0), "no window to wait for");
+        assert!(
+            !page_pending(false, true, 0),
+            "not a browser: nothing to wait for"
+        );
     }
 
     #[test]

@@ -23,7 +23,14 @@ the release's section; add entries under Unreleased as changes land.
 - macOS: while labels are shown over a browser, a page that finishes loading (after a click
   in continuous mode, say) gets its labels as soon as the browser reports it (Accessibility
   notifications: load complete, layout changed, element gone, window changed), at most one
-  scan per 200 ms, instead of at the next 1 s stage. Labels already shown stay as they are.
+  scan per 200 ms, instead of at the next 1 s stage. Labels still on the page stay as they are.
+- macOS: Chrome builds a new page's tree a second or two after a click and does not always
+  say so; while labels are shown and the browser window has no page content yet, nomouse
+  scans it every 200 ms, so the page's labels come within about 200 ms of the page.
+- Labels whose element went away or out of view are taken off the screen and their labels
+  are free again for later targets, when the scan read the whole window (a scan stopped by
+  a time or node limit takes nothing away). The labels that stay never change or move, and
+  only the labels that went or came are drawn.
 
 ### Changed
 

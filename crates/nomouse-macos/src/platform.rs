@@ -24,7 +24,8 @@ use nomouse_sys_macos::{
 
 use crate::ax_tree::{LiveTree, RootSet, enhanced_ui, frame_of, not_trusted, roots};
 use crate::enhance::{
-    is_web_app, missing_web_area, needs_enhancing, reports_missing_web, sets_manual_accessibility,
+    PAGE_POLL, is_web_app, missing_web_area, needs_enhancing, page_pending, reports_missing_web,
+    sets_manual_accessibility,
 };
 use crate::geometry::{
     label_corner, lerp, screen_rect, to_panel, to_panel_rects, union, wheel_deltas, whole_points,
@@ -107,6 +108,12 @@ pub struct MacPlatform {
     /// Notifications of the frontmost web app, reported as [`InputEvent::TreeChanged`] while
     /// labels are shown.
     observer: Option<AppObserver>,
+    /// Whether the last scan read the whole window ([`ElementSource::last_scan_complete`]).
+    complete: bool,
+    /// When the last scan found a browser window without its page yet ([`page_pending`]):
+    /// while labels are shown, a [`InputEvent::TreeChanged`] is reported every
+    /// [`PAGE_POLL`] from then on, until a scan finds the page.
+    page_pending_since: Option<Instant>,
 }
 
 impl std::fmt::Debug for MacPlatform {
@@ -167,6 +174,8 @@ impl MacPlatform {
             },
             warm: Ticker::default(),
             observer: None,
+            complete: true,
+            page_pending_since: None,
         };
         platform.warm_up();
         // A browser frontmost at start gets its page tree switched on and read now.
@@ -500,6 +509,10 @@ impl ElementSource for MacPlatform {
             ..nomouse_core::AppIdentity::default()
         }))
     }
+
+    fn last_scan_complete(&self) -> bool {
+        self.complete
+    }
 }
 
 impl MacPlatform {
@@ -581,6 +594,9 @@ impl MacPlatform {
                 found.bounds
             );
         }
+        self.complete = result.truncated.is_none();
+        self.page_pending_since = page_pending(web, has_window, result.web_areas)
+            .then(|| self.page_pending_since.unwrap_or_else(Instant::now));
         self.snapshot.clear();
         let mut elements = Vec::with_capacity(result.found.len());
         for (index, found) in result.found.into_iter().enumerate() {
@@ -769,6 +785,15 @@ impl HotkeySource for MacPlatform {
                 return Ok(Some(InputEvent::TreeChanged));
             }
             let now = Instant::now();
+            // A browser page still being built: ask for a scan every `PAGE_POLL` until one
+            // finds it, as Chrome may not post a notification when its tree is there.
+            if self.panels.is_visible()
+                && let Some(since) = self.page_pending_since
+                && now.duration_since(since) >= PAGE_POLL
+            {
+                self.page_pending_since = Some(now);
+                return Ok(Some(InputEvent::TreeChanged));
+            }
             if now >= deadline {
                 return Ok(None);
             }

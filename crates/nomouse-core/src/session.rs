@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use crate::action::{Action, ActionKind, MouseButton};
 use crate::element::{Element, Point, Role};
 use crate::filter::{FilterState, LabelFilter};
-use crate::hints::{Alphabet, Hint, assign_hints, generate_labels, merge_hints};
+use crate::hints::{Alphabet, Hint, assign_hints, generate_labels, gone_hints, merge_hints};
 use crate::hotkey::{KeyEvent, KeyPress, Modifiers};
 use crate::search::{is_searchable, rank};
 
@@ -153,16 +153,19 @@ impl HintSession {
         session
     }
 
-    /// Takes in a fresh scan of `elements`, for a page that is still loading: targets not
-    /// labelled yet get free labels ([`merge_hints`]) next to the ones shown, which never
-    /// change, move or go away; the typed prefix, the toggled modifiers and the highlight stay
-    /// as they are. Search mode takes the scan as its candidates while no query is typed (no
-    /// label is shown before one).
+    /// Takes in a fresh scan of `elements`, for a page that is still loading or changing:
+    /// targets not labelled yet get free labels ([`merge_hints`]) next to the ones shown, which
+    /// never change or move. When the scan is `complete` (it read the whole window), hints
+    /// whose target is no longer there ([`gone_hints`]: it went away or out of view) go, and
+    /// their labels are free for later targets; a partial scan never takes a hint away. The
+    /// typed prefix (cleared if no label is left under it), the toggled modifiers and the
+    /// highlight (moved on if its hint went) stay. Search mode takes the scan as its
+    /// candidates while no query is typed (no label is shown before one).
     ///
-    /// Returns whether the overlay must be redrawn: `true` exactly when labels were added. A
-    /// scan arriving while Return is armed for a double click or a drag has its start point
-    /// is ignored: the next key decides on the labels as they are.
-    pub fn rescan(&mut self, elements: Vec<Element>) -> bool {
+    /// Returns whether the overlay must be redrawn: `true` exactly when labels were added or
+    /// taken away. A scan arriving while Return is armed for a double click or a drag has its
+    /// start point is ignored: the next key decides on the labels as they are.
+    pub fn rescan(&mut self, elements: Vec<Element>, complete: bool) -> bool {
         if self.armed.is_some() || self.drag_from.is_some() {
             return false;
         }
@@ -172,8 +175,15 @@ impl HintSession {
             }
             return false;
         }
-        let added = merge_hints(&self.alphabet, &self.hints, targets(elements, self.kind));
-        if added.is_empty() {
+        let mut targets = targets(elements, self.kind);
+        let gone = if complete {
+            gone_hints(&self.hints, &mut targets)
+        } else {
+            Vec::new()
+        };
+        self.drop_hints(&gone);
+        let added = merge_hints(&self.alphabet, &self.hints, targets);
+        if added.is_empty() && gone.is_empty() {
             return false;
         }
         self.filter
@@ -181,6 +191,26 @@ impl HintSession {
         self.hints.extend(added);
         self.refocus();
         true
+    }
+
+    /// Takes away the hints at `gone` (indices into the hints, in increasing order), keeping
+    /// the highlight on the hint it was on when that one stays.
+    fn drop_hints(&mut self, gone: &[usize]) {
+        if gone.is_empty() {
+            return;
+        }
+        let focused = self
+            .focus
+            .filter(|index| gone.binary_search(index).is_err())
+            .map(|index| index - gone.partition_point(|&g| g < index));
+        let mut index = 0;
+        self.hints.retain(|_| {
+            let keep = gone.binary_search(&index).is_err();
+            index += 1;
+            keep
+        });
+        self.filter.remove(gone);
+        self.focus = focused;
     }
 
     /// Starts search-by-text over the named `elements` (interactive ones and static text): no
@@ -1072,11 +1102,11 @@ mod tests {
         // A button arrives above e1: it gets a free label, e0 and e1 keep theirs, and the
         // rescan highlights nothing on its own.
         let mut untouched = session.clone();
-        assert!(untouched.rescan(with_button("late", 50)));
+        assert!(untouched.rescan(with_button("late", 50), true));
         assert_eq!(untouched.focused(), None);
         // A highlight the user moved onto e0 stays there.
         assert_eq!(session.key(KeyPress::Tab), SessionEvent::Highlighted);
-        assert!(session.rescan(with_button("late", 50)));
+        assert!(session.rescan(with_button("late", 50), true));
         assert_eq!(
             shown(&session),
             [pair("e0", "a"), pair("e1", "s"), pair("late", "d")]
@@ -1098,22 +1128,50 @@ mod tests {
         for (id, element) in (10..).zip(&mut again) {
             element.id = ElementId(id);
         }
-        assert!(!session.rescan(again));
+        assert!(!session.rescan(again, true));
         assert_eq!(session.hints(), before);
     }
 
     #[test]
-    fn a_rescan_never_takes_away_or_moves_a_shown_label() {
+    fn a_partial_rescan_never_takes_away_or_moves_a_shown_label() {
         let mut session = HintSession::new(&Alphabet::default(), elements(), ActionKind::Click);
         assert_eq!(session.key(KeyPress::Tab), SessionEvent::Highlighted);
         let before = session.hints().to_vec();
-        // e0 is gone and e1 moved: what is shown stays as it is, highlight included.
+        // e0 is missing and e1 moved in a scan that stopped early: what is shown stays as it
+        // is, highlight included.
         let mut moved: Vec<Element> = elements().into_iter().skip(1).collect();
         moved[0].bounds = Rect::new(0, 300, 10, 10);
-        assert!(!session.rescan(moved));
-        assert!(!session.rescan(Vec::new()));
+        assert!(!session.rescan(moved.clone(), false));
+        assert!(!session.rescan(Vec::new(), false));
         assert_eq!(session.hints(), before);
         assert_eq!(session.focused().map(|hint| hint.label.as_str()), Some("a"));
+        // A complete scan where e1 only moved keeps its label where it was drawn.
+        assert!(session.rescan(moved, true));
+        assert_eq!(session.hints(), &before[1..]);
+    }
+
+    #[test]
+    fn a_complete_rescan_takes_away_gone_hints_and_frees_their_labels() {
+        let mut session = HintSession::new(&Alphabet::default(), elements(), ActionKind::Click);
+        let pair = |name: &str, label: &str| (name.to_owned(), label.to_owned());
+        assert_eq!(session.key(KeyPress::Tab), SessionEvent::Highlighted);
+        // e0 (label "a", highlighted) went away and a button arrived: e1 keeps "s", the new
+        // button gets the freed "a", and nothing is highlighted any more.
+        let mut scan: Vec<Element> = with_button("late", 50).into_iter().skip(1).collect();
+        assert!(session.rescan(scan.clone(), true));
+        assert_eq!(shown(&session), [pair("e1", "s"), pair("late", "a")]);
+        assert_eq!(session.focused(), None);
+        assert_eq!(
+            session.key(KeyPress::Char('a')),
+            SessionEvent::Perform(Action::click(Point::new(5, 55)))
+        );
+        // The same scan again changes nothing; everything gone empties the labels.
+        let mut again = HintSession::new(&Alphabet::default(), elements(), ActionKind::Click);
+        assert!(again.rescan(scan.clone(), true));
+        assert!(!again.rescan(scan.clone(), true));
+        scan.clear();
+        assert!(again.rescan(scan, true));
+        assert_eq!(again.hints(), &[]);
     }
 
     #[test]
@@ -1122,10 +1180,13 @@ mod tests {
         let many: Vec<Element> = (0..20)
             .map(|i| with_button("x", i * 20)[3].clone())
             .collect();
-        let mut typed = HintSession::new(&alphabet, many, ActionKind::Click);
+        let mut typed = HintSession::new(&alphabet, many.clone(), ActionKind::Click);
         let before = typed.hints().to_vec();
         assert_eq!(typed.key(KeyPress::Char('a')), SessionEvent::Narrowed);
-        assert!(typed.rescan(with_button("late", 50)));
+        // The 20 targets are all still there, and three more arrive.
+        let mut scan = many;
+        scan.extend(with_button("late", 50));
+        assert!(typed.rescan(scan, true));
         assert_eq!(typed.hints()[..before.len()], before[..]);
         assert_eq!(typed.hints().len(), 23);
         assert_eq!(typed.typed(), "a");
@@ -1139,10 +1200,10 @@ mod tests {
             toggled.key(KeyPress::Char('2')),
             SessionEvent::ModifiersChanged(_)
         ));
-        assert!(toggled.rescan(with_button("late", 50)));
+        assert!(toggled.rescan(with_button("late", 50), true));
         assert_eq!(toggled.hints().len(), 3);
         let mut search = HintSession::search(&alphabet, elements(), ActionKind::Click);
-        assert!(!search.rescan(with_button("late", 50)));
+        assert!(!search.rescan(with_button("late", 50), true));
         assert_eq!(search.key(KeyPress::Char('l')), SessionEvent::Narrowed);
         assert_eq!(shown(&search)[0].0, "late");
     }

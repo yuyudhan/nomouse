@@ -131,7 +131,7 @@ pub fn assign_hints(alphabet: &Alphabet, mut elements: Vec<Element>) -> Vec<Hint
 /// added.
 pub fn merge_hints(alphabet: &Alphabet, shown: &[Hint], mut elements: Vec<Element>) -> Vec<Hint> {
     elements.sort_by(reading_order);
-    let labelled = labelled(shown, &elements);
+    let (labelled, _) = pair_up(shown, &elements);
     let new: Vec<Element> = elements
         .into_iter()
         .zip(labelled)
@@ -148,9 +148,22 @@ pub fn merge_hints(alphabet: &Alphabet, shown: &[Hint], mut elements: Vec<Elemen
         .collect()
 }
 
+/// The indices of the `shown` hints whose target is not among `elements`, a complete fresh
+/// scan (paired up as [`merge_hints`] does, so `elements` are sorted into reading order): the
+/// element went away or out of view, so its hint can go and its label is free again.
+pub fn gone_hints(shown: &[Hint], elements: &mut [Element]) -> Vec<usize> {
+    elements.sort_by(reading_order);
+    let (_, used) = pair_up(shown, elements);
+    used.iter()
+        .enumerate()
+        .filter_map(|(index, used)| (!used).then_some(index))
+        .collect()
+}
+
 /// For each of `elements` (in reading order), whether a `shown` hint already labels it: first
-/// by role, name and bounds, then by role and a non-empty name.
-fn labelled(shown: &[Hint], elements: &[Element]) -> Vec<bool> {
+/// by role, name and bounds, then by role and a non-empty name; and for each `shown` hint,
+/// whether one of `elements` is its target.
+fn pair_up(shown: &[Hint], elements: &[Element]) -> (Vec<bool>, Vec<bool>) {
     let mut exact: HashMap<(Role, &str, Rect), VecDeque<usize>> = HashMap::new();
     let mut named: HashMap<(Role, &str), VecDeque<usize>> = HashMap::new();
     let mut order: Vec<usize> = (0..shown.len()).collect();
@@ -194,7 +207,7 @@ fn labelled(shown: &[Hint], elements: &[Element]) -> Vec<bool> {
             *labelled = take(named.get_mut(&key), &mut used);
         }
     }
-    labelled
+    (labelled, used)
 }
 
 /// `count` labels, shortest first, that are neither one of `taken` (a prefix-free set) nor a

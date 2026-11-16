@@ -38,8 +38,11 @@ struct Panel {
 pub struct Overlay {
     panels: Vec<Panel>,
     visible: bool,
-    /// What the panels show now, so a frame that only adds labels draws just those.
+    /// What the panels show now, so a frame that only adds or takes away labels touches just
+    /// those.
     drawn: Option<Drawn>,
+    /// The layer of each of `drawn`'s labels (`None` for one whose screen has no panel).
+    label_layers: Vec<Option<Retained<CALayer>>>,
 }
 
 /// The contents of the panels, as last drawn.
@@ -51,16 +54,29 @@ struct Drawn {
     opacity: f32,
 }
 
-/// The labels of `now` that come after the ones `before` shows, when `now` is `before` plus
-/// labels after it (with the same outlines, style and opacity); `None` when anything else
-/// changed and the panels must be drawn again from scratch.
-fn added<'a>(before: Option<&Drawn>, now: &'a Drawn) -> Option<&'a [Label]> {
+/// How `now` differs from `before` when the outlines, style and opacity are the same: the
+/// indices of `before`'s labels that are not shown as they are any more (gone, or changed:
+/// typed into, highlighted, moved), and `now`'s labels after the ones kept, which are
+/// exactly as drawn and in the same order. `None` when the outlines, style or opacity changed
+/// and the panels must be drawn again from scratch.
+fn update<'a>(before: Option<&Drawn>, now: &'a Drawn) -> Option<(Vec<usize>, &'a [Label])> {
     let before = before?;
     let same_rest = before.outlines == now.outlines
         && before.style == now.style
         && before.opacity.to_bits() == now.opacity.to_bits();
-    (same_rest && now.labels.starts_with(&before.labels))
-        .then(|| &now.labels[before.labels.len()..])
+    if !same_rest {
+        return None;
+    }
+    let mut kept = 0;
+    let mut gone = Vec::new();
+    for (index, label) in before.labels.iter().enumerate() {
+        if now.labels.get(kept) == Some(label) {
+            kept += 1;
+        } else {
+            gone.push(index);
+        }
+    }
+    Some((gone, &now.labels[kept..]))
 }
 
 impl std::fmt::Debug for Overlay {
@@ -69,6 +85,7 @@ impl std::fmt::Debug for Overlay {
             .field("panels", &self.panels.len())
             .field("visible", &self.visible)
             .field("drawn", &self.drawn)
+            .field("label_layers", &self.label_layers.len())
             .finish()
     }
 }
@@ -271,21 +288,26 @@ impl Overlay {
         true
     }
 
-    /// Adds `label`'s layer to the panel of its screen; one out of range is skipped.
-    fn add_label(&self, label: &Label, style: &LabelStyle, opacity: f32) {
-        if let Some(panel) = self.panels.get(label.screen) {
-            let area = (panel.frame.width, panel.frame.height);
-            panel
-                .root
-                .addSublayer(&label_layer(label, style, area, panel.scale, opacity));
-        }
+    /// Adds `label`'s layer to the panel of its screen and returns it; one out of range is
+    /// skipped.
+    fn add_label(
+        &self,
+        label: &Label,
+        style: &LabelStyle,
+        opacity: f32,
+    ) -> Option<Retained<CALayer>> {
+        let panel = self.panels.get(label.screen)?;
+        let area = (panel.frame.width, panel.frame.height);
+        let layer = label_layer(label, style, area, panel.scale, opacity);
+        panel.root.addSublayer(&layer);
+        Some(layer)
     }
 
     /// Shows `labels` above `outlines` on the screens [`App::screens`] reports now, with
     /// `opacity` from 0.0 to 1.0. Labels and outlines whose screen index is out of range are
-    /// skipped. When the labels shown are the first of `labels` and nothing else changed, only
-    /// the labels after them are drawn: the ones on screen are not touched at all. Anything
-    /// else replaces what was shown.
+    /// skipped. When the frame only takes away some of the labels shown and adds labels after
+    /// the rest, only those layers are removed and added: the labels that stay on screen are
+    /// not touched at all. Anything else replaces what was shown.
     pub fn show(
         &mut self,
         app: &App,
@@ -308,9 +330,19 @@ impl Overlay {
         };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        if let Some(new) = added(before, &now) {
+        if let Some((gone, new)) = update(before, &now) {
+            let mut index = 0;
+            self.label_layers.retain(|layer| {
+                let keep = gone.binary_search(&index).is_err();
+                if !keep && let Some(layer) = layer {
+                    layer.removeFromSuperlayer();
+                }
+                index += 1;
+                keep
+            });
             for label in new {
-                self.add_label(label, style, opacity);
+                let layer = self.add_label(label, style, opacity);
+                self.label_layers.push(layer);
             }
         } else {
             for panel in &self.panels {
@@ -324,9 +356,10 @@ impl Overlay {
                         .addSublayer(&outline_layer(outline, style, panel, opacity));
                 }
             }
-            for label in labels {
-                self.add_label(label, style, opacity);
-            }
+            self.label_layers = labels
+                .iter()
+                .map(|label| self.add_label(label, style, opacity))
+                .collect();
         }
         CATransaction::commit();
         for panel in &self.panels {
@@ -352,6 +385,7 @@ impl Overlay {
         CATransaction::commit();
         CATransaction::flush();
         self.drawn = None;
+        self.label_layers.clear();
         self.visible = false;
     }
 
@@ -372,7 +406,7 @@ impl Drop for Overlay {
 
 #[cfg(test)]
 mod tests {
-    use super::{Drawn, added};
+    use super::{Drawn, update};
     use crate::types::{Label, LabelStyle, Outline, Rgba};
 
     fn label(text: &str, x: f64) -> Label {
@@ -411,26 +445,54 @@ mod tests {
     fn a_frame_that_only_adds_labels_draws_only_those() {
         let shown = drawn(&[label("a", 0.0), label("s", 50.0)]);
         let grown = drawn(&[label("a", 0.0), label("s", 50.0), label("d", 90.0)]);
-        assert_eq!(added(Some(&shown), &grown), Some(&grown.labels[2..]));
-        assert_eq!(added(Some(&shown), &shown), Some(&shown.labels[2..]));
+        assert_eq!(
+            update(Some(&shown), &grown),
+            Some((Vec::new(), &grown.labels[2..]))
+        );
+        assert_eq!(
+            update(Some(&shown), &shown),
+            Some((Vec::new(), &shown.labels[2..]))
+        );
     }
 
     #[test]
-    fn any_other_change_draws_everything_again() {
-        let shown = drawn(&[label("a", 0.0), label("s", 50.0)]);
-        assert_eq!(added(None, &shown), None);
-        // A typed prefix, a highlight, a dropped or moved label, or a new outline.
-        let mut typed = shown.clone();
-        typed.labels[0].typed = 1;
-        assert_eq!(added(Some(&shown), &typed), None);
-        let mut focused = shown.clone();
-        focused.labels[1].focused = true;
-        assert_eq!(added(Some(&shown), &focused), None);
-        assert_eq!(added(Some(&shown), &drawn(&[label("s", 50.0)])), None);
+    fn a_frame_that_takes_labels_away_removes_only_those() {
+        let shown = drawn(&[label("a", 0.0), label("s", 50.0), label("d", 90.0)]);
+        // "s" went; "f" came: the layers of "a" and "d" stay untouched.
+        let next = drawn(&[label("a", 0.0), label("d", 90.0), label("f", 120.0)]);
         assert_eq!(
-            added(Some(&shown), &drawn(&[label("a", 1.0), label("s", 50.0)])),
-            None
+            update(Some(&shown), &next),
+            Some((vec![1], &next.labels[2..]))
         );
+        // Everything went.
+        assert_eq!(
+            update(Some(&shown), &drawn(&[])),
+            Some((vec![0, 1, 2], &[][..]))
+        );
+    }
+
+    #[test]
+    fn changed_labels_are_drawn_again_and_the_rest_left_alone() {
+        let shown = drawn(&[label("a", 0.0), label("s", 50.0)]);
+        // A typed prefix or a highlight changes a label: it is taken away and drawn again.
+        let mut typed = shown.clone();
+        typed.labels[1].typed = 1;
+        assert_eq!(
+            update(Some(&shown), &typed),
+            Some((vec![1], &typed.labels[1..]))
+        );
+        let mut focused = shown.clone();
+        focused.labels[0].focused = true;
+        assert_eq!(
+            update(Some(&shown), &focused),
+            Some((vec![0, 1], &focused.labels[..]))
+        );
+    }
+
+    #[test]
+    fn new_outlines_or_nothing_drawn_draw_everything_again() {
+        let shown = drawn(&[label("a", 0.0), label("s", 50.0)]);
+        assert_eq!(update(None, &shown), None);
         let mut outlined = shown.clone();
         outlined.outlines.push(Outline {
             screen: 0,
@@ -439,6 +501,6 @@ mod tests {
             width: 10.0,
             height: 10.0,
         });
-        assert_eq!(added(Some(&shown), &outlined), None);
+        assert_eq!(update(Some(&shown), &outlined), None);
     }
 }

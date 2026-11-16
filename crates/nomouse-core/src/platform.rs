@@ -75,6 +75,13 @@ pub trait ElementSource {
         self.elements(scope)
     }
 
+    /// Whether the last [`ElementSource::elements`] read the whole of its scope, rather than
+    /// stopping at a time or node limit: only then is an element missing from it gone, and
+    /// hint mode takes its label away. The default is `true`.
+    fn last_scan_complete(&self) -> bool {
+        true
+    }
+
     /// Who owns the focused window, for `ignore.apps`; `None` when the platform cannot tell
     /// (the default).
     ///

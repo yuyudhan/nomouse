@@ -61,6 +61,24 @@ impl LabelFilter {
         self.labels.extend(labels);
     }
 
+    /// Takes away the labels at `gone` (indices in increasing order): their targets went
+    /// away. The typed prefix stays while a label is still under it, and is cleared otherwise.
+    pub fn remove(&mut self, gone: &[usize]) {
+        let mut index = 0;
+        self.labels.retain(|_| {
+            let keep = gone.binary_search(&index).is_err();
+            index += 1;
+            keep
+        });
+        if !self
+            .labels
+            .iter()
+            .any(|label| label.starts_with(&self.typed))
+        {
+            self.typed.clear();
+        }
+    }
+
     /// The prefix typed so far.
     pub fn typed(&self) -> &str {
         &self.typed

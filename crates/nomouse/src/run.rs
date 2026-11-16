@@ -271,7 +271,7 @@ fn rescan(
             return Ok(());
         }
     };
-    if session.rescan(elements) {
+    if session.rescan(elements, platform.last_scan_complete()) {
         tracing::debug!("re-scan: {} hints", session.hints().len());
         draw(platform, session)?;
     }
@@ -489,6 +489,8 @@ mod tests {
         /// How long one scan takes: a slow Accessibility tree. The clock moves on by this much
         /// after each scan has read its page.
         scan_cost: Duration,
+        /// Whether scans stop before reading everything ([`ElementSource::last_scan_complete`]).
+        partial: bool,
     }
 
     impl ElementSource for Fake {
@@ -505,6 +507,10 @@ mod tests {
                 .clone();
             self.clock.set(now + self.scan_cost);
             Ok(page)
+        }
+
+        fn last_scan_complete(&self) -> bool {
+            !self.partial
         }
 
         fn focused_app(&mut self) -> Result<Option<AppIdentity>, PlatformError> {
@@ -1147,26 +1153,31 @@ mod tests {
 
     #[test]
     fn labels_stay_stable_across_rescans_that_add_or_lose_targets() {
-        let mut p = fake(2, &after_polls(60, "d"));
-        let first = p.elements.clone();
-        // At 1 s a button arrives between the two; at 3 s the first one is gone, which
-        // leaves its label where it is.
-        let mut grown = first.clone();
-        grown.push(button(7, 50, 0));
-        let shrunk = vec![first[1].clone(), button(8, 50, 0)];
-        p.pages = vec![(ms(1000), grown), (ms(3000), shrunk)];
-        assert_eq!(
-            run(&mut p, Mode::Once(ActionKind::Click)),
-            Ok(Outcome::Performed(1))
-        );
-        assert_eq!(
-            p.frames,
-            [
+        for partial in [false, true] {
+            let mut p = fake(2, &after_polls(60, "d"));
+            p.partial = partial;
+            let first = p.elements.clone();
+            // At 1 s a button arrives between the two; at 3 s the first one is gone: a
+            // complete scan takes its label away, a partial one leaves it. The others never
+            // change.
+            let mut grown = first.clone();
+            grown.push(button(7, 50, 0));
+            let shrunk = vec![first[1].clone(), button(8, 50, 0)];
+            p.pages = vec![(ms(1000), grown), (ms(3000), shrunk)];
+            assert_eq!(
+                run(&mut p, Mode::Once(ActionKind::Click)),
+                Ok(Outcome::Performed(1))
+            );
+            let mut frames = vec![
                 frame(&[("a", 0), ("s", 100)]),
                 frame(&[("a", 0), ("s", 100), ("d", 50)]),
-            ]
-        );
-        assert_eq!(p.performed, [Action::click(Point::new(55, 5))]);
+            ];
+            if !partial {
+                frames.push(frame(&[("s", 100), ("d", 50)]));
+            }
+            assert_eq!(p.frames, frames, "partial: {partial}");
+            assert_eq!(p.performed, [Action::click(Point::new(55, 5))]);
+        }
     }
 
     /// A browser right after its accessibility tree is switched on: the toolbar is there at
@@ -1278,6 +1289,48 @@ mod tests {
         // The first labels at 300 ms, then one batch per stage as soon as its scan is read.
         assert_eq!(p.drawn_at, [ms(300), ms(1300), ms(2300), ms(3300)]);
         assert_eq!(p.frames.last().map(Vec::len), Some(5));
+    }
+
+    #[test]
+    fn continuous_mode_keeps_labelling_every_round_through_slow_page_loads() {
+        const ROUNDS: u16 = 21;
+        // Each round: the click navigates, the next page's tree is empty for 250 ms and then
+        // fills; the platform reports it at 400 ms, the labels come, and `a` clicks the page's
+        // first target. Every scan takes 100 ms.
+        let script = format!("{}!", "____~a".repeat(usize::from(ROUNDS)));
+        let mut p = fake(0, &script);
+        p.scan_cost = ms(100);
+        let page = |r: u16| -> Vec<Element> {
+            let x = i32::from(r) * 10;
+            let id = u64::from(r) * 10;
+            vec![button(id, x, 0), button(id + 1, x, 100)]
+        };
+        p.pages = vec![(ms(0), page(0))];
+        for r in 1..ROUNDS {
+            let start = 500 * u64::from(r);
+            p.pages.push((ms(start), Vec::new()));
+            p.pages.push((ms(start + 250), page(r)));
+        }
+        assert_eq!(
+            run(&mut p, Mode::Continuous(ActionKind::Click)),
+            Ok(Outcome::Performed(usize::from(ROUNDS)))
+        );
+        let expected: Vec<Action> = (0..ROUNDS)
+            .map(|r| Action::click(page(r)[0].target()))
+            .collect();
+        assert_eq!(p.performed, expected);
+        // Round 0's page is there at once (drawn after its 100 ms scan); every later round
+        // draws its page's labels when the page is reported and scanned, 500 ms after its
+        // click, after an empty first frame that keeps the keyboard.
+        assert_eq!(p.drawn_at.first(), Some(&ms(100)));
+        for r in 1..ROUNDS {
+            let at = ms(500 * u64::from(r) + 500);
+            assert!(
+                p.drawn_at.contains(&at),
+                "round {r}: drawn at {:?}",
+                p.drawn_at
+            );
+        }
     }
 
     #[test]
