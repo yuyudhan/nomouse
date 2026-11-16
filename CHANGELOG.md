@@ -7,6 +7,8 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-11-16
+
 ### Added
 
 - The daemon keeps a log file: `~/Library/Logs/nomouse/nomouse.log` on macOS
