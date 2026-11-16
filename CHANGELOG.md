@@ -7,8 +7,10 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
-0.1.20 supersedes 0.1.19, which was tagged but never published: the changes listed under
-0.1.19 below ship for the first time in 0.1.20.
+## [0.1.20] - 2026-11-16
+
+0.1.20 supersedes 0.1.19, which was tagged but never published, so it also brings 0.1.19's
+change (the first bullet under Changed).
 
 ### Fixed
 
@@ -34,6 +36,14 @@ the release's section; add entries under Unreleased as changes land.
 
 ### Changed
 
+- Labels arrive in batches, for both `ctrl+space` (hints) and `ctrl+shift+space`
+  (continuous): the labels of a quick first pass show at once (50 to 160 ms after the hotkey on
+  an M5, also for the first activation after the daemon starts, which used to take about 0.8 s
+  on macOS), the rest of the window right after, and elements that appear later get labels at
+  1, 2 and 3 s (`hints.early_rescan_ms` is now the time between stages, `hints.late_rescan_ms`
+  the last one) or as soon as the page reports them. Labels on screen keep their text, place
+  and look. Typing a label no longer stops the batches; picking a target or closing the labels
+  does. (From the unpublished 0.1.19.)
 - The real Start at login test runs only with `just test-login-item` (on the release
   checklist): it registers a login item, and macOS posted a "Login Items" notification on
   every `just test`.
