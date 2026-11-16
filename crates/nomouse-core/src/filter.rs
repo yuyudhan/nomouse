@@ -55,6 +55,12 @@ impl LabelFilter {
         self.typed.clear();
     }
 
+    /// Adds `labels` after the existing ones, keeping the typed prefix: labels of targets a
+    /// re-scan found while the user types (they must keep the whole set prefix-free).
+    pub fn extend(&mut self, labels: impl IntoIterator<Item = String>) {
+        self.labels.extend(labels);
+    }
+
     /// The prefix typed so far.
     pub fn typed(&self) -> &str {
         &self.typed
@@ -105,5 +111,15 @@ mod tests {
         f.push('a');
         f.reset();
         assert_eq!(f.matching().count(), 3);
+    }
+
+    #[test]
+    fn added_labels_keep_the_typed_prefix() {
+        let mut f = filter();
+        assert_eq!(f.push('a'), FilterState::Pending);
+        f.extend(["c".to_owned(), "ad".to_owned()]);
+        assert_eq!(f.typed(), "a");
+        assert_eq!(f.matching().collect::<Vec<_>>(), vec![1, 2, 4]);
+        assert_eq!(f.push('d'), FilterState::Matched(4));
     }
 }

@@ -64,6 +64,17 @@ pub trait ElementSource {
     /// [`PlatformError::NoFocusedWindow`] for [`Scope::FocusedWindow`] without focus.
     fn elements(&mut self, scope: Scope) -> Result<Vec<Element>, PlatformError>;
 
+    /// A quick first pass for labels shown the moment the hotkey is pressed: the elements of
+    /// `scope` that can be read within a short time, possibly only part of them. Hint mode
+    /// scans again with [`ElementSource::elements`] right after, and the rest of the targets
+    /// join then. The default reads everything.
+    ///
+    /// # Errors
+    /// As [`ElementSource::elements`].
+    fn first_elements(&mut self, scope: Scope) -> Result<Vec<Element>, PlatformError> {
+        self.elements(scope)
+    }
+
     /// Who owns the focused window, for `ignore.apps`; `None` when the platform cannot tell
     /// (the default).
     ///

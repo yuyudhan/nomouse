@@ -52,7 +52,7 @@ pub use config::{Config, ConfigError};
 pub use element::{Element, ElementId, Point, Rect, Role};
 pub use filter::{FilterState, LabelFilter};
 pub use flavour::Flavour;
-pub use hints::{Alphabet, AlphabetError, Hint, assign_hints, generate_labels, reassign_hints};
+pub use hints::{Alphabet, AlphabetError, Hint, assign_hints, generate_labels, merge_hints};
 pub use hotkey::{Hotkey, HotkeyError, Key, KeyEvent, KeyPress, Modifiers};
 pub use platform::{
     ElementSource, Frame, HotkeyId, HotkeySource, InputEvent, InputInjector, Overlay, Platform,

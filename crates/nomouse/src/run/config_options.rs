@@ -882,11 +882,7 @@ fn rescan_stages_come_from_the_file_and_reload() {
     let mut file = ConfigFile::open(&path).unwrap();
     assert_eq!(
         crate::settings(file.config()).unwrap().rescans.times(),
-        [
-            Duration::ZERO,
-            Duration::from_millis(500),
-            Duration::from_millis(2000)
-        ]
+        [0, 500, 1000, 1500, 2000].map(Duration::from_millis)
     );
     std::fs::write(
         &path,

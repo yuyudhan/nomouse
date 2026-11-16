@@ -91,10 +91,20 @@ proptest! {
         let in_order = early == 0 || late == 0 || early < late;
         prop_assert_eq!(Config::from_toml(&text).is_ok(), in_range && in_order);
         // Whatever the values, the stages run in strictly increasing order from the
-        // immediate re-scan.
-        let times = RescanSchedule::new(early, late).times().to_vec();
+        // immediate re-scan, at most `early` apart, and end at the later of the two.
+        let times = RescanSchedule::new(early, late).times();
         prop_assert_eq!(times.first().copied(), Some(Duration::ZERO));
         prop_assert!(times.windows(2).all(|pair| pair[0] < pair[1]), "{:?}", times);
+        let last = Duration::from_millis(u64::from(early.max(late)));
+        prop_assert_eq!(times.last().copied(), Some(last));
+        if early > 0 && late > early {
+            let gap = Duration::from_millis(u64::from(early));
+            prop_assert!(
+                times.windows(2).all(|pair| pair[1].saturating_sub(pair[0]) <= gap),
+                "{:?}",
+                times
+            );
+        }
     }
 
     #[test]

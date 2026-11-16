@@ -154,10 +154,11 @@ System Settings › Privacy & Security. The one-line install sets no flag.
 Chromium and Electron apps build their accessibility tree only when asked. The common Chromium
 browsers are listed in `macos.enhanced_ui_apps` by default, and nomouse switches the tree back
 on before each activation, also after the browser relaunched. Labels show at once for what is
-there; a page the browser is still building joins at the later stages (`hints.early_rescan_ms`
-and `hints.late_rescan_ms`, 1 s and 3 s by default). Run `nomouse doctor`: it checks every
-running instance of each browser or listed app, passes when any shows a page, says "no page
-open" for blank tabs, and otherwise says what to change. A list in the file replaces the
+there; a page the browser is still building joins at the later stages (every
+`hints.early_rescan_ms` up to `hints.late_rescan_ms`, 1, 2 and 3 s by default). Run
+`nomouse doctor`: it checks every running instance of each browser or listed app, passes when
+any shows a page, says "no page open" for blank tabs, and otherwise says what to change. A list
+in the file replaces the
 default, so to add an Electron app keep the browsers you use:
 
 ```toml

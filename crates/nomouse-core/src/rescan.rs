@@ -5,36 +5,58 @@
 use std::time::{Duration, Instant};
 
 /// When the re-scans run, from the hotkey (in continuous mode, from the scan after each
-/// action): one right after the first scan, then the early and late stages
-/// (`hints.early_rescan_ms`, `hints.late_rescan_ms`; 1 s and 3 s by default).
+/// action): one right after the first scan, then every `hints.early_rescan_ms` until
+/// `hints.late_rescan_ms`, and at `hints.late_rescan_ms` itself (1, 2 and 3 s by default).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RescanSchedule {
-    /// The re-scan times in increasing order; only the first `len` are used.
-    at: [Duration; 3],
-    len: usize,
+    /// The time between stages; `None` when stages come only at `end` (or not at all).
+    every: Option<Duration>,
+    /// The last stage; zero when there is none after the immediate re-scan.
+    end: Duration,
 }
 
 impl RescanSchedule {
-    /// The immediate re-scan plus a stage at `early_ms` and one at `late_ms` milliseconds; a
-    /// stage of 0 is left out, and so is one not later than the stage before it.
+    /// The immediate re-scan, then stages every `early_ms` milliseconds up to `late_ms` and
+    /// one at `late_ms`. A stage of 0 is left out: `early_ms` 0 leaves the immediate re-scan
+    /// and `late_ms`; `late_ms` 0, or not later than `early_ms`, leaves one stage at
+    /// `early_ms`.
     pub fn new(early_ms: u32, late_ms: u32) -> Self {
-        let mut schedule = Self {
-            at: [Duration::ZERO; 3],
-            len: 1,
-        };
-        for ms in [early_ms, late_ms] {
-            let at = Duration::from_millis(u64::from(ms));
-            if at > schedule.at[schedule.len - 1] {
-                schedule.at[schedule.len] = at;
-                schedule.len += 1;
+        let early = Duration::from_millis(u64::from(early_ms));
+        let late = Duration::from_millis(u64::from(late_ms));
+        if early.is_zero() {
+            Self {
+                every: None,
+                end: late,
+            }
+        } else if late > early {
+            Self {
+                every: Some(early),
+                end: late,
+            }
+        } else {
+            Self {
+                every: None,
+                end: early,
             }
         }
-        schedule
+    }
+
+    /// The time of re-scan number `index` (0 is the immediate one); `None` past the last.
+    fn at(&self, index: u32) -> Option<Duration> {
+        // Interval stages are the multiples of `every` before `end`; `end` follows them.
+        let last_interval = self.every.map_or(0, |every| {
+            let below_end = self.end.as_nanos().saturating_sub(1) / every.as_nanos().max(1);
+            u32::try_from(below_end).unwrap_or(u32::MAX)
+        });
+        if index <= last_interval {
+            return Some(self.every.map_or(Duration::ZERO, |every| every * index));
+        }
+        (Some(index) == last_interval.checked_add(1) && !self.end.is_zero()).then_some(self.end)
     }
 
     /// The re-scan times in order, the immediate one first.
-    pub fn times(&self) -> &[Duration] {
-        &self.at[..self.len]
+    pub fn times(&self) -> Vec<Duration> {
+        (0..).map_while(|index| self.at(index)).collect()
     }
 }
 
@@ -44,13 +66,15 @@ impl Default for RescanSchedule {
     }
 }
 
-/// The re-scans still pending for one set of labels, per a [`RescanSchedule`].
+/// The re-scans still pending for one set of labels, per a [`RescanSchedule`]. Typing does not
+/// stop them: only picking a target or closing the labels ends the activation, and with it
+/// its re-scans.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rescans {
     start: Instant,
     schedule: RescanSchedule,
-    /// Index into the schedule's times of the next re-scan.
-    next: usize,
+    /// Number of the next re-scan in the schedule.
+    next: u32,
 }
 
 impl Rescans {
@@ -68,12 +92,7 @@ impl Rescans {
     pub fn take_due(&mut self, now: Instant) -> bool {
         let elapsed = now.saturating_duration_since(self.start);
         let before = self.next;
-        while self
-            .schedule
-            .times()
-            .get(self.next)
-            .is_some_and(|at| *at <= elapsed)
-        {
+        while self.schedule.at(self.next).is_some_and(|at| at <= elapsed) {
             self.next += 1;
         }
         self.next > before
@@ -83,19 +102,13 @@ impl Rescans {
     /// none is pending.
     pub fn until_next(&self, now: Instant) -> Option<Duration> {
         self.schedule
-            .times()
-            .get(self.next)
-            .map(|at| (self.start + *at).saturating_duration_since(now))
-    }
-
-    /// Drops every pending re-scan: the user typed a key.
-    pub const fn cancel(&mut self) {
-        self.next = self.schedule.len;
+            .at(self.next)
+            .map(|at| (self.start + at).saturating_duration_since(now))
     }
 
     /// Whether a re-scan is still pending.
-    pub const fn is_pending(&self) -> bool {
-        self.next < self.schedule.len
+    pub fn is_pending(&self) -> bool {
+        self.schedule.at(self.next).is_some()
     }
 }
 
@@ -106,7 +119,7 @@ mod tests {
     const MS: Duration = Duration::from_millis(1);
 
     #[test]
-    fn rescans_come_at_once_then_at_one_and_three_seconds() {
+    fn rescans_come_at_once_then_every_second_until_three_seconds() {
         let start = Instant::now();
         let mut rescans = Rescans::new(start, RescanSchedule::default());
         assert!(rescans.take_due(start + 20 * MS));
@@ -114,7 +127,9 @@ mod tests {
         assert_eq!(rescans.until_next(start + 20 * MS), Some(980 * MS));
         assert!(!rescans.take_due(start + 999 * MS));
         assert!(rescans.take_due(start + 1000 * MS));
-        assert_eq!(rescans.until_next(start + 1500 * MS), Some(1500 * MS));
+        assert_eq!(rescans.until_next(start + 1500 * MS), Some(500 * MS));
+        assert!(!rescans.take_due(start + 1999 * MS));
+        assert!(rescans.take_due(start + 2000 * MS));
         assert!(!rescans.take_due(start + 2999 * MS));
         assert!(rescans.take_due(start + 3000 * MS));
         assert!(!rescans.is_pending());
@@ -124,9 +139,14 @@ mod tests {
 
     #[test]
     fn the_stages_follow_the_settings() {
+        // Every `early` until `late`, and `late` itself.
         assert_eq!(
-            RescanSchedule::new(500, 5000).times(),
-            [Duration::ZERO, 500 * MS, 5000 * MS]
+            RescanSchedule::new(1000, 3000).times(),
+            [Duration::ZERO, 1000 * MS, 2000 * MS, 3000 * MS]
+        );
+        assert_eq!(
+            RescanSchedule::new(500, 1800).times(),
+            [Duration::ZERO, 500 * MS, 1000 * MS, 1500 * MS, 1800 * MS]
         );
         // 0 turns a stage off; with both off only the immediate re-scan is left.
         assert_eq!(
@@ -155,18 +175,8 @@ mod tests {
         let mut rescans = Rescans::new(start, RescanSchedule::default());
         // The first scan took 1.2 s: the immediate and the 1 s re-scans are one.
         assert!(rescans.take_due(start + 1200 * MS));
-        assert_eq!(rescans.until_next(start + 1200 * MS), Some(1800 * MS));
+        assert_eq!(rescans.until_next(start + 1200 * MS), Some(800 * MS));
         assert!(rescans.take_due(start + 5000 * MS));
         assert!(!rescans.is_pending());
-    }
-
-    #[test]
-    fn cancel_drops_every_pending_rescan() {
-        let start = Instant::now();
-        let mut rescans = Rescans::new(start, RescanSchedule::default());
-        rescans.cancel();
-        assert!(!rescans.is_pending());
-        assert!(!rescans.take_due(start + 4000 * MS));
-        assert_eq!(rescans.until_next(start), None);
     }
 }

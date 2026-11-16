@@ -57,15 +57,19 @@ Every method is blocking and runs on the event-loop thread; errors are `Platform
    outlined through `Frame::area` (without one it picks an element first). Escape cancels, and
    so does an activation hotkey or a command-socket request arriving while the labels are up
    (toggle).
-   Until the first key, `nomouse_core::Rescans` runs a `RescanSchedule` (right after the first
-   scan, then `hints.early_rescan_ms` and `hints.late_rescan_ms` after the hotkey, 1 s and 3 s
-   by default, or after the scan that follows each continuous-mode
-   click): each re-scan goes through `HintSession::rescan`, whose `reassign_hints` keeps the
-   label of every target still there (same role, name and bounds, else same role and name),
-   gives new targets the shortest free labels and drops gone ones; the overlay is redrawn only
-   when a label, its place or the highlight changed. The first key, a dismissal or a pick
-   cancels the rest. After a continuous-mode click an empty scan keeps the (empty) overlay up
-   until a re-scan finds targets; the activation ends if the last one finds none.
+   The first scan is `ElementSource::first_elements`, a quick pass (macOS: a 70 ms walk) whose
+   labels show at once. Then `nomouse_core::Rescans` runs a `RescanSchedule`: right after the
+   first scan, then every `hints.early_rescan_ms` up to `hints.late_rescan_ms` after the hotkey
+   (1, 2 and 3 s by default), or after the scan that follows each continuous-mode click. Each
+   re-scan goes through `HintSession::rescan`, whose `merge_hints` labels only the targets no
+   shown hint has (same role, name and bounds, else same role and name) with the shortest
+   free labels; shown hints never change or go. `assign_hints` and `merge_hints` always leave
+   one label of the tree free, so a new target never takes a shown label. Typing does not stop
+   the re-scans (the typed prefix stays and new labels under it show); a dismissal or a pick
+   does. The overlay draws only the added labels when a frame just appends some (macOS:
+   `nomouse_sys_macos::overlay::Overlay::show`). After a continuous-mode click an empty scan
+   keeps the (empty) overlay up until a re-scan finds targets; the activation ends if the
+   last one finds none.
 5. `Overlay::hide`, then `InputInjector::perform(action)`.
 
 Hint alphabet: `asdfghjk` by default, configurable; `i`, `l`, `o` are rejected as ambiguous.
@@ -254,7 +258,7 @@ keys = "nomouse"             # nomouse: a label acts at once | homerow: a label 
                              # Return clicks, twice double clicks, Shift-Return right clicks
 browser = "fast"             # fast: web pages read in view only | exhaustive: the whole page,
                              # so search finds links scrolled away (and scrolls them in)
-early_rescan_ms = 1000       # labels for what appeared since the first scan; 0 = off
+early_rescan_ms = 1000       # labels for what appeared since, every this often; 0 = only late
 late_rescan_ms = 3000        # last stage, for slow pages; later than early, 0 = off, max 10000
 
 [hotkeys]                    # modifiers: ctrl, alt (Option), shift, meta (Command / Super)

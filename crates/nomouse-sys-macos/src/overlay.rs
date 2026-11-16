@@ -38,6 +38,29 @@ struct Panel {
 pub struct Overlay {
     panels: Vec<Panel>,
     visible: bool,
+    /// What the panels show now, so a frame that only adds labels draws just those.
+    drawn: Option<Drawn>,
+}
+
+/// The contents of the panels, as last drawn.
+#[derive(Debug, Clone)]
+struct Drawn {
+    labels: Vec<Label>,
+    outlines: Vec<Outline>,
+    style: LabelStyle,
+    opacity: f32,
+}
+
+/// The labels of `now` that come after the ones `before` shows, when `now` is `before` plus
+/// labels after it (with the same outlines, style and opacity); `None` when anything else
+/// changed and the panels must be drawn again from scratch.
+fn added<'a>(before: Option<&Drawn>, now: &'a Drawn) -> Option<&'a [Label]> {
+    let before = before?;
+    let same_rest = before.outlines == now.outlines
+        && before.style == now.style
+        && before.opacity.to_bits() == now.opacity.to_bits();
+    (same_rest && now.labels.starts_with(&before.labels))
+        .then(|| &now.labels[before.labels.len()..])
 }
 
 impl std::fmt::Debug for Overlay {
@@ -45,6 +68,7 @@ impl std::fmt::Debug for Overlay {
         f.debug_struct("Overlay")
             .field("panels", &self.panels.len())
             .field("visible", &self.visible)
+            .field("drawn", &self.drawn)
             .finish()
     }
 }
@@ -218,7 +242,9 @@ impl Overlay {
         Self::default()
     }
 
-    fn sync_panels(&mut self, app: &App) {
+    /// Makes one panel per screen, unless the screens are the ones the panels cover; returns
+    /// whether the panels were made again.
+    fn sync_panels(&mut self, app: &App) -> bool {
         let frames = app.screens();
         let scales = app.screen_scales();
         let unchanged = self.panels.len() == frames.len()
@@ -228,7 +254,7 @@ impl Overlay {
                 .zip(&frames)
                 .all(|(panel, frame)| panel.frame == *frame);
         if unchanged {
-            return;
+            return false;
         }
         for panel in self.panels.drain(..) {
             panel.window.orderOut(None);
@@ -242,11 +268,24 @@ impl Overlay {
                 new_panel(app.main_thread(), *frame, scale)
             })
             .collect();
+        true
     }
 
-    /// Shows `labels` above `outlines` (replacing anything shown before) on the screens
-    /// [`App::screens`] reports now, with `opacity` from 0.0 to 1.0. Labels and outlines whose
-    /// screen index is out of range are skipped.
+    /// Adds `label`'s layer to the panel of its screen; one out of range is skipped.
+    fn add_label(&self, label: &Label, style: &LabelStyle, opacity: f32) {
+        if let Some(panel) = self.panels.get(label.screen) {
+            let area = (panel.frame.width, panel.frame.height);
+            panel
+                .root
+                .addSublayer(&label_layer(label, style, area, panel.scale, opacity));
+        }
+    }
+
+    /// Shows `labels` above `outlines` on the screens [`App::screens`] reports now, with
+    /// `opacity` from 0.0 to 1.0. Labels and outlines whose screen index is out of range are
+    /// skipped. When the labels shown are the first of `labels` and nothing else changed, only
+    /// the labels after them are drawn: the ones on screen are not touched at all. Anything
+    /// else replaces what was shown.
     pub fn show(
         &mut self,
         app: &App,
@@ -255,26 +294,38 @@ impl Overlay {
         style: &LabelStyle,
         opacity: f32,
     ) {
-        self.sync_panels(app);
+        let remade = self.sync_panels(app);
+        let now = Drawn {
+            labels: labels.to_vec(),
+            outlines: outlines.to_vec(),
+            style: *style,
+            opacity,
+        };
+        let before = if remade || !self.visible {
+            None
+        } else {
+            self.drawn.as_ref()
+        };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        for panel in &self.panels {
-            // SAFETY: clearing the sublayer array with `None` is always valid.
-            unsafe { panel.root.setSublayers(None) };
-        }
-        for outline in outlines {
-            if let Some(panel) = self.panels.get(outline.screen) {
-                panel
-                    .root
-                    .addSublayer(&outline_layer(outline, style, panel, opacity));
+        if let Some(new) = added(before, &now) {
+            for label in new {
+                self.add_label(label, style, opacity);
             }
-        }
-        for label in labels {
-            if let Some(panel) = self.panels.get(label.screen) {
-                let area = (panel.frame.width, panel.frame.height);
-                panel
-                    .root
-                    .addSublayer(&label_layer(label, style, area, panel.scale, opacity));
+        } else {
+            for panel in &self.panels {
+                // SAFETY: clearing the sublayer array with `None` is always valid.
+                unsafe { panel.root.setSublayers(None) };
+            }
+            for outline in outlines {
+                if let Some(panel) = self.panels.get(outline.screen) {
+                    panel
+                        .root
+                        .addSublayer(&outline_layer(outline, style, panel, opacity));
+                }
+            }
+            for label in labels {
+                self.add_label(label, style, opacity);
             }
         }
         CATransaction::commit();
@@ -282,6 +333,7 @@ impl Overlay {
             panel.window.orderFrontRegardless();
         }
         CATransaction::flush();
+        self.drawn = Some(now);
         self.visible = true;
     }
 
@@ -299,6 +351,7 @@ impl Overlay {
         }
         CATransaction::commit();
         CATransaction::flush();
+        self.drawn = None;
         self.visible = false;
     }
 
@@ -314,5 +367,78 @@ impl Drop for Overlay {
             panel.window.orderOut(None);
             panel.window.close();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Drawn, added};
+    use crate::types::{Label, LabelStyle, Outline, Rgba};
+
+    fn label(text: &str, x: f64) -> Label {
+        Label {
+            screen: 0,
+            x,
+            y: 10.0,
+            text: text.to_owned(),
+            typed: 0,
+            focused: false,
+        }
+    }
+
+    fn drawn(labels: &[Label]) -> Drawn {
+        let black = Rgba {
+            red: 0.0,
+            green: 0.0,
+            blue: 0.0,
+            alpha: 1.0,
+        };
+        Drawn {
+            labels: labels.to_vec(),
+            outlines: Vec::new(),
+            style: LabelStyle {
+                font_size: 12.0,
+                background: black,
+                foreground: black,
+                typed_foreground: black,
+                border: black,
+            },
+            opacity: 1.0,
+        }
+    }
+
+    #[test]
+    fn a_frame_that_only_adds_labels_draws_only_those() {
+        let shown = drawn(&[label("a", 0.0), label("s", 50.0)]);
+        let grown = drawn(&[label("a", 0.0), label("s", 50.0), label("d", 90.0)]);
+        assert_eq!(added(Some(&shown), &grown), Some(&grown.labels[2..]));
+        assert_eq!(added(Some(&shown), &shown), Some(&shown.labels[2..]));
+    }
+
+    #[test]
+    fn any_other_change_draws_everything_again() {
+        let shown = drawn(&[label("a", 0.0), label("s", 50.0)]);
+        assert_eq!(added(None, &shown), None);
+        // A typed prefix, a highlight, a dropped or moved label, or a new outline.
+        let mut typed = shown.clone();
+        typed.labels[0].typed = 1;
+        assert_eq!(added(Some(&shown), &typed), None);
+        let mut focused = shown.clone();
+        focused.labels[1].focused = true;
+        assert_eq!(added(Some(&shown), &focused), None);
+        assert_eq!(added(Some(&shown), &drawn(&[label("s", 50.0)])), None);
+        assert_eq!(
+            added(Some(&shown), &drawn(&[label("a", 1.0), label("s", 50.0)])),
+            None
+        );
+        let mut outlined = shown.clone();
+        outlined.outlines.push(Outline {
+            screen: 0,
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        });
+        assert_eq!(added(Some(&shown), &outlined), None);
     }
 }

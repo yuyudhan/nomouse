@@ -293,14 +293,14 @@ pub const FIELDS: &[Field] = &[
         field(
             "hints.early_rescan_ms",
             Section::Labels,
-            "More labels after (ms)",
+            "More labels every (ms)",
             Kind::Number {
                 min: 0,
                 max: crate::config::MAX_RESCAN_MS,
             },
         ),
-        "Labels show at once; what appeared since gets labels this long after the hotkey. \
-         0: off.",
+        "Labels show at once; what appeared since gets labels this often after the hotkey, \
+         until the last stage. 0: only the last stage.",
     ),
     helped(
         field(
@@ -312,8 +312,8 @@ pub const FIELDS: &[Field] = &[
                 max: crate::config::MAX_RESCAN_MS,
             },
         ),
-        "Slow content (a browser building its page) gets labels this long after the hotkey; \
-         later than the first. 0: off.",
+        "The last stage, for slow content (a browser building its page): this long after the \
+         hotkey; later than the first. 0: off.",
     ),
     helped(
         field(

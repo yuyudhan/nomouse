@@ -1,11 +1,11 @@
 //! Property tests: generated labels are unique, prefix-free, minimal and typable, and a re-scan
-//! keeps the labels of the targets still there.
+//! only adds labels: the ones shown never change and the new ones never collide with them.
 
 use std::collections::{HashMap, HashSet};
 
 use nomouse_core::{
     Alphabet, Element, ElementId, FilterState, Hint, LabelFilter, Rect, Role, assign_hints,
-    generate_labels, reassign_hints,
+    generate_labels, merge_hints,
 };
 use proptest::prelude::*;
 
@@ -98,26 +98,30 @@ proptest! {
     }
 
     #[test]
-    fn a_rescan_keeps_the_labels_of_targets_still_there(
+    fn rescans_only_add_labels_and_never_collide(
         alphabet in alphabet(),
-        before in prop::collection::vec(any::<bool>(), 0..120),
-        after in prop::collection::vec(any::<bool>(), 0..120),
+        scans in prop::collection::vec(prop::collection::vec(any::<bool>(), 0..120), 1..5),
     ) {
-        let first = assign_hints(&alphabet, grid(&before));
-        let scan = grid(&after);
-        let second = reassign_hints(&alphabet, &first, scan.clone());
-        // Every target of the new scan has exactly one label, and the labels stay typable.
-        prop_assert_eq!(second.len(), scan.len());
-        let targets: HashSet<Rect> = second.iter().map(|hint| hint.element.bounds).collect();
-        prop_assert_eq!(targets, scan.iter().map(|e| e.bounds).collect::<HashSet<_>>());
-        assert_prefix_free(&second)?;
-        // Targets in both scans keep their labels; only a full label tree gives one up.
-        let old: HashMap<Rect, &str> =
-            first.iter().map(|hint| (hint.element.bounds, hint.label.as_str())).collect();
-        let changed = second
-            .iter()
-            .filter(|hint| old.get(&hint.element.bounds).is_some_and(|label| *label != hint.label))
-            .count();
-        prop_assert!(changed <= 1, "{changed} kept targets changed their label");
+        let mut shown = assign_hints(&alphabet, grid(&scans[0]));
+        assert_prefix_free(&shown)?;
+        for scan in &scans[1..] {
+            let before = shown.clone();
+            let elements = grid(scan);
+            let added = merge_hints(&alphabet, &shown, elements.clone());
+            shown.extend(added);
+            // The labels already shown are untouched, in place, with their targets.
+            prop_assert_eq!(&shown[..before.len()], &before[..]);
+            // Every target of the scan is labelled exactly once, and all labels stay typable.
+            let mut labelled: HashMap<Rect, usize> = HashMap::new();
+            for hint in &shown {
+                *labelled.entry(hint.element.bounds).or_default() += 1;
+            }
+            for element in &elements {
+                prop_assert_eq!(labelled.get(&element.bounds), Some(&1));
+            }
+            let unique: HashSet<&str> = shown.iter().map(|hint| hint.label.as_str()).collect();
+            prop_assert_eq!(unique.len(), shown.len());
+            assert_prefix_free(&shown)?;
+        }
     }
 }

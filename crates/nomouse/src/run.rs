@@ -235,8 +235,8 @@ const fn emptied(performed: usize) -> Outcome {
     }
 }
 
-/// Scans again while nothing is typed and redraws when the labels changed. A failed scan
-/// (say, no focused window halfway through a navigation) keeps the labels shown; a lost
+/// Scans again and draws the labels the scan adds; the ones shown stay as they are. A failed
+/// scan (say, no focused window halfway through a navigation) keeps the labels shown; a lost
 /// display surfaces from the next wait for a key.
 fn rescan(
     platform: &mut dyn Platform,
@@ -258,11 +258,13 @@ fn rescan(
 }
 
 /// Runs one activation in `mode`. `started` is when the trigger arrived, for the
-/// hotkey-to-labels timing logged at info level and the re-scans ([`Rescans`]): while no key
-/// is typed the elements are scanned again right after the first scan and at the configured
-/// stages (`settings.rescans`, 1 s and 3 s by default; in continuous mode, counted from the
-/// scan after each action), so a page still loading
-/// gets its labels. `dismissed` reports a request to toggle the labels off that arrives
+/// hotkey-to-labels timing logged at info level and the re-scans ([`Rescans`]): the labels of
+/// a quick first pass show at once ([`nomouse_core::ElementSource::first_elements`]), then the
+/// elements are scanned again right after it and at the configured stages
+/// (`settings.rescans`: 1, 2 and 3 s by default; in continuous mode, counted from the scan
+/// after each action), each adding labels for the targets that appeared, so a page still
+/// loading gets its labels. Typing does not stop the re-scans; picking a target or closing
+/// does. `dismissed` reports a request to toggle the labels off that arrives
 /// outside the platform's events (the daemon's command socket). When the focused window's
 /// app is in `ignore.apps`, nothing is scanned or shown.
 ///
@@ -297,7 +299,12 @@ fn activate_on_clock(
     let mut scans = 0_usize;
     loop {
         let shown_from = if scans == 0 { started } else { now() };
-        let elements = platform.elements(settings.scope)?;
+        // Hints and continuous hints show the quick first pass at once; scroll areas and
+        // search candidates need the whole tree.
+        let elements = match mode {
+            Mode::Once(_) | Mode::Continuous(_) => platform.first_elements(settings.scope)?,
+            Mode::Scroll | Mode::Search => platform.elements(settings.scope)?,
+        };
         if mode == Mode::Scroll {
             let areas = ScrollSession::areas_of(&elements);
             if let Some(scroll) =
@@ -329,10 +336,7 @@ fn activate_on_clock(
             }
             let timeout = rescans.until_next(now()).map_or(POLL, |due| due.min(POLL));
             let key = match wait(platform, timeout, dismissed)? {
-                Wait::Key(key) => {
-                    rescans.cancel();
-                    key
-                }
+                Wait::Key(key) => key,
                 Wait::Dismissed => return Ok(ended(performed)),
                 Wait::Timeout => continue,
             };
@@ -989,35 +993,66 @@ mod tests {
     }
 
     #[test]
-    fn rescans_run_at_once_then_at_one_and_three_seconds_while_idle() {
+    fn rescans_run_at_once_then_every_second_until_three_seconds_while_idle() {
         let mut p = fake(3, &after_polls(70, "!"));
         assert_eq!(
             run(&mut p, Mode::Once(ActionKind::Click)),
             Ok(Outcome::Cancelled)
         );
-        assert_eq!(p.scanned_at, [ms(0), ms(0), ms(1000), ms(3000)]);
+        assert_eq!(p.scanned_at, [ms(0), ms(0), ms(1000), ms(2000), ms(3000)]);
         assert_eq!(p.keys.len(), 0);
     }
 
     #[test]
-    fn a_typed_key_cancels_the_pending_rescans() {
+    fn typing_keeps_the_rescans_running() {
         // A key that matches no label, typed after the 1 s re-scan.
         let mut late = fake(3, &after_polls(25, &format!("z{}!", "_".repeat(60))));
         assert_eq!(
             run(&mut late, Mode::Once(ActionKind::Click)),
             Ok(Outcome::Cancelled)
         );
-        assert_eq!(late.scanned_at, [ms(0), ms(0), ms(1000)]);
-        // A label prefix typed at once: only the immediate re-scan ran.
+        assert_eq!(
+            late.scanned_at,
+            [ms(0), ms(0), ms(1000), ms(2000), ms(3000)]
+        );
+        // A label prefix typed at once: every stage still runs and the prefix stays typed.
         let mut early = fake(20, &format!("a{}!", "_".repeat(80)));
         assert_eq!(
             run(&mut early, Mode::Once(ActionKind::Click)),
             Ok(Outcome::Cancelled)
         );
-        assert_eq!(early.scanned_at, [ms(0), ms(0)]);
+        assert_eq!(
+            early.scanned_at,
+            [ms(0), ms(0), ms(1000), ms(2000), ms(3000)]
+        );
         assert_eq!(
             early.shown.last().map(|(_, typed)| typed.as_str()),
             Some("a")
+        );
+    }
+
+    #[test]
+    fn a_label_typed_while_targets_arrive_picks_its_target() {
+        // "a" typed at once, the page grows at 1 s, the rest of the label comes at 1.5 s.
+        let mut p = fake(20, &format!("a{}a", "_".repeat(30)));
+        let mut grown = p.elements.clone();
+        grown.push(button(30, 2000, 0));
+        p.pages = vec![(ms(1000), grown)];
+        assert_eq!(
+            run(&mut p, Mode::Once(ActionKind::Click)),
+            Ok(Outcome::Performed(1))
+        );
+        assert_eq!(p.scanned_at, [ms(0), ms(0), ms(1000)]);
+        // The 1 s stage drew the new label without dropping the typed prefix.
+        assert_eq!(p.shown.len(), 3);
+        assert!(p.shown.iter().skip(1).all(|(_, typed)| typed == "a"));
+        // "aa" is the target it was before the page grew.
+        let first = nomouse_core::assign_hints(&Alphabet::default(), fake(20, "").elements);
+        let aa = first.iter().find(|hint| hint.label == "aa");
+        let target = aa.map(|hint| hint.element.target());
+        assert_eq!(
+            p.performed,
+            target.map(Action::click).into_iter().collect::<Vec<_>>()
         );
     }
 
@@ -1046,10 +1081,11 @@ mod tests {
     }
 
     #[test]
-    fn labels_stay_stable_across_a_rescan_that_adds_targets() {
+    fn labels_stay_stable_across_rescans_that_add_or_lose_targets() {
         let mut p = fake(2, &after_polls(60, "d"));
         let first = p.elements.clone();
-        // At 1 s a button arrives between the two; at 3 s the first one is gone.
+        // At 1 s a button arrives between the two; at 3 s the first one is gone, which
+        // leaves its label where it is.
         let mut grown = first.clone();
         grown.push(button(7, 50, 0));
         let shrunk = vec![first[1].clone(), button(8, 50, 0)];
@@ -1062,8 +1098,7 @@ mod tests {
             p.frames,
             [
                 frame(&[("a", 0), ("s", 100)]),
-                frame(&[("a", 0), ("d", 50), ("s", 100)]),
-                frame(&[("d", 50), ("s", 100)]),
+                frame(&[("a", 0), ("s", 100), ("d", 50)]),
             ]
         );
         assert_eq!(p.performed, [Action::click(Point::new(55, 5))]);
@@ -1082,28 +1117,35 @@ mod tests {
     }
 
     #[test]
-    fn labels_show_at_once_and_late_targets_join_at_one_and_three_seconds() {
-        let mut p = growing_page(&after_polls(70, "!"));
-        assert_eq!(
-            run(&mut p, Mode::Once(ActionKind::Click)),
-            Ok(Outcome::Cancelled)
-        );
-        assert_eq!(p.scanned_at, [ms(0), ms(0), ms(1000), ms(3000)]);
-        // The first labels are drawn from the first scan; each stage only adds labels.
-        assert_eq!(
-            p.frames,
-            [
-                frame(&[("a", 0), ("s", 100)]),
-                frame(&[("a", 0), ("d", 50), ("s", 100)]),
-                frame(&[("a", 0), ("d", 50), ("s", 100), ("f", 150)]),
-            ]
-        );
+    fn labels_show_at_once_and_late_targets_join_each_second() {
+        for mode in [
+            Mode::Once(ActionKind::Click),
+            Mode::Continuous(ActionKind::Click),
+        ] {
+            let mut p = growing_page(&after_polls(70, "!"));
+            assert_eq!(run(&mut p, mode), Ok(Outcome::Cancelled));
+            assert_eq!(
+                p.scanned_at,
+                [ms(0), ms(0), ms(1000), ms(2000), ms(3000)],
+                "{mode:?}"
+            );
+            // The first labels are drawn from the first scan; each stage only adds labels.
+            assert_eq!(
+                p.frames,
+                [
+                    frame(&[("a", 0), ("s", 100)]),
+                    frame(&[("a", 0), ("s", 100), ("d", 50)]),
+                    frame(&[("a", 0), ("s", 100), ("d", 50), ("f", 150)]),
+                ],
+                "{mode:?}"
+            );
+        }
     }
 
     #[test]
     fn no_stage_runs_after_the_labels_close() {
-        // Escape two seconds in, between the 1 s and the 3 s stage.
-        let mut p = growing_page(&after_polls(40, "!"));
+        // Escape at 1.5 s, between the 1 s and the 2 s stage.
+        let mut p = growing_page(&after_polls(30, "!"));
         assert_eq!(
             run(&mut p, Mode::Once(ActionKind::Click)),
             Ok(Outcome::Cancelled)
@@ -1129,7 +1171,7 @@ mod tests {
         assert_eq!(p.scanned_at, [ms(0), ms(0), ms(2000)]);
         assert_eq!(
             p.frames.last(),
-            Some(&frame(&[("a", 0), ("d", 50), ("s", 100)]))
+            Some(&frame(&[("a", 0), ("s", 100), ("d", 50)]))
         );
         // Both off: only the immediate re-scan.
         let off = Settings {
@@ -1158,7 +1200,7 @@ mod tests {
             run(&mut p, Mode::Once(ActionKind::Click)),
             Ok(Outcome::Cancelled)
         );
-        assert_eq!(p.scans, 4);
+        assert_eq!(p.scans, 5);
         assert_eq!(p.frames, [frame(&[("a", 0), ("s", 100), ("d", 200)])]);
     }
 

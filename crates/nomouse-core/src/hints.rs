@@ -102,10 +102,14 @@ pub struct Hint {
     pub element: Element,
 }
 
-/// Sorts `elements` into reading order and gives the shortest labels to the first ones.
+/// Sorts `elements` into reading order and gives the shortest labels to the first ones, leaving
+/// at least one label of the alphabet tree free so [`merge_hints`] can always label targets
+/// that arrive later without touching these.
 pub fn assign_hints(alphabet: &Alphabet, mut elements: Vec<Element>) -> Vec<Hint> {
     elements.sort_by(reading_order);
-    let labels = generate_labels(alphabet, elements.len());
+    // One label more than needed: the last one stays free. Only when `count` labels would
+    // fill the tree exactly does that change a label (one short label splits).
+    let labels = generate_labels(alphabet, elements.len() + 1);
     labels
         .into_iter()
         .zip(elements)
@@ -113,58 +117,46 @@ pub fn assign_hints(alphabet: &Alphabet, mut elements: Vec<Element>) -> Vec<Hint
         .collect()
 }
 
-/// Labels a fresh scan `elements` (sorted into reading order) so that labels the user may be
-/// reading stay put: every element that is still the target of a `previous` hint keeps that
-/// hint's label, the new ones get the shortest labels still free, and labels of targets that
-/// are gone are dropped.
+/// The hints for the targets of a fresh scan `elements` that `shown` does not label yet, in
+/// reading order, to be shown alongside `shown`. Hints already shown are never changed, moved
+/// or taken away, so a label the user is reading or typing stays exactly where it is.
 ///
-/// A target is still there when an element has its role, name and bounds; failing that, when a
-/// named element has its role and name (it moved, for example when a loading page pushes
-/// content down). Duplicates pair up in reading order.
+/// A target is already labelled when a shown hint has its role, name and bounds; failing that,
+/// when a shown hint of a named element has its role and name (it moved, for example when a
+/// loading page pushes content down). Duplicates pair up in reading order.
 ///
-/// The labels stay prefix-free. When the kept labels leave no free label at all (every label
-/// of the alphabet tree is taken, say eight one-letter labels of `asdfghjk` and a ninth
-/// target), the kept label last in reading order is given up and its subtree relabels that
-/// element and the new ones: the fewest labels that can change.
-pub fn reassign_hints(
-    alphabet: &Alphabet,
-    previous: &[Hint],
-    mut elements: Vec<Element>,
-) -> Vec<Hint> {
+/// The new labels are the shortest ones free: neither a shown label, nor a prefix of one, nor
+/// one of them as a prefix, so the whole set stays prefix-free. One label is always left free
+/// for the next scan (see [`assign_hints`]); without one (`shown` filled the tree) nothing is
+/// added.
+pub fn merge_hints(alphabet: &Alphabet, shown: &[Hint], mut elements: Vec<Element>) -> Vec<Hint> {
     elements.sort_by(reading_order);
-    let mut labels = kept_labels(previous, &elements);
-    let fresh = loop {
-        let needed = labels.iter().filter(|label| label.is_none()).count();
-        if let Some(fresh) = free_labels(alphabet, labels.iter().flatten(), needed) {
-            break fresh;
-        }
-        // Every label is taken: give up the last kept one (one is always there, since free
-        // labels exist whenever none is taken).
-        if let Some(last) = labels.iter_mut().rev().find(|label| label.is_some()) {
-            *last = None;
-        }
-    };
-    let mut fresh = fresh.into_iter();
-    labels
+    let labelled = labelled(shown, &elements);
+    let new: Vec<Element> = elements
         .into_iter()
-        .zip(elements)
-        .filter_map(|(label, element)| {
-            label
-                .or_else(|| fresh.next())
-                .map(|label| Hint { label, element })
-        })
+        .zip(labelled)
+        .filter_map(|(element, labelled)| (!labelled).then_some(element))
+        .collect();
+    let taken = shown.iter().map(|hint| &hint.label);
+    let Some(fresh) = free_labels(alphabet, taken, new.len() + 1) else {
+        return Vec::new();
+    };
+    fresh
+        .into_iter()
+        .zip(new)
+        .map(|(label, element)| Hint { label, element })
         .collect()
 }
 
-/// For each of `elements` (in reading order), the label of the `previous` hint whose target it
-/// still is, if any: first by role, name and bounds, then by role and a non-empty name.
-fn kept_labels(previous: &[Hint], elements: &[Element]) -> Vec<Option<String>> {
+/// For each of `elements` (in reading order), whether a `shown` hint already labels it: first
+/// by role, name and bounds, then by role and a non-empty name.
+fn labelled(shown: &[Hint], elements: &[Element]) -> Vec<bool> {
     let mut exact: HashMap<(Role, &str, Rect), VecDeque<usize>> = HashMap::new();
     let mut named: HashMap<(Role, &str), VecDeque<usize>> = HashMap::new();
-    let mut order: Vec<usize> = (0..previous.len()).collect();
-    order.sort_by(|a, b| reading_order(&previous[*a].element, &previous[*b].element));
+    let mut order: Vec<usize> = (0..shown.len()).collect();
+    order.sort_by(|a, b| reading_order(&shown[*a].element, &shown[*b].element));
     for index in order {
-        let element = &previous[index].element;
+        let element = &shown[index].element;
         exact
             .entry((element.role, element.name.as_str(), element.bounds))
             .or_default()
@@ -176,31 +168,33 @@ fn kept_labels(previous: &[Hint], elements: &[Element]) -> Vec<Option<String>> {
                 .push_back(index);
         }
     }
-    let mut used = vec![false; previous.len()];
+    let mut used = vec![false; shown.len()];
     let take = |queue: Option<&mut VecDeque<usize>>, used: &mut [bool]| {
-        let queue = queue?;
+        let Some(queue) = queue else {
+            return false;
+        };
         while let Some(index) = queue.pop_front() {
             if !used[index] {
                 used[index] = true;
-                return Some(previous[index].label.clone());
+                return true;
             }
         }
-        None
+        false
     };
-    let mut labels: Vec<Option<String>> = elements
+    let mut labelled: Vec<bool> = elements
         .iter()
         .map(|element| {
             let key = (element.role, element.name.as_str(), element.bounds);
             take(exact.get_mut(&key), &mut used)
         })
         .collect();
-    for (label, element) in labels.iter_mut().zip(elements) {
-        if label.is_none() && !element.name.is_empty() {
+    for (labelled, element) in labelled.iter_mut().zip(elements) {
+        if !*labelled && !element.name.is_empty() {
             let key = (element.role, element.name.as_str());
-            *label = take(named.get_mut(&key), &mut used);
+            *labelled = take(named.get_mut(&key), &mut used);
         }
     }
-    labels
+    labelled
 }
 
 /// `count` labels, shortest first, that are neither one of `taken` (a prefix-free set) nor a
@@ -332,33 +326,30 @@ mod tests {
     }
 
     #[test]
-    fn a_rescan_keeps_labels_and_gives_new_targets_free_ones() {
+    fn a_rescan_labels_only_new_targets_and_leaves_shown_hints_as_they_are() {
         let alphabet = Alphabet::default();
         let first = assign_hints(
             &alphabet,
             vec![link(1, "one", 0, 0), link(2, "two", 0, 100)],
         );
         assert_eq!(labels(&first), [("one", "a"), ("two", "s")]);
-        // A new link between them in reading order: the old two keep a and s. Ids change.
+        // A new link between them in reading order; the scan gives every element a new id.
         let scan = vec![
             link(7, "two", 0, 100),
             link(8, "new", 0, 50),
             link(9, "one", 0, 0),
         ];
-        let second = reassign_hints(&alphabet, &first, scan);
-        assert_eq!(labels(&second), [("one", "a"), ("new", "d"), ("two", "s")]);
-        assert_eq!(second[0].element.id, ElementId(9));
-        // "one" is gone: its label goes, the rest stay.
-        let third = reassign_hints(
-            &alphabet,
-            &second,
-            vec![link(3, "new", 0, 50), link(4, "two", 0, 100)],
-        );
-        assert_eq!(labels(&third), [("new", "d"), ("two", "s")]);
+        let added = merge_hints(&alphabet, &first, scan);
+        assert_eq!(labels(&added), [("new", "d")]);
+        assert_eq!(added[0].element.id, ElementId(8));
+        // "one" is gone and "two" came back: nothing to add, nothing shown is touched.
+        let shown = [first, added].concat();
+        let again = merge_hints(&alphabet, &shown, vec![link(4, "two", 0, 100)]);
+        assert_eq!(again, Vec::new());
     }
 
     #[test]
-    fn a_moved_named_target_keeps_its_label_and_duplicates_pair_in_reading_order() {
+    fn a_moved_named_target_is_already_labelled_and_duplicates_pair_in_reading_order() {
         let alphabet = Alphabet::default();
         let first = assign_hints(
             &alphabet,
@@ -369,34 +360,55 @@ mod tests {
             ],
         );
         assert_eq!(labels(&first), [("more", "a"), ("more", "s"), ("", "d")]);
-        // An image above loads and pushes everything down 200 px: the named links keep their
-        // labels at their new place; the unnamed one is a new target.
+        // An image above loads and pushes everything down 200 px: the named links already have
+        // their labels, a third "more" and the unnamed one are new targets.
         let moved = vec![
             link(4, "more", 0, 200),
             link(5, "more", 0, 210),
             link(6, "", 0, 220),
+            link(7, "more", 0, 230),
         ];
-        let second = reassign_hints(&alphabet, &first, moved);
-        assert_eq!(labels(&second), [("more", "a"), ("more", "s"), ("", "d")]);
-        assert_eq!(second[1].element.bounds, Rect::new(0, 210, 5, 5));
+        let added = merge_hints(&alphabet, &first, moved);
+        assert_eq!(labels(&added), [("", "f"), ("more", "g")]);
+        assert_eq!(added[1].element.bounds, Rect::new(0, 230, 5, 5));
     }
 
     #[test]
-    fn a_full_label_tree_gives_up_only_the_last_kept_label() {
+    fn the_first_labels_leave_room_so_later_ones_never_relabel() {
         let alphabet = Alphabet::new("fj").unwrap();
-        let first = assign_hints(&alphabet, vec![link(1, "one", 0, 0), link(2, "two", 0, 10)]);
-        assert_eq!(labels(&first), [("one", "f"), ("two", "j")]);
-        let scan = vec![
-            link(1, "one", 0, 0),
-            link(2, "two", 0, 10),
-            link(3, "three", 0, 20),
-        ];
-        let second = reassign_hints(&alphabet, &first, scan);
-        assert_eq!(
-            labels(&second),
-            [("one", "f"), ("two", "jf"), ("three", "jj")]
-        );
-        assert_prefix_free(&second);
+        // Two targets would fill the tree with f and j; one label stays free instead.
+        let links = |count: u64| -> Vec<Element> {
+            (0..count)
+                .map(|i| link(i, &format!("link {i}"), 0, 10 * i32::try_from(i).unwrap()))
+                .collect()
+        };
+        let first = assign_hints(&alphabet, links(2));
+        assert_eq!(labels(&first), [("link 0", "j"), ("link 1", "ff")]);
+        let mut shown = first;
+        for count in 3..15 {
+            let before = shown.clone();
+            let added = merge_hints(&alphabet, &shown, links(count));
+            assert_eq!(added.len(), 1);
+            assert_eq!(added[0].element.name, format!("link {}", count - 1));
+            shown.extend(added);
+            assert_eq!(shown[..before.len()], before[..]);
+            assert_prefix_free(&shown);
+        }
+    }
+
+    #[test]
+    fn eight_targets_keep_a_free_label_in_the_default_alphabet() {
+        let alphabet = Alphabet::default();
+        let eight: Vec<Element> = (0..8)
+            .map(|i| link(i, "", 0, 10 * i32::try_from(i).unwrap()))
+            .collect();
+        let first = assign_hints(&alphabet, eight.clone());
+        assert_prefix_free(&first);
+        let mut scan = eight;
+        scan.push(link(8, "", 0, 80));
+        let added = merge_hints(&alphabet, &first, scan);
+        assert_eq!(added.len(), 1);
+        assert_prefix_free(&[first, added].concat());
     }
 
     #[test]

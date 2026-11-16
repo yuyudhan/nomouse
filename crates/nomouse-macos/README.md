@@ -45,9 +45,10 @@ allowed, the Input Monitoring state and the Chromium/Electron opt-in list.
   The attribute is checked before every activation and set again when the app turned it off
   (a relaunched Chromium starts with it off). The page's tree appears a moment after it is set
   (~2.8 s in a relaunched Chrome 157); a scan never waits for it: labels show at once for what
-  is there and the page joins at the hint session's later stages (`hints.early_rescan_ms`,
-  `hints.late_rescan_ms`, 1 s and 3 s by default). An activation that finds no web content in
-  such an app 4 s or more after switching the attribute on logs a hint once per process.
+  is there and the page joins at the hint session's later stages (every
+  `hints.early_rescan_ms` up to `hints.late_rescan_ms`, 1, 2 and 3 s by default). An
+  activation that finds no web content in such an app 4 s or more after switching the
+  attribute on logs a hint once per process.
   `nomouse doctor` checks every running instance (passing when any shows a page, reporting
   blank tabs as "no page open"), walking again for up to 4 s while Chromium builds the tree.
 - **Hotkeys** on a character key match the key that types that character on the current

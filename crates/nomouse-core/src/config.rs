@@ -92,8 +92,8 @@ pub struct HintsConfig {
     /// How much of a web page is collected: `fast` (what is in the viewport) or `exhaustive`
     /// (the whole document, so search finds links scrolled out of view).
     pub browser: BrowserMode,
-    /// Milliseconds after the hotkey when labels are added for targets that appeared since
-    /// the first scan (a page still loading); 0 turns this stage off.
+    /// Milliseconds between the stages that add labels for targets that appeared since the
+    /// first scan (a page still loading), counted from the hotkey; 0 leaves only the last.
     pub early_rescan_ms: u32,
     /// Milliseconds after the hotkey of the last stage, for slow targets (a browser that is
     /// building its page's accessibility tree); later than `early_rescan_ms`, 0 turns it off.

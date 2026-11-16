@@ -48,6 +48,9 @@ const REVEAL_POLL: Duration = Duration::from_millis(30);
 /// Readings in a row that must agree before the scroll counts as finished: browsers report
 /// the final frame while their smooth scroll still runs, and ignore a click meanwhile.
 const REVEAL_STEADY: u32 = 8;
+/// Walk time of the quick first pass ([`ElementSource::first_elements`]): the labels it finds
+/// show at once, the hint session's immediate re-scan adds the rest.
+const FIRST_PASS: Duration = Duration::from_millis(70);
 
 /// One element of the last snapshot, kept for semantic clicks and for scrolling off-screen
 /// elements into view.
@@ -123,7 +126,7 @@ impl MacPlatform {
             themed.appearance(),
             themed.background()
         );
-        Ok(Self {
+        let platform = Self {
             app,
             tap,
             panels: Panels::new(),
@@ -143,7 +146,30 @@ impl MacPlatform {
                 browser: config.hints.browser,
                 ..Limits::default()
             },
-        })
+        };
+        platform.warm_up();
+        Ok(platform)
+    }
+
+    /// Reads a little of the frontmost window's tree and throws it away. The first
+    /// Accessibility calls of a process are slow (about 0.8 s on an M5 under macOS 27, against
+    /// 40 to 100 ms for a whole walk later), so paying for them at start keeps the first
+    /// activation as quick as the rest. Changes nothing in any app.
+    fn warm_up(&self) {
+        let started = Instant::now();
+        let limits = Limits {
+            time_budget: FIRST_PASS,
+            ..self.limits
+        };
+        let outcome = self.walk_once(RootSet::FocusedWindow, app::frontmost_pid(), limits);
+        tracing::debug!(
+            "warmed up Accessibility in {:?}: {}",
+            started.elapsed(),
+            outcome.map_or_else(
+                |error| error.to_string(),
+                |(_, walk)| format!("{} nodes", walk.visited)
+            )
+        );
     }
 
     /// Asks Chromium and Electron apps to build their accessibility tree: Electron's switch
@@ -172,15 +198,16 @@ impl MacPlatform {
         now == Some(true)
     }
 
-    /// Walks the roots of `set` once.
+    /// Walks the roots of `set` once, within `limits`.
     fn walk_once(
         &self,
         set: RootSet,
         frontmost: Option<i32>,
+        limits: Limits,
     ) -> Result<(bool, Walk<AxElement>), PlatformError> {
         let found_roots = roots(set, frontmost, self.desktop())?;
         let started = Instant::now();
-        let result = walk(&mut LiveTree, found_roots.roots, self.limits, || {
+        let result = walk(&mut LiveTree, found_roots.roots, limits, || {
             started.elapsed()
         })?;
         Ok((found_roots.has_window, result))
@@ -279,11 +306,15 @@ impl MacPlatform {
                 let (width, height) = whole_points(size_of(&text));
                 let mut target = hint.element.bounds;
                 // An off-screen element's label is pinned to the nearest edge of its viewport.
-                if let Some(entry) = usize::try_from(hint.element.id.0)
+                // A hint kept from an earlier scan has that scan's id: its entry is the one
+                // with its bounds.
+                let bounds = hint.element.bounds;
+                let entry = usize::try_from(hint.element.id.0)
                     .ok()
                     .and_then(|index| self.snapshot.get(index))
-                    .filter(|entry| entry.offscreen)
-                {
+                    .filter(|entry| entry.bounds == bounds)
+                    .or_else(|| self.snapshot.iter().find(|entry| entry.bounds == bounds));
+                if let Some(entry) = entry.filter(|entry| entry.offscreen) {
                     target = label_bounds(target, width, height, entry.visible);
                 }
                 let corner = label_corner(target, (width, height), &screens)?;
@@ -366,6 +397,28 @@ impl MacPlatform {
 
 impl ElementSource for MacPlatform {
     fn elements(&mut self, scope: Scope) -> Result<Vec<Element>, PlatformError> {
+        self.scan(scope, false)
+    }
+
+    fn first_elements(&mut self, scope: Scope) -> Result<Vec<Element>, PlatformError> {
+        self.scan(scope, true)
+    }
+
+    fn focused_app(&mut self) -> Result<Option<nomouse_core::AppIdentity>, PlatformError> {
+        // The frontmost app, by bundle id and by executable name (unbundled programs have
+        // only the latter).
+        Ok(app::frontmost_pid().map(|pid| nomouse_core::AppIdentity {
+            app_id: app::bundle_id(pid),
+            process: app::process_name(pid),
+            ..nomouse_core::AppIdentity::default()
+        }))
+    }
+}
+
+impl MacPlatform {
+    /// One walk of `scope`: within [`FIRST_PASS`] when `quick` (the labels shown at once; a
+    /// part of the tree may be left out), else within the configured limits.
+    fn scan(&mut self, scope: Scope, quick: bool) -> Result<Vec<Element>, PlatformError> {
         self.follow_appearance();
         let frontmost = app::frontmost_pid();
         // The frontmost app's pid and bundle id, and whether it is listed for
@@ -389,11 +442,21 @@ impl ElementSource for MacPlatform {
         let started = Instant::now();
         // One walk, never a wait: a page Chromium is still building joins at the hint
         // session's re-scans.
-        let (has_window, result) = self.walk_once(set, frontmost)?;
+        let limits = if quick {
+            Limits {
+                time_budget: FIRST_PASS,
+                ..self.limits
+            }
+        } else {
+            self.limits
+        };
+        let (has_window, result) = self.walk_once(set, frontmost, limits)?;
         if scope == Scope::FocusedWindow && !has_window && result.found.is_empty() {
             return Err(PlatformError::NoFocusedWindow);
         }
+        // A quick pass may stop before the web area: only a full walk tells it is missing.
         if let Some((pid, Some(bundle_id), listed)) = &target
+            && !quick
             && is_web_app(bundle_id, &self.enhanced_ui_apps)
             && reports_missing_web(
                 self.switched_at.get(pid).map(Instant::elapsed),
@@ -404,9 +467,10 @@ impl ElementSource for MacPlatform {
             self.hint_missing_web(*pid, bundle_id, *listed);
         }
         tracing::debug!(
-            "walked {} nodes in {:?}: {} elements, {} of them off-screen{}",
+            "walked {} nodes in {:?}{}: {} elements, {} of them off-screen{}",
             result.visited,
             started.elapsed(),
+            if quick { " (first pass)" } else { "" },
             result.found.len(),
             result.found.iter().filter(|found| found.offscreen).count(),
             result.truncated.map_or_else(String::new, |limit| format!(
@@ -442,16 +506,6 @@ impl ElementSource for MacPlatform {
             });
         }
         Ok(elements)
-    }
-
-    fn focused_app(&mut self) -> Result<Option<nomouse_core::AppIdentity>, PlatformError> {
-        // The frontmost app, by bundle id and by executable name (unbundled programs have
-        // only the latter).
-        Ok(app::frontmost_pid().map(|pid| nomouse_core::AppIdentity {
-            app_id: app::bundle_id(pid),
-            process: app::process_name(pid),
-            ..nomouse_core::AppIdentity::default()
-        }))
     }
 }
 

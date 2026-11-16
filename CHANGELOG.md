@@ -7,6 +7,18 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Changed
+
+- Labels arrive in batches and never change once shown, for both `ctrl+space` (hints) and
+  `ctrl+shift+space` (continuous). The labels of a quick first pass show at once (50 to 100 ms
+  after the hotkey on an M5, also for the first activation after the daemon starts, which used
+  to take about 0.8 s on macOS), the rest of the window right after, and elements that appear
+  later get labels at 1, 2 and 3 s (`hints.early_rescan_ms` is now the time between stages,
+  `hints.late_rescan_ms` the last one). A batch only adds labels: the ones on screen keep their
+  text, place and look, are not drawn again, and stay even if their element goes. Typing a
+  label no longer stops the batches; picking a target or closing the labels does. The first
+  labels leave one label free, so later ones never take a label from a shown target.
+
 ## [0.1.18] - 2026-11-14
 
 ### Fixed
