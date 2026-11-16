@@ -61,16 +61,22 @@ Every method is blocking and runs on the event-loop thread; errors are `Platform
    browser's page before its toolbar, see `nomouse_macos::warm`) whose
    labels show at once. Then `nomouse_core::Rescans` runs a `RescanSchedule`: right after the
    first scan, then every `hints.early_rescan_ms` up to `hints.late_rescan_ms` after the hotkey
-   (1, 2 and 3 s by default), or after the scan that follows each continuous-mode click; and
+   (1, 2 and 3 s by default), or after the scan that follows each continuous-mode click, then a
+   refresh every `hints.refresh_ms` (6, 9, 12 s, ...) until the labels close, for a page
+   scrolled under them; and
    `nomouse_core::Changes` adds a scan whenever the platform reports `InputEvent::TreeChanged`
    (macOS: `AXObserver` notifications of the frontmost web app, `nomouse_sys_macos::observe`),
    at most one per `CHANGE_GAP` (200 ms). Each
    re-scan goes through `HintSession::rescan`, whose `merge_hints` labels only the targets no
    shown hint has (same role, name and bounds, else same role and name) with the shortest
-   free labels; shown hints never change or go. `assign_hints` and `merge_hints` always leave
+   free labels; shown hints keep their letters, `follow_hints` moves a hint whose target moved
+   (same role and name, new bounds: the page scrolled) onto it, and a complete scan takes away
+   the hints of targets that went or left the screen (`gone_hints`), freeing their letters.
+   `assign_hints` and `merge_hints` always leave
    one label of the tree free, so a new target never takes a shown label. Typing does not stop
    the re-scans (the typed prefix stays and new labels under it show); a dismissal or a pick
-   does. The overlay draws only the added labels when a frame just appends some (macOS:
+   does. An empty activation ends after its last stage; the refreshes only run while labels
+   are up. The overlay adds and removes only the labels that changed (macOS:
    `nomouse_sys_macos::overlay::Overlay::show`). After a continuous-mode click an empty scan
    keeps the (empty) overlay up until a re-scan finds targets; the activation ends if the
    last one finds none.

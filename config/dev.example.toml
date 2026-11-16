@@ -39,6 +39,10 @@ early_rescan_ms = 1000
 # than early_rescan_ms, 0 turns it off, at most 10000. Typing does not stop the stages;
 # picking a target or closing the labels does.
 late_rescan_ms = 3000
+# Default 3000. After the last stage, the labels are refreshed this often (milliseconds) while
+# they are up: what scrolled into view gets labels, labels of what left go, the rest keep their
+# letters. 0 turns the refreshes off; otherwise 500 to 60000.
+refresh_ms = 3000
 
 [hotkeys]
 # A hotkey is modifiers (ctrl/control, alt/option, shift, super/cmd/command/meta/win; at least

@@ -118,12 +118,13 @@ pub fn assign_hints(alphabet: &Alphabet, mut elements: Vec<Element>) -> Vec<Hint
 }
 
 /// The hints for the targets of a fresh scan `elements` that `shown` does not label yet, in
-/// reading order, to be shown alongside `shown`. Hints already shown are never changed, moved
-/// or taken away, so a label the user is reading or typing stays exactly where it is.
+/// reading order, to be shown alongside `shown`. The labels shown keep their letters, and no
+/// new hint takes one of them.
 ///
 /// A target is already labelled when a shown hint has its role, name and bounds; failing that,
-/// when a shown hint of a named element has its role and name (it moved, for example when a
-/// loading page pushes content down). Duplicates pair up in reading order.
+/// when a shown hint of a named element has its role and name (it moved: a loading page pushed
+/// content down, or the page was scrolled; [`follow_hints`] moves its hint along). Duplicates
+/// pair up in reading order.
 ///
 /// The new labels are the shortest ones free: neither a shown label, nor a prefix of one, nor
 /// one of them as a prefix, so the whole set stays prefix-free. One label is always left free
@@ -135,7 +136,7 @@ pub fn merge_hints(alphabet: &Alphabet, shown: &[Hint], mut elements: Vec<Elemen
     let new: Vec<Element> = elements
         .into_iter()
         .zip(labelled)
-        .filter_map(|(element, labelled)| (!labelled).then_some(element))
+        .filter_map(|(element, labelled)| labelled.is_none().then_some(element))
         .collect();
     let taken = shown.iter().map(|hint| &hint.label);
     let Some(fresh) = free_labels(alphabet, taken, new.len() + 1) else {
@@ -160,10 +161,33 @@ pub fn gone_hints(shown: &[Hint], elements: &mut [Element]) -> Vec<usize> {
         .collect()
 }
 
-/// For each of `elements` (in reading order), whether a `shown` hint already labels it: first
-/// by role, name and bounds, then by role and a non-empty name; and for each `shown` hint,
-/// whether one of `elements` is its target.
-fn pair_up(shown: &[Hint], elements: &[Element]) -> (Vec<bool>, Vec<bool>) {
+/// Moves each `shown` hint whose target moved onto its target in `elements`, a fresh scan
+/// (paired up as [`merge_hints`] does, so `elements` are sorted into reading order): a target
+/// the page scrolled or pushed elsewhere keeps its label, which now sits on it and acts on it
+/// there. Hints whose target stayed put are left as they are. Returns whether a hint moved.
+pub fn follow_hints(shown: &mut [Hint], elements: &mut [Element]) -> bool {
+    elements.sort_by(reading_order);
+    let (labelled, _) = pair_up(shown, elements);
+    let mut moved = false;
+    for (element, index) in elements.iter().zip(labelled) {
+        if let Some(hint) = index.and_then(|index| shown.get_mut(index))
+            && hint.element.bounds != element.bounds
+        {
+            hint.element = element.clone();
+            moved = true;
+        }
+    }
+    moved
+}
+
+/// For each of `elements` (in reading order), the `shown` hint that already labels it; and for
+/// each `shown` hint, whether one of `elements` is its target. When the page moved
+/// ([`scroll_offset`]: it was scrolled, or content above it loaded), a target first pairs with
+/// the hint of its role and name whose bounds were its bounds before that move, so unnamed
+/// and same-named targets keep their letters (another target that moved into its old place
+/// does not take it); then with one of its role, name and bounds (it stayed, as a toolbar
+/// does); then with one of its role and non-empty name (it moved some other way).
+fn pair_up(shown: &[Hint], elements: &[Element]) -> (Vec<Option<usize>>, Vec<bool>) {
     let mut exact: HashMap<(Role, &str, Rect), VecDeque<usize>> = HashMap::new();
     let mut named: HashMap<(Role, &str), VecDeque<usize>> = HashMap::new();
     let mut order: Vec<usize> = (0..shown.len()).collect();
@@ -183,31 +207,81 @@ fn pair_up(shown: &[Hint], elements: &[Element]) -> (Vec<bool>, Vec<bool>) {
     }
     let mut used = vec![false; shown.len()];
     let take = |queue: Option<&mut VecDeque<usize>>, used: &mut [bool]| {
-        let Some(queue) = queue else {
-            return false;
-        };
+        let queue = queue?;
         while let Some(index) = queue.pop_front() {
             if !used[index] {
                 used[index] = true;
-                return true;
+                return Some(index);
             }
         }
-        false
+        None
     };
-    let mut labelled: Vec<bool> = elements
-        .iter()
-        .map(|element| {
-            let key = (element.role, element.name.as_str(), element.bounds);
-            take(exact.get_mut(&key), &mut used)
-        })
-        .collect();
+    let mut labelled: Vec<Option<usize>> = vec![None; elements.len()];
+    if let Some((dx, dy)) = scroll_offset(shown, elements) {
+        for (labelled, element) in labelled.iter_mut().zip(elements) {
+            let bounds = element.bounds;
+            let before = Rect::new(
+                bounds.x.saturating_sub(dx),
+                bounds.y.saturating_sub(dy),
+                bounds.width,
+                bounds.height,
+            );
+            let key = (element.role, element.name.as_str(), before);
+            *labelled = take(exact.get_mut(&key), &mut used);
+        }
+    }
     for (labelled, element) in labelled.iter_mut().zip(elements) {
-        if !*labelled && !element.name.is_empty() {
+        if labelled.is_none() {
+            let key = (element.role, element.name.as_str(), element.bounds);
+            *labelled = take(exact.get_mut(&key), &mut used);
+        }
+    }
+    for (labelled, element) in labelled.iter_mut().zip(elements) {
+        if labelled.is_none() && !element.name.is_empty() {
             let key = (element.role, element.name.as_str());
             *labelled = take(named.get_mut(&key), &mut used);
         }
     }
     (labelled, used)
+}
+
+/// How far the page moved since `shown` were labelled, when it did: the most common move of
+/// the targets whose role, name and size are those of exactly one hint and exactly one
+/// element (a named link; an unnamed file name cell, whose width follows its text), ties
+/// going to the smallest move. `None` when none of them moved.
+fn scroll_offset(shown: &[Hint], elements: &[Element]) -> Option<(i32, i32)> {
+    type Signature<'a> = (Role, &'a str, u32, u32);
+    fn by_signature<'a>(
+        elements: impl Iterator<Item = &'a Element>,
+    ) -> HashMap<Signature<'a>, Vec<Rect>> {
+        let mut map: HashMap<Signature<'a>, Vec<Rect>> = HashMap::new();
+        for element in elements {
+            let bounds = element.bounds;
+            map.entry((element.role, &element.name, bounds.width, bounds.height))
+                .or_default()
+                .push(bounds);
+        }
+        map
+    }
+    let before = by_signature(shown.iter().map(|hint| &hint.element));
+    let now = by_signature(elements.iter());
+    let mut moves: HashMap<(i32, i32), usize> = HashMap::new();
+    for (signature, now) in &now {
+        let (Some([a]), [b]) = (before.get(signature).map(Vec::as_slice), now.as_slice()) else {
+            continue;
+        };
+        let delta = (b.x.saturating_sub(a.x), b.y.saturating_sub(a.y));
+        if delta != (0, 0) {
+            *moves.entry(delta).or_default() += 1;
+        }
+    }
+    moves
+        .into_iter()
+        .max_by_key(|&((dx, dy), count)| {
+            let size = i64::from(dx).abs() + i64::from(dy).abs();
+            (count, std::cmp::Reverse(size), std::cmp::Reverse((dx, dy)))
+        })
+        .map(|(delta, _)| delta)
 }
 
 /// `count` labels, shortest first, that are neither one of `taken` (a prefix-free set) nor a
@@ -373,8 +447,8 @@ mod tests {
             ],
         );
         assert_eq!(labels(&first), [("more", "a"), ("more", "s"), ("", "d")]);
-        // An image above loads and pushes everything down 200 px: the named links already have
-        // their labels, a third "more" and the unnamed one are new targets.
+        // An image above loads and pushes everything down 200 px: the links already have their
+        // labels (the unnamed one moved as far as the page did), a third "more" is new.
         let moved = vec![
             link(4, "more", 0, 200),
             link(5, "more", 0, 210),
@@ -382,8 +456,98 @@ mod tests {
             link(7, "more", 0, 230),
         ];
         let added = merge_hints(&alphabet, &first, moved);
-        assert_eq!(labels(&added), [("", "f"), ("more", "g")]);
-        assert_eq!(added[1].element.bounds, Rect::new(0, 230, 5, 5));
+        assert_eq!(labels(&added), [("more", "f")]);
+        assert_eq!(added[0].element.bounds, Rect::new(0, 230, 5, 5));
+    }
+
+    #[test]
+    fn hints_follow_their_targets_when_the_page_scrolls() {
+        let alphabet = Alphabet::default();
+        let mut shown = assign_hints(
+            &alphabet,
+            vec![
+                link(1, "one", 0, 0),
+                link(2, "two", 0, 100),
+                link(3, "", 0, 200),
+            ],
+        );
+        assert_eq!(labels(&shown), [("one", "a"), ("two", "s"), ("", "d")]);
+        // Nothing moved: the hints stay as they are.
+        let mut same = vec![
+            link(7, "two", 0, 100),
+            link(8, "one", 0, 0),
+            link(9, "", 0, 200),
+        ];
+        let before = shown.clone();
+        assert!(!follow_hints(&mut shown, &mut same));
+        assert_eq!(shown, before);
+        // Scrolled up by 100: every link keeps its letter and moves along, the unnamed one
+        // too (it moved as far as the named ones).
+        let mut scrolled = vec![
+            link(4, "one", 0, -100),
+            link(5, "two", 0, 0),
+            link(6, "", 0, 100),
+        ];
+        assert!(follow_hints(&mut shown, &mut scrolled));
+        assert_eq!(labels(&shown), [("one", "a"), ("two", "s"), ("", "d")]);
+        assert_eq!(shown[0].element.bounds, Rect::new(0, -100, 5, 5));
+        assert_eq!(shown[1].element.bounds, Rect::new(0, 0, 5, 5));
+        assert_eq!(shown[1].element.id, ElementId(5));
+        assert_eq!(shown[2].element.bounds, Rect::new(0, 100, 5, 5));
+    }
+
+    #[test]
+    fn a_scroll_keeps_the_letters_of_same_named_and_unnamed_targets() {
+        let alphabet = Alphabet::default();
+        let mut shown = assign_hints(
+            &alphabet,
+            vec![
+                link(1, "edit", 0, 0),
+                link(2, "", 0, 100),
+                link(3, "edit", 0, 200),
+                link(4, "two", 0, 300),
+                link(5, "three", 0, 400),
+            ],
+        );
+        assert_eq!(
+            labels(&shown),
+            [
+                ("edit", "a"),
+                ("", "s"),
+                ("edit", "d"),
+                ("two", "f"),
+                ("three", "g")
+            ]
+        );
+        // Scrolled up by 200: the first "edit" and the unnamed link left, another unnamed link
+        // and another "edit" came in. The "edit" still on screen keeps "d" (reading order
+        // alone would have given it "a"), "two" and "three" keep theirs.
+        let mut scrolled = vec![
+            link(6, "edit", 0, 0),
+            link(7, "two", 0, 100),
+            link(8, "three", 0, 200),
+            link(9, "", 0, 300),
+            link(10, "edit", 0, 400),
+        ];
+        assert_eq!(gone_hints(&shown, &mut scrolled.clone()), [1]);
+        assert!(follow_hints(&mut shown, &mut scrolled));
+        let at = |label: &str| {
+            shown
+                .iter()
+                .find(|hint| hint.label == label)
+                .map(|hint| hint.element.bounds.y)
+        };
+        assert_eq!((at("d"), at("f"), at("g")), (Some(0), Some(100), Some(200)));
+        // The scrolled-off "edit" pairs with the one that came in. The unnamed link that left
+        // pairs with nothing ("s" stays where it was, and a complete scan takes it away); the
+        // one that came in is new.
+        assert_eq!(at("a"), Some(400));
+        assert_eq!(at("s"), Some(100));
+        // As the session does, the gone hint goes before new targets are labelled.
+        shown.remove(1);
+        let added = merge_hints(&alphabet, &shown, scrolled);
+        assert_eq!(added.len(), 1);
+        assert_eq!(added[0].element.id, ElementId(9));
     }
 
     #[test]
@@ -440,5 +604,61 @@ mod tests {
             None
         );
         assert_eq!(free_labels(&alphabet, &taken, 0), Some(Vec::new()));
+    }
+
+    /// A Finder list: unnamed rows of one size, each with an unnamed file name cell as wide
+    /// as its name; row `i` at `top + 20 * i`, ids from `first`.
+    fn rows(widths: &[u32], first: u64, top: i32) -> Vec<Element> {
+        let unnamed = |id: u64, role: Role, x: i32, y: i32, width: u32| Element {
+            id: ElementId(id),
+            role,
+            name: String::new(),
+            description: String::new(),
+            value: String::new(),
+            bounds: Rect::new(x, y, width, 20),
+            enabled: true,
+            offscreen: false,
+        };
+        let mut list = Vec::new();
+        for ((i, y), width) in (0..).zip((top..).step_by(20)).zip(widths) {
+            list.push(unnamed(first + 2 * i, Role::ListItem, 750, y, 600));
+            list.push(unnamed(first + 2 * i + 1, Role::TextField, 800, y, *width));
+        }
+        list
+    }
+
+    #[test]
+    fn unnamed_rows_keep_their_letters_when_the_list_scrolls() {
+        let alphabet = Alphabet::default();
+        let widths = [21, 44, 28, 39, 64, 50];
+        let mut shown = assign_hints(&alphabet, rows(&widths[..4], 0, 100));
+        let letters = |hints: &[Hint]| -> Vec<(i32, i32, String)> {
+            let mut all: Vec<_> = hints
+                .iter()
+                .map(|hint| {
+                    (
+                        hint.element.bounds.y,
+                        hint.element.bounds.x,
+                        hint.label.clone(),
+                    )
+                })
+                .collect();
+            all.sort();
+            all
+        };
+        let before = letters(&shown);
+        // Scrolled by two rows: rows 2 and 3 are at the top now, rows 4 and 5 came in. Row 2
+        // is where row 0 was, but keeps its own letters, and rows 0 and 1 are gone.
+        let mut scrolled = rows(&widths[2..], 100, 100);
+        assert_eq!(gone_hints(&shown, &mut scrolled.clone()), [0, 1, 2, 3]);
+        assert!(follow_hints(&mut shown, &mut scrolled));
+        let after = letters(&shown);
+        for (y, x, label) in &before[4..] {
+            assert!(
+                after.contains(&(y - 40, *x, label.clone())),
+                "{label}: {after:?}"
+            );
+        }
+        assert_eq!(merge_hints(&alphabet, &shown, scrolled).len(), 4);
     }
 }

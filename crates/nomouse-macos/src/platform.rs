@@ -594,9 +594,13 @@ impl MacPlatform {
                 found.bounds
             );
         }
-        self.complete = result.truncated.is_none();
-        self.page_pending_since = page_pending(web, has_window, result.web_areas)
-            .then(|| self.page_pending_since.unwrap_or_else(Instant::now));
+        let pending = page_pending(web, has_window, result.web_areas);
+        // A browser window without its page (still being built, or dropped by Chromium for a
+        // while after the user scrolled) cannot tell which labels left the page: such a scan
+        // takes none away, and the page's next scan does.
+        self.complete = result.truncated.is_none() && !pending;
+        self.page_pending_since =
+            pending.then(|| self.page_pending_since.unwrap_or_else(Instant::now));
         self.snapshot.clear();
         let mut elements = Vec::with_capacity(result.found.len());
         for (index, found) in result.found.into_iter().enumerate() {

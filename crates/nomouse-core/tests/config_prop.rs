@@ -1,14 +1,15 @@
 //! Property tests: every valid configuration survives a TOML round trip, out-of-range values are
-//! rejected, the label stages run in order, and fuzzy search accepts exactly the queries that
-//! are subsequences of the name.
+//! rejected, the label stages run in order followed by the refreshes, and fuzzy search accepts
+//! exactly the queries that are subsequences of the name.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nomouse_core::config::{
-    BrowserMode, Config, HintsConfig, MAX_RESCAN_MS, OverlayConfig, ScrollConfig, Theme,
+    BrowserMode, Config, HintsConfig, MAX_REFRESH_MS, MAX_RESCAN_MS, MIN_REFRESH_MS, OverlayConfig,
+    ScrollConfig, Theme,
 };
 use nomouse_core::search::fuzzy_score;
-use nomouse_core::{ActionKind, ConfigError, KeyBindings, RescanSchedule, Scope};
+use nomouse_core::{ActionKind, ConfigError, KeyBindings, RescanSchedule, Rescans, Scope};
 use proptest::prelude::*;
 
 fn alphabet() -> impl Strategy<Value = String> {
@@ -34,6 +35,7 @@ prop_compose! {
         browser in prop::sample::select(vec![BrowserMode::Fast, BrowserMode::Exhaustive]),
         early_rescan_ms in 0u32..=5000,
         late_gap in prop::option::of(1u32..=5000),
+        refresh_ms in prop_oneof![Just(0u32), MIN_REFRESH_MS..=MAX_REFRESH_MS],
         step in 1u32..=50,
         dash_step in 1u32..=100,
         font_size in 6u32..=72,
@@ -57,6 +59,7 @@ prop_compose! {
                 browser,
                 early_rescan_ms,
                 late_rescan_ms: late_gap.map_or(0, |gap| early_rescan_ms + gap),
+                refresh_ms,
             },
             scroll: ScrollConfig { step, dash_step },
             overlay: OverlayConfig {
@@ -104,6 +107,40 @@ proptest! {
                 "{:?}",
                 times
             );
+        }
+    }
+
+    #[test]
+    fn refresh_is_accepted_exactly_when_0_or_in_range(refresh in 0u32..70_000) {
+        let text = format!("[hints]\nrefresh_ms = {refresh}\n");
+        let accepted = refresh == 0 || (MIN_REFRESH_MS..=MAX_REFRESH_MS).contains(&refresh);
+        prop_assert_eq!(Config::from_toml(&text).is_ok(), accepted);
+    }
+
+    #[test]
+    fn refreshes_come_every_refresh_ms_after_the_last_stage(
+        early in 0u32..=5000,
+        late_gap in 0u32..=5000,
+        refresh in MIN_REFRESH_MS..=MAX_REFRESH_MS,
+    ) {
+        let late = if late_gap == 0 { 0 } else { early + late_gap };
+        let schedule = RescanSchedule::new(early, late).with_refresh(refresh);
+        let last = schedule.times().last().copied().unwrap_or_default();
+        let start = Instant::now();
+        let mut rescans = Rescans::new(start, schedule);
+        // Every stage, taken on time.
+        for at in schedule.times() {
+            prop_assert!(rescans.take_due(start + at));
+        }
+        prop_assert!(!rescans.is_pending());
+        let gap = Duration::from_millis(u64::from(refresh));
+        for k in 1..=3 {
+            let due = last + gap * k;
+            prop_assert_eq!(rescans.until_next(start + last), Some(gap * k));
+            let just_before = due.saturating_sub(Duration::from_millis(1));
+            prop_assert!(!rescans.take_due(start + just_before));
+            prop_assert!(rescans.take_due(start + due));
+            prop_assert_eq!(rescans.until_next(start + due), Some(gap));
         }
     }
 

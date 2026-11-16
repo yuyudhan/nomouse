@@ -264,6 +264,7 @@ fn rescan(
     settings: &Settings,
     session: &mut HintSession,
 ) -> Result<(), PlatformError> {
+    let scanning = Instant::now();
     let elements = match platform.elements(settings.scope) {
         Ok(elements) => elements,
         Err(error) => {
@@ -271,9 +272,15 @@ fn rescan(
             return Ok(());
         }
     };
+    let took = scanning.elapsed().as_millis();
     if session.rescan(elements, platform.last_scan_complete()) {
-        tracing::info!("re-scan drew labels: {} hints", session.hints().len());
+        tracing::info!(
+            "re-scan drew labels: {} hints (scan {took} ms)",
+            session.hints().len()
+        );
         draw(platform, session)?;
+    } else {
+        tracing::debug!("re-scan changed nothing (scan {took} ms)");
     }
     Ok(())
 }
@@ -311,8 +318,9 @@ impl Stages {
 /// elements are scanned again right after it and at the configured stages
 /// (`settings.rescans`: 1, 2 and 3 s by default; in continuous mode, counted from the scan
 /// after each action), each adding labels for the targets that appeared, so a page still
-/// loading gets its labels. Typing does not stop the re-scans; picking a target or closing
-/// does. `dismissed` reports a request to toggle the labels off that arrives
+/// loading gets its labels, then refreshed every 3 s by default while the labels are up, so a
+/// page scrolled under them stays labelled. Typing does not stop the re-scans; picking a
+/// target or closing does. `dismissed` reports a request to toggle the labels off that arrives
 /// outside the platform's events (the daemon's command socket). When the focused window's
 /// app is in `ignore.apps`, nothing is scanned or shown.
 ///
@@ -1213,6 +1221,160 @@ mod tests {
                     frame(&[("a", 0), ("s", 100), ("d", 50)]),
                     frame(&[("a", 0), ("s", 100), ("d", 50), ("f", 150)]),
                 ],
+                "{mode:?}"
+            );
+        }
+    }
+
+    /// A named link at `y`, as a scrolled page reports it.
+    fn link(id: u64, name: &str, y: i32) -> Element {
+        Element {
+            role: Role::Link,
+            name: name.to_owned(),
+            ..button(id, 0, y)
+        }
+    }
+
+    /// The labels of a frame drawn over [`link`]s, with the `y` of each.
+    fn column(labels: &[(&str, i32)]) -> Vec<(String, Point)> {
+        labels
+            .iter()
+            .map(|(label, y)| ((*label).to_owned(), Point::new(5, y + 5)))
+            .collect()
+    }
+
+    /// The refresh times of the default schedule up to 12 s, after the stages.
+    const REFRESHED: [Duration; 8] = [
+        ms(0),
+        ms(0),
+        ms(1000),
+        ms(2000),
+        ms(3000),
+        ms(6000),
+        ms(9000),
+        ms(12_000),
+    ];
+
+    #[test]
+    fn refreshes_every_three_seconds_follow_a_page_scrolled_under_the_labels() {
+        for mode in [
+            Mode::Once(ActionKind::Click),
+            Mode::Continuous(ActionKind::Click),
+        ] {
+            // 12.5 s with the labels up, then Escape.
+            let mut p = fake(0, &after_polls(250, "!"));
+            p.elements = vec![
+                link(0, "one", 0),
+                link(1, "two", 100),
+                link(2, "three", 200),
+            ];
+            // At 4.5 s the page scrolls by 100: "one" is scrolled out of view (still in the
+            // tree, off screen), "four" comes in. At 7.5 s it scrolls again: "two" leaves the
+            // tree, "five" and "six" come in.
+            let mut one_off = link(10, "one", -100);
+            one_off.offscreen = true;
+            let first_scroll = vec![
+                one_off,
+                link(11, "two", 0),
+                link(12, "three", 100),
+                link(13, "four", 200),
+            ];
+            let second_scroll = vec![
+                link(21, "three", 0),
+                link(22, "four", 100),
+                link(23, "five", 200),
+                link(24, "six", 300),
+            ];
+            p.pages = vec![(ms(4500), first_scroll), (ms(7500), second_scroll)];
+            assert_eq!(run(&mut p, mode), Ok(Outcome::Cancelled), "{mode:?}");
+            assert_eq!(p.scanned_at, REFRESHED, "{mode:?}");
+            assert_eq!(
+                p.frames,
+                [
+                    column(&[("a", 0), ("s", 100), ("d", 200)]),
+                    // 6 s: "one" left, its label is free and goes to "four"; "two" and
+                    // "three" keep their letters and move up with the page.
+                    column(&[("s", 0), ("d", 100), ("a", 200)]),
+                    // 9 s: "two" left, its label goes to "five".
+                    column(&[("d", 0), ("a", 100), ("s", 200), ("f", 300)]),
+                    // 12 s: nothing changed, nothing drawn.
+                ],
+                "{mode:?}"
+            );
+            assert_eq!(p.drawn_at, [ms(0), ms(6000), ms(9000)], "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_typed_prefix_survives_the_refreshes_and_picks_its_target() {
+        for mode in [
+            Mode::Once(ActionKind::Click),
+            Mode::Continuous(ActionKind::Click),
+        ] {
+            // "a" typed at once, 12.5 s of refreshes, then "a" again picks "aa".
+            let mut p = fake(20, &format!("a{}!", after_polls(250, "a")));
+            let first = nomouse_core::assign_hints(&Alphabet::default(), p.elements.clone());
+            // Targets in the typed group but "aa", in the order they leave the screen.
+            let leaving: Vec<ElementId> = first
+                .iter()
+                .filter(|hint| hint.label.starts_with('a') && hint.label != "aa")
+                .map(|hint| hint.element.id)
+                .collect();
+            let without = |page: &[Element], gone: &[ElementId]| -> Vec<Element> {
+                page.iter()
+                    .filter(|element| !gone.contains(&element.id))
+                    .cloned()
+                    .collect()
+            };
+            let mut at_4_5 = without(&p.elements, &leaving[..2]);
+            at_4_5.extend([button(30, 0, 500), button(31, 100, 500)]);
+            let mut at_7_5 = without(&at_4_5, &leaving[2..4]);
+            at_7_5.push(button(32, 200, 500));
+            p.pages = vec![(ms(4500), at_4_5), (ms(7500), at_7_5)];
+            assert_eq!(run(&mut p, mode), Ok(Outcome::Performed(1)), "{mode:?}");
+            assert!(p.scanned_at.starts_with(&REFRESHED), "{mode:?}");
+
+            // Before the pick: the first labels, the typed prefix, the 6 s and 9 s refreshes.
+            let before_pick = p.drawn_at.iter().filter(|at| **at < ms(12_500)).count();
+            assert_eq!(before_pick, 4, "{mode:?}: {:?}", p.drawn_at);
+            assert_eq!(&p.drawn_at[2..4], [ms(6000), ms(9000)], "{mode:?}");
+            assert!(
+                p.shown[1..before_pick]
+                    .iter()
+                    .all(|(_, typed)| typed == "a"),
+                "{mode:?}: {:?}",
+                p.shown
+            );
+            // The typed group: "as" and "ad" leave at 4.5 s and their labels go to the two
+            // targets that came in; "af" and "ag" leave at 7.5 s and "af" goes to the next
+            // one. "aa" and the rest stay where they are with their letters.
+            let came = |label: &str, x: i32| (label.to_owned(), Point::new(x + 5, 505));
+            let kept = frame(&[("aa", 600), ("af", 900), ("ag", 1000)]);
+            let rest = frame(&[("ah", 1100), ("aj", 1200), ("ak", 1300)]);
+            assert_eq!(
+                p.frames[2],
+                [
+                    kept.clone(),
+                    rest.clone(),
+                    vec![came("as", 0), came("ad", 100)]
+                ]
+                .concat(),
+                "{mode:?}"
+            );
+            assert_eq!(
+                p.frames[3],
+                [
+                    kept[..1].to_vec(),
+                    rest,
+                    vec![came("as", 0), came("ad", 100), came("af", 200)]
+                ]
+                .concat(),
+                "{mode:?}"
+            );
+            let aa = first.iter().find(|hint| hint.label == "aa").unwrap();
+            assert_eq!(
+                p.performed,
+                [Action::click(aa.element.target())],
                 "{mode:?}"
             );
         }

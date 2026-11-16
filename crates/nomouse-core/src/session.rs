@@ -30,7 +30,9 @@ use serde::{Deserialize, Serialize};
 use crate::action::{Action, ActionKind, MouseButton};
 use crate::element::{Element, Point, Role};
 use crate::filter::{FilterState, LabelFilter};
-use crate::hints::{Alphabet, Hint, assign_hints, generate_labels, gone_hints, merge_hints};
+use crate::hints::{
+    Alphabet, Hint, assign_hints, follow_hints, generate_labels, gone_hints, merge_hints,
+};
 use crate::hotkey::{KeyEvent, KeyPress, Modifiers};
 use crate::search::{is_searchable, rank};
 
@@ -153,18 +155,19 @@ impl HintSession {
         session
     }
 
-    /// Takes in a fresh scan of `elements`, for a page that is still loading or changing:
-    /// targets not labelled yet get free labels ([`merge_hints`]) next to the ones shown, which
-    /// never change or move. When the scan is `complete` (it read the whole window), hints
-    /// whose target is no longer there ([`gone_hints`]: it went away or out of view) go, and
-    /// their labels are free for later targets; a partial scan never takes a hint away. The
-    /// typed prefix (cleared if no label is left under it), the toggled modifiers and the
-    /// highlight (moved on if its hint went) stay. Search mode takes the scan as its
-    /// candidates while no query is typed (no label is shown before one).
+    /// Takes in a fresh scan of `elements`, for a page that is still loading, changing or
+    /// being scrolled: targets not labelled yet get free labels ([`merge_hints`]) next to the
+    /// ones shown, which keep their letters; a shown hint whose target moved (the page was
+    /// scrolled) moves along with it ([`follow_hints`]). When the scan is `complete` (it read
+    /// the whole window), hints whose target is no longer there ([`gone_hints`]: it went away
+    /// or out of view) go, and their labels are free for later targets; a partial scan never
+    /// takes a hint away. The typed prefix (cleared if no label is left under it), the toggled
+    /// modifiers and the highlight (moved on if its hint went) stay. Search mode takes the
+    /// scan as its candidates while no query is typed (no label is shown before one).
     ///
-    /// Returns whether the overlay must be redrawn: `true` exactly when labels were added or
-    /// taken away. A scan arriving while Return is armed for a double click or a drag has its
-    /// start point is ignored: the next key decides on the labels as they are.
+    /// Returns whether the overlay must be redrawn: `true` exactly when labels were added,
+    /// moved or taken away. A scan arriving while Return is armed for a double click or a drag
+    /// has its start point is ignored: the next key decides on the labels as they are.
     pub fn rescan(&mut self, elements: Vec<Element>, complete: bool) -> bool {
         if self.armed.is_some() || self.drag_from.is_some() {
             return false;
@@ -181,9 +184,10 @@ impl HintSession {
         } else {
             Vec::new()
         };
+        let moved = follow_hints(&mut self.hints, &mut targets);
         self.drop_hints(&gone);
         let added = merge_hints(&self.alphabet, &self.hints, targets);
-        if added.is_empty() && gone.is_empty() {
+        if added.is_empty() && gone.is_empty() && !moved {
             return false;
         }
         self.filter
@@ -1133,21 +1137,31 @@ mod tests {
     }
 
     #[test]
-    fn a_partial_rescan_never_takes_away_or_moves_a_shown_label() {
+    fn a_partial_rescan_never_takes_away_a_shown_label_and_moved_ones_follow() {
         let mut session = HintSession::new(&Alphabet::default(), elements(), ActionKind::Click);
         assert_eq!(session.key(KeyPress::Tab), SessionEvent::Highlighted);
         let before = session.hints().to_vec();
-        // e0 is missing and e1 moved in a scan that stopped early: what is shown stays as it
-        // is, highlight included.
-        let mut moved: Vec<Element> = elements().into_iter().skip(1).collect();
-        moved[0].bounds = Rect::new(0, 300, 10, 10);
-        assert!(!session.rescan(moved.clone(), false));
+        // e0 is missing in a scan that stopped early: what is shown stays, highlight included.
+        let rest: Vec<Element> = elements().into_iter().skip(1).collect();
+        assert!(!session.rescan(rest, false));
         assert!(!session.rescan(Vec::new(), false));
         assert_eq!(session.hints(), before);
+        // e1 moved (the page was scrolled): its label keeps its letter and moves along.
+        let mut moved: Vec<Element> = elements().into_iter().skip(1).collect();
+        moved[0].bounds = Rect::new(0, 300, 10, 10);
+        assert!(session.rescan(moved.clone(), false));
+        assert_eq!(session.hints()[0], before[0]);
+        assert_eq!(session.hints()[1].label, before[1].label);
+        assert_eq!(session.hints()[1].element.bounds, Rect::new(0, 300, 10, 10));
         assert_eq!(session.focused().map(|hint| hint.label.as_str()), Some("a"));
-        // A complete scan where e1 only moved keeps its label where it was drawn.
+        // A complete scan takes e0 away; e1 keeps its label where it is now.
         assert!(session.rescan(moved, true));
-        assert_eq!(session.hints(), &before[1..]);
+        assert_eq!(session.hints().len(), 1);
+        assert_eq!(session.hints()[0].label, before[1].label);
+        assert_eq!(
+            session.key(KeyPress::Char('s')),
+            SessionEvent::Perform(Action::click(Point::new(5, 305)))
+        );
     }
 
     #[test]

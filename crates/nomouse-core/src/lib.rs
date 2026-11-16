@@ -53,7 +53,8 @@ pub use element::{Element, ElementId, Point, Rect, Role};
 pub use filter::{FilterState, LabelFilter};
 pub use flavour::Flavour;
 pub use hints::{
-    Alphabet, AlphabetError, Hint, assign_hints, generate_labels, gone_hints, merge_hints,
+    Alphabet, AlphabetError, Hint, assign_hints, follow_hints, generate_labels, gone_hints,
+    merge_hints,
 };
 pub use hotkey::{Hotkey, HotkeyError, Key, KeyEvent, KeyPress, Modifiers};
 pub use platform::{

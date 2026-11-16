@@ -1,18 +1,23 @@
-//! When hint mode scans again while the user has typed nothing: a page that is still loading
-//! (a browser right after a navigation, or one whose accessibility tree was just switched on)
-//! adds its targets after the first scan, and the user may be waiting for them.
+//! When hint mode scans again: a page that is still loading (a browser right after a
+//! navigation, or one whose accessibility tree was just switched on) adds its targets after the
+//! first scan, and a page the user scrolls while the labels are up shows other targets.
 
 use std::time::{Duration, Instant};
 
 /// When the re-scans run, from the hotkey (in continuous mode, from the scan after each
 /// action): one right after the first scan, then every `hints.early_rescan_ms` until
 /// `hints.late_rescan_ms`, and at `hints.late_rescan_ms` itself (1, 2 and 3 s by default).
+/// These stages are followed by refreshes every `hints.refresh_ms` (6, 9, 12 s, ... by
+/// default) for as long as the labels are up, so a page scrolled meanwhile gets labels for
+/// what came into view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RescanSchedule {
     /// The time between stages; `None` when stages come only at `end` (or not at all).
     every: Option<Duration>,
     /// The last stage; zero when there is none after the immediate re-scan.
     end: Duration,
+    /// The time between refreshes after the last stage; `None` when there are none.
+    refresh: Option<Duration>,
 }
 
 impl RescanSchedule {
@@ -23,46 +28,84 @@ impl RescanSchedule {
     pub fn new(early_ms: u32, late_ms: u32) -> Self {
         let early = Duration::from_millis(u64::from(early_ms));
         let late = Duration::from_millis(u64::from(late_ms));
-        if early.is_zero() {
-            Self {
-                every: None,
-                end: late,
-            }
+        let (every, end) = if early.is_zero() {
+            (None, late)
         } else if late > early {
-            Self {
-                every: Some(early),
-                end: late,
-            }
+            (Some(early), late)
         } else {
-            Self {
-                every: None,
-                end: early,
-            }
+            (None, early)
+        };
+        Self {
+            every,
+            end,
+            refresh: None,
         }
     }
 
-    /// The time of re-scan number `index` (0 is the immediate one); `None` past the last.
-    fn at(&self, index: u32) -> Option<Duration> {
+    /// The same stages followed by a refresh every `refresh_ms` milliseconds after the last
+    /// one (after the immediate re-scan when there is no stage), until the labels close; 0
+    /// leaves no refresh.
+    #[must_use]
+    pub fn with_refresh(mut self, refresh_ms: u32) -> Self {
+        self.refresh = (refresh_ms > 0).then(|| Duration::from_millis(u64::from(refresh_ms)));
+        self
+    }
+
+    /// The number of the last stage (0 is the immediate re-scan).
+    fn last_stage(&self) -> u32 {
         // Interval stages are the multiples of `every` before `end`; `end` follows them.
         let last_interval = self.every.map_or(0, |every| {
             let below_end = self.end.as_nanos().saturating_sub(1) / every.as_nanos().max(1);
             u32::try_from(below_end).unwrap_or(u32::MAX)
         });
-        if index <= last_interval {
-            return Some(self.every.map_or(Duration::ZERO, |every| every * index));
+        if self.end.is_zero() {
+            last_interval
+        } else {
+            last_interval.saturating_add(1)
         }
-        (Some(index) == last_interval.checked_add(1) && !self.end.is_zero()).then_some(self.end)
     }
 
-    /// The re-scan times in order, the immediate one first.
+    /// The time of stage number `index` (0 is the immediate re-scan); `None` past the last.
+    fn stage(&self, index: u32) -> Option<Duration> {
+        let last = self.last_stage();
+        if index > last {
+            None
+        } else if index == last && !self.end.is_zero() {
+            Some(self.end)
+        } else {
+            Some(self.every.map_or(Duration::ZERO, |every| every * index))
+        }
+    }
+
+    /// The time of re-scan number `index`: a stage, then the refreshes after the last one;
+    /// `None` past the last stage when there are no refreshes.
+    fn at(&self, index: u32) -> Option<Duration> {
+        let last = self.last_stage();
+        if index <= last {
+            return self.stage(index);
+        }
+        let refresh = self.refresh?;
+        self.stage(last)
+            .and_then(|end| end.checked_add(refresh.checked_mul(index - last)?))
+    }
+
+    /// The stage times in order, the immediate re-scan first (the refreshes after them are
+    /// left out: they go on until the labels close).
     pub fn times(&self) -> Vec<Duration> {
-        (0..).map_while(|index| self.at(index)).collect()
+        (0..=self.last_stage())
+            .filter_map(|index| self.stage(index))
+            .collect()
+    }
+
+    /// The time between refreshes after the last stage, if any.
+    pub const fn refresh(&self) -> Option<Duration> {
+        self.refresh
     }
 }
 
 impl Default for RescanSchedule {
     fn default() -> Self {
-        Self::new(1000, 3000)
+        Self::new(1000, 3000).with_refresh(3000)
     }
 }
 
@@ -106,9 +149,10 @@ impl Rescans {
             .map(|at| (self.start + at).saturating_duration_since(now))
     }
 
-    /// Whether a re-scan is still pending.
+    /// Whether a stage is still pending (refreshes after the last stage do not count: an
+    /// activation with nothing to label ends after its last stage).
     pub fn is_pending(&self) -> bool {
-        self.schedule.at(self.next).is_some()
+        self.next <= self.schedule.last_stage()
     }
 }
 
@@ -201,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn rescans_come_at_once_then_every_second_until_three_seconds() {
+    fn rescans_come_at_once_then_every_second_until_three_seconds_then_every_three() {
         let start = Instant::now();
         let mut rescans = Rescans::new(start, RescanSchedule::default());
         assert!(rescans.take_due(start + 20 * MS));
@@ -213,10 +257,65 @@ mod tests {
         assert!(!rescans.take_due(start + 1999 * MS));
         assert!(rescans.take_due(start + 2000 * MS));
         assert!(!rescans.take_due(start + 2999 * MS));
+        assert!(rescans.is_pending());
+        assert!(rescans.take_due(start + 3000 * MS));
+        // The stages are over; the refreshes go on every 3 s while the labels are up.
+        assert!(!rescans.is_pending());
+        assert_eq!(rescans.until_next(start + 3000 * MS), Some(3000 * MS));
+        for second in [6, 9, 12, 15] {
+            assert!(
+                !rescans.take_due(start + (second * 1000 - 1) * MS),
+                "{second} s"
+            );
+            assert!(rescans.take_due(start + second * 1000 * MS), "{second} s");
+            assert!(!rescans.is_pending());
+        }
+        // A refresh that ran late is one refresh, and the next one keeps to the schedule.
+        assert!(rescans.take_due(start + 22_500 * MS));
+        assert_eq!(rescans.until_next(start + 22_500 * MS), Some(1500 * MS));
+    }
+
+    #[test]
+    fn refresh_0_ends_the_rescans_at_the_last_stage() {
+        let start = Instant::now();
+        let schedule = RescanSchedule::new(1000, 3000).with_refresh(0);
+        assert_eq!(schedule.refresh(), None);
+        let mut rescans = Rescans::new(start, schedule);
         assert!(rescans.take_due(start + 3000 * MS));
         assert!(!rescans.is_pending());
         assert_eq!(rescans.until_next(start + 3000 * MS), None);
         assert!(!rescans.take_due(start + 9000 * MS));
+    }
+
+    #[test]
+    fn refreshes_follow_the_last_stage_at_their_own_pace() {
+        let start = Instant::now();
+        let ticks = |schedule: RescanSchedule, until: u32| {
+            let mut rescans = Rescans::new(start, schedule);
+            (0..=until)
+                .step_by(100)
+                .filter(|at| rescans.take_due(start + *at * MS))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ticks(RescanSchedule::default(), 13_000),
+            [0, 1000, 2000, 3000, 6000, 9000, 12_000]
+        );
+        assert_eq!(
+            ticks(RescanSchedule::new(500, 1800).with_refresh(1000), 5000),
+            [0, 500, 1000, 1500, 1800, 2800, 3800, 4800]
+        );
+        // With no stage, the refreshes count from the immediate re-scan.
+        assert_eq!(
+            ticks(RescanSchedule::new(0, 0).with_refresh(2000), 6000),
+            [0, 2000, 4000, 6000]
+        );
+        // The stages alone are the times; the refreshes have no end.
+        assert_eq!(
+            RescanSchedule::default().times(),
+            [Duration::ZERO, 1000 * MS, 2000 * MS, 3000 * MS]
+        );
+        assert_eq!(RescanSchedule::default().refresh(), Some(3000 * MS));
     }
 
     #[test]

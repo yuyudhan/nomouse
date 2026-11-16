@@ -5,7 +5,9 @@
 //! time budget) and cycle detection (a node reached twice is visited once). Subtrees whose
 //! frame lies entirely outside the visible region are pruned: scrolled-away rows and off-screen
 //! content cannot be clicked, except in web documents under `hints.browser = "exhaustive"`,
-//! where they are walked last and reported as off-screen (search finds them).
+//! where they are walked last and reported as off-screen (search finds them). Under `"fast"`
+//! the same goes for web content Chromium pinned zero pixels high to the page's top or bottom
+//! edge (scrolled out of view): it is read but its subtree is not.
 
 use std::collections::HashSet;
 use std::hash::Hash;
@@ -272,7 +274,16 @@ pub fn walk<T: AxTree>(
             pressable: info.pressable,
         };
         let role = classify(facts);
-        if !info.children.is_empty() {
+        // Fast mode: Chromium reports web content scrolled out of view zero pixels high,
+        // pinned to the edge of the web area it went past, and its subtree with it. Reading
+        // that subtree finds nothing to label, and on a long page it uses up the node budget,
+        // so the scan stops early and cannot tell which labels scrolled away.
+        let scrolled_away = !exhaustive
+            && info
+                .frame
+                .zip(pending.web)
+                .is_some_and(|(frame, web)| pinned_to_edge(frame, web));
+        if !info.children.is_empty() && !scrolled_away {
             if pending.depth < pending.max_depth {
                 push_children(&mut stack, &pending, &info.role, info.frame, info.children);
             } else if pending.max_depth == limits.max_depth {
@@ -355,6 +366,17 @@ fn is_out_of_view<N>(frame: Option<Rect>, pending: &Pending<N>, exhaustive: bool
             !frame.intersects(&pending.visible)
         }
     })
+}
+
+/// Whether `frame` is empty and lies on or past the top or bottom edge of the web area `web`:
+/// where Chromium puts content scrolled out of view. An empty frame inside the area is left
+/// alone (a zero-height container can hold visible content, and a frame pinned before the
+/// window moved can be anywhere).
+fn pinned_to_edge(frame: Rect, web: Rect) -> bool {
+    let top = i64::from(web.y);
+    let bottom = top + i64::from(web.height);
+    let y = i64::from(frame.y);
+    frame.is_empty() && !web.is_empty() && (y <= top || y >= bottom)
 }
 
 /// A one-point-high frame standing in for the `index`-th element with an empty `reported`
@@ -727,6 +749,43 @@ mod tests {
                 .iter()
                 .all(|f| !f.offscreen && f.bounds.is_empty())
         );
+    }
+
+    #[test]
+    fn fast_skips_what_chromium_pinned_to_an_edge_after_a_scroll() {
+        // A page scrolled down: the article above the viewport is pinned zero pixels high to
+        // the web area's top edge with its links, the rest below to the bottom edge. A
+        // zero-height container in the middle holds a visible link (floats, say).
+        let web = Rect::new(0, 100, 1000, 500);
+        let mut tree = FakeTree::default();
+        tree.add(1, "AXWindow", SCREEN, &[2]);
+        tree.add(2, "AXWebArea", web, &[3, 6, 8, 10]);
+        tree.add(3, "AXGroup", Rect::new(0, 100, 1000, 0), &[4, 5]);
+        tree.add(4, "AXLink", Rect::new(10, 100, 40, 0), &[]);
+        tree.add(5, "AXLink", Rect::new(10, 100, 40, 0), &[]);
+        tree.add(6, "AXGroup", Rect::new(0, 300, 1000, 0), &[7]);
+        tree.add(7, "AXLink", Rect::new(10, 300, 40, 20), &[]);
+        tree.add(8, "AXLink", Rect::new(10, 400, 40, 20), &[]);
+        tree.add(10, "AXGroup", Rect::new(0, 600, 1000, 0), &[11, 12]);
+        tree.add(11, "AXLink", Rect::new(10, 600, 40, 0), &[]);
+        tree.add(12, "AXLink", Rect::new(10, 600, 40, 0), &[]);
+        // The pinned groups are read but not walked: a budget the whole tree would overrun
+        // covers everything in view.
+        let tight = Limits {
+            max_nodes: 7,
+            ..Limits::default()
+        };
+        let fast = walk(&mut tree, vec![root(1)], tight, no_time()).unwrap();
+        assert_eq!(ids(&fast), [7, 8]);
+        assert_eq!(fast.visited, 7);
+        assert_eq!(fast.truncated, None);
+        // Exhaustive mode still walks them (and the empty group in view), last and off screen.
+        let exhaustive = Limits {
+            browser: BrowserMode::Exhaustive,
+            ..Limits::default()
+        };
+        let all = walk(&mut tree, vec![root(1)], exhaustive, no_time()).unwrap();
+        assert_eq!(ids(&all), [8, 4, 5, 7, 11, 12]);
     }
 
     #[test]

@@ -395,6 +395,10 @@ const BAD_VALUES: &[(&str, &[&str])] = &[
         "[hints]\nearly_rescan_ms = 3000\nlate_rescan_ms = 1000\n",
         &["hints.late_rescan_ms", "later than hints.early_rescan_ms"],
     ),
+    (
+        "[hints]\nrefresh_ms = 100\n",
+        &["hints.refresh_ms", "500..=60000"],
+    ),
 ];
 
 #[test]
@@ -869,13 +873,17 @@ fn enhanced_ui_apps_edits_reload() {
     );
 }
 
-/// `hints.early_rescan_ms` and `hints.late_rescan_ms` set the label stages of the next
-/// activation, also when edited while the daemon runs.
+/// `hints.early_rescan_ms`, `hints.late_rescan_ms` and `hints.refresh_ms` set the label
+/// stages and refreshes of the next activation, also when edited while the daemon runs.
 #[test]
 fn rescan_stages_come_from_the_file_and_reload() {
     assert_eq!(
         settings_for("").rescans,
-        nomouse_core::RescanSchedule::new(1000, 3000)
+        nomouse_core::RescanSchedule::default()
+    );
+    assert_eq!(
+        settings_for("").rescans.refresh(),
+        Some(Duration::from_millis(3000))
     );
     let scratch = Scratch::new("reload-rescans");
     let path = scratch.write("[hints]\nearly_rescan_ms = 500\nlate_rescan_ms = 2000\n");
@@ -886,7 +894,7 @@ fn rescan_stages_come_from_the_file_and_reload() {
     );
     std::fs::write(
         &path,
-        "[hints]\nearly_rescan_ms = 0\nlate_rescan_ms = 4000\n",
+        "[hints]\nearly_rescan_ms = 0\nlate_rescan_ms = 4000\nrefresh_ms = 0\n",
     )
     .unwrap();
     let deadline = Instant::now() + WATCH_INTERVAL * 3;
@@ -894,8 +902,10 @@ fn rescan_stages_come_from_the_file_and_reload() {
         assert!(Instant::now() < deadline, "the edit was never noticed");
         std::thread::sleep(Duration::from_millis(50));
     }
+    let rescans = crate::settings(file.config()).unwrap().rescans;
     assert_eq!(
-        crate::settings(file.config()).unwrap().rescans.times(),
+        rescans.times(),
         [Duration::ZERO, Duration::from_millis(4000)]
     );
+    assert_eq!(rescans.refresh(), None);
 }

@@ -247,7 +247,8 @@ fn settings(config: &Config) -> Result<Settings, String> {
         rescans: nomouse_core::RescanSchedule::new(
             config.hints.early_rescan_ms,
             config.hints.late_rescan_ms,
-        ),
+        )
+        .with_refresh(config.hints.refresh_ms),
     })
 }
 

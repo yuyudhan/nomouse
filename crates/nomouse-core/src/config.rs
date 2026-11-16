@@ -98,10 +98,21 @@ pub struct HintsConfig {
     /// Milliseconds after the hotkey of the last stage, for slow targets (a browser that is
     /// building its page's accessibility tree); later than `early_rescan_ms`, 0 turns it off.
     pub late_rescan_ms: u32,
+    /// Milliseconds between the refreshes after the last stage, while the labels are up: each
+    /// adds labels for targets that came into view (the page was scrolled) and takes away the
+    /// ones of targets that left it; 0 turns them off.
+    pub refresh_ms: u32,
 }
 
 /// The largest `hints.early_rescan_ms` and `hints.late_rescan_ms`, in milliseconds.
 pub const MAX_RESCAN_MS: u32 = 10_000;
+
+/// The smallest non-zero `hints.refresh_ms`, in milliseconds: each refresh is a walk of the
+/// window.
+pub const MIN_REFRESH_MS: u32 = 500;
+
+/// The largest `hints.refresh_ms`, in milliseconds.
+pub const MAX_REFRESH_MS: u32 = 60_000;
 
 /// How much of a web document (a browser page, an Electron app) a scan collects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -127,6 +138,7 @@ impl Default for HintsConfig {
             browser: BrowserMode::Fast,
             early_rescan_ms: 1000,
             late_rescan_ms: 3000,
+            refresh_ms: 3000,
         }
     }
 }
@@ -493,6 +505,14 @@ impl Config {
         if early > 0 && late > 0 && late <= early {
             return Err(ConfigError::RescanOrder { early, late });
         }
+        if self.hints.refresh_ms > 0 {
+            check_range(
+                "hints.refresh_ms",
+                self.hints.refresh_ms,
+                MIN_REFRESH_MS,
+                MAX_REFRESH_MS,
+            )?;
+        }
         if self.ignore.apps.iter().any(|app| app.trim().is_empty()) {
             return Err(ConfigError::EmptyEntry {
                 field: "ignore.apps",
@@ -599,6 +619,29 @@ mod tests {
             } else {
                 assert!(matches!(result, Err(ConfigError::RescanOrder { .. })));
             }
+        }
+    }
+
+    #[test]
+    fn refreshes_default_to_every_three_seconds_and_are_validated() {
+        assert_eq!(Config::default().hints.refresh_ms, 3000);
+        for value in [0, MIN_REFRESH_MS, 3000, MAX_REFRESH_MS] {
+            let config = Config::from_toml(&format!("[hints]\nrefresh_ms = {value}\n")).unwrap();
+            assert_eq!(config.hints.refresh_ms, value);
+        }
+        for value in [1, MIN_REFRESH_MS - 1, MAX_REFRESH_MS + 1] {
+            assert!(
+                matches!(
+                    Config::from_toml(&format!("[hints]\nrefresh_ms = {value}\n")),
+                    Err(ConfigError::OutOfRange {
+                        field: "hints.refresh_ms",
+                        min: MIN_REFRESH_MS,
+                        max: MAX_REFRESH_MS,
+                        ..
+                    })
+                ),
+                "{value}"
+            );
         }
     }
 

@@ -423,10 +423,33 @@ fn rescan_stages_are_set_in_order() {
 }
 
 #[test]
+fn refresh_is_0_or_at_least_half_a_second() {
+    let dir = Dir::new("refresh");
+    let mut settings = Settings::open(dir.file()).unwrap();
+    assert_eq!(
+        settings.value("hints.refresh_ms").unwrap(),
+        Value::Number(3000)
+    );
+    assert!(matches!(
+        settings.set("hints.refresh_ms", Value::Number(400)),
+        Err(SettingsError::Rejected(ConfigError::OutOfRange { .. }))
+    ));
+    assert!(settings.set("hints.refresh_ms", Value::Number(0)).unwrap());
+    assert_eq!(dir.read(), "[hints]\nrefresh_ms = 0\n");
+    assert!(
+        settings
+            .set("hints.refresh_ms", Value::Number(5000))
+            .unwrap()
+    );
+    assert_eq!(settings.config().hints.refresh_ms, 5000);
+}
+
+#[test]
 fn millisecond_fields_step_by_a_hundred() {
     let step = |key| field_for(key).map(|field| field.kind.step());
     assert_eq!(step("hints.early_rescan_ms"), Some(100));
     assert_eq!(step("hints.late_rescan_ms"), Some(100));
+    assert_eq!(step("hints.refresh_ms"), Some(100));
     assert_eq!(step("overlay.font_size"), Some(1));
     assert_eq!(step("hints.alphabet"), Some(1));
 }

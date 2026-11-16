@@ -7,6 +7,27 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+### Added
+
+- Labels are refreshed every 3 s after the 1, 2 and 3 s batches (at 6, 9, 12 s, ...) for as
+  long as they are up, through both hotkeys, so a page you scroll with the labels shown stays
+  labelled: what came into view gets labels, labels of what left the screen go and their
+  letters are free again, and labels still on screen keep their letters. A typed prefix
+  stays. `hints.refresh_ms` (default 3000, 0 turns it off, otherwise 500 to 60000; also in the
+  settings window) sets the pace.
+
+### Fixed
+
+- A label whose element moved (the page was scrolled, or a loading page pushed it down) now
+  moves with it and clicks it there, keeping its letter; it used to stay where the element was
+  first seen. This also holds for unnamed elements and for several links of the same name
+  (Finder rows, a page's "edit" links), which are told apart by how far the page moved.
+- macOS: a scan of a long page in Chrome (or another Chromium browser) no longer reads the
+  parts scrolled out of view, which Chromium reports zero pixels high at the page's edge. On a
+  long Wikipedia article a scan read 4000 nodes in about 300 ms and stopped at that limit, so
+  labels low in the view could be missing and labels of links scrolled away were never taken
+  off; it now reads the 500 to 950 nodes in view in 60 to 150 ms.
+
 ## [0.1.21] - 2026-11-16
 
 ### Added

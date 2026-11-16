@@ -107,6 +107,7 @@ picks up a saved file within two seconds.
 alphabet = "fjdksagh"      # label letters, most comfortable first
 keys = "homerow"           # a label highlights; Return clicks, as in Homerow
 late_rescan_ms = 4000      # labels show at once, more join each second; slow pages by 4 s (default 3 s)
+refresh_ms = 2000          # then refresh every 2 s while labels are up, for a page you scroll (default 3 s)
 
 [hotkeys]
 hints = "cmd+shift+space"

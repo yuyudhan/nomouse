@@ -317,6 +317,19 @@ pub const FIELDS: &[Field] = &[
     ),
     helped(
         field(
+            "hints.refresh_ms",
+            Section::Labels,
+            "Refresh labels every (ms)",
+            Kind::Number {
+                min: 0,
+                max: crate::config::MAX_REFRESH_MS,
+            },
+        ),
+        "After the last stage, while labels are up: labels for what scrolled into view are \
+         added, those that left it go. 500 or more; 0: off.",
+    ),
+    helped(
+        field(
             "overlay.theme",
             Section::Appearance,
             "Theme",
