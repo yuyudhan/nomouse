@@ -339,7 +339,7 @@ fn push_children<N>(
 }
 
 /// Roles whose frame clips their content.
-fn clips(role: &str) -> bool {
+pub(crate) fn clips(role: &str) -> bool {
     matches!(role, "AXScrollArea" | "AXWindow" | "AXSheet" | "AXDrawer")
 }
 
@@ -373,7 +373,7 @@ fn stand_in(reported: Rect, web: Rect, index: u32) -> Rect {
     Rect::new(reported.x, y, reported.width.max(1), 1)
 }
 
-fn intersection(a: Rect, b: Rect) -> Rect {
+pub(crate) fn intersection(a: Rect, b: Rect) -> Rect {
     let left = i64::from(a.x).max(i64::from(b.x));
     let top = i64::from(a.y).max(i64::from(b.y));
     let right = (i64::from(a.x) + i64::from(a.width)).min(i64::from(b.x) + i64::from(b.width));

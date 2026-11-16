@@ -48,7 +48,10 @@ allowed, the Input Monitoring state and the Chromium/Electron opt-in list.
   is there and the page joins at the hint session's later stages (every
   `hints.early_rescan_ms` up to `hints.late_rescan_ms`, 1, 2 and 3 s by default). An
   activation that finds no web content in such an app 4 s or more after switching the
-  attribute on logs a hint once per process.
+  attribute on logs a hint once per process. Chromium drops a page's tree again a few seconds
+  after its last use, so while a listed app is frontmost the daemon reads its page's web area
+  about once a second (`nomouse_macos::warm`), and the first pass walks the page before the
+  toolbar: the first labels include the page even after the browser sat idle.
   `nomouse doctor` checks every running instance (passing when any shows a page, reporting
   blank tabs as "no page open"), walking again for up to 4 s while Chromium builds the tree.
 - **Hotkeys** on a character key match the key that types that character on the current

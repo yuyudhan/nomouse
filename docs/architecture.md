@@ -57,7 +57,8 @@ Every method is blocking and runs on the event-loop thread; errors are `Platform
    outlined through `Frame::area` (without one it picks an element first). Escape cancels, and
    so does an activation hotkey or a command-socket request arriving while the labels are up
    (toggle).
-   The first scan is `ElementSource::first_elements`, a quick pass (macOS: a 70 ms walk) whose
+   The first scan is `ElementSource::first_elements`, a quick pass (macOS: a 100 ms walk, a
+   browser's page before its toolbar, see `nomouse_macos::warm`) whose
    labels show at once. Then `nomouse_core::Rescans` runs a `RescanSchedule`: right after the
    first scan, then every `hints.early_rescan_ms` up to `hints.late_rescan_ms` after the hotkey
    (1, 2 and 3 s by default), or after the scan that follows each continuous-mode click. Each

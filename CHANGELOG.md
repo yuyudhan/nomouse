@@ -7,6 +7,18 @@ the release's section; add entries under Unreleased as changes land.
 
 ## [Unreleased]
 
+0.1.20 supersedes 0.1.19, which was tagged but never published: the changes listed under
+0.1.19 below ship for the first time in 0.1.20.
+
+### Fixed
+
+- macOS: in Chrome and other Chromium browsers the first labels include the page's links and
+  buttons, also when the browser has sat idle. Chromium drops a page's accessibility tree a few
+  seconds after an assistive app last used it, so a hotkey pressed then labelled only the
+  toolbar and the page came a second or more later. While a listed web app is frontmost,
+  nomouse now reads its page about once a second, which keeps the tree built, and the first
+  pass walks the page before the toolbar.
+
 ## [0.1.19] - 2026-11-16
 
 ### Changed

@@ -13,7 +13,7 @@ use nomouse_core::{
     InputEvent, InputInjector, MouseButton, Overlay, Platform, PlatformError, Point, Rect, Scope,
 };
 use nomouse_sys_macos::app::{self, App};
-use nomouse_sys_macos::ax::{AxElement, is_process_trusted};
+use nomouse_sys_macos::ax::{AxElement, AxValue, is_process_trusted};
 use nomouse_sys_macos::input::{self, MouseEventKind};
 use nomouse_sys_macos::overlay::{Overlay as Panels, label_sizer};
 use nomouse_sys_macos::tap::EventTap;
@@ -30,6 +30,7 @@ use crate::keys::{chord, held, key_press, modifier_flags};
 use crate::roles::{PRESS, SHOW_MENU};
 use crate::style::{Themed, appearance};
 use crate::walk::{Limits, Walk, walk};
+use crate::warm::{self, FIND_NODES, Ticker, find_web_area};
 
 /// Global Accessibility messaging timeout, in seconds: how long one call waits for a busy app.
 const AX_TIMEOUT: f32 = 0.25;
@@ -50,7 +51,7 @@ const REVEAL_POLL: Duration = Duration::from_millis(30);
 const REVEAL_STEADY: u32 = 8;
 /// Walk time of the quick first pass ([`ElementSource::first_elements`]): the labels it finds
 /// show at once, the hint session's immediate re-scan adds the rest.
-const FIRST_PASS: Duration = Duration::from_millis(70);
+const FIRST_PASS: Duration = Duration::from_millis(100);
 
 /// One element of the last snapshot, kept for semantic clicks and for scrolling off-screen
 /// elements into view.
@@ -88,6 +89,8 @@ pub struct MacPlatform {
     /// key layout data (hotkeys then match ANSI positions).
     layout: Option<KeyLayout>,
     limits: Limits,
+    /// When the frontmost web app's page is next read to keep its tree built.
+    warm: Ticker,
 }
 
 impl std::fmt::Debug for MacPlatform {
@@ -146,6 +149,7 @@ impl MacPlatform {
                 browser: config.hints.browser,
                 ..Limits::default()
             },
+            warm: Ticker::default(),
         };
         platform.warm_up();
         Ok(platform)
@@ -161,7 +165,7 @@ impl MacPlatform {
             time_budget: FIRST_PASS,
             ..self.limits
         };
-        let outcome = self.walk_once(RootSet::FocusedWindow, app::frontmost_pid(), limits);
+        let outcome = self.walk_once(RootSet::FocusedWindow, app::frontmost_pid(), limits, false);
         tracing::debug!(
             "warmed up Accessibility in {:?}: {}",
             started.elapsed(),
@@ -170,6 +174,39 @@ impl MacPlatform {
                 |(_, walk)| format!("{} nodes", walk.visited)
             )
         );
+    }
+
+    /// While a listed web app (a Chromium browser, an Electron app) is frontmost: switches its
+    /// page tree on if it is off and, about once a second ([`crate::warm`]), reads the page's
+    /// web area, so the tree is still built when the hotkey comes and the first pass labels
+    /// the page. Other apps are left alone.
+    fn keep_page_warm(&mut self) {
+        if !self.warm.take_due(Instant::now()) {
+            return;
+        }
+        let Some(pid) = app::frontmost_pid() else {
+            return;
+        };
+        let Some(bundle_id) = app::bundle_id(pid) else {
+            return;
+        };
+        if !is_web_app(&bundle_id, &self.enhanced_ui_apps) {
+            return;
+        }
+        let listed = self.enhanced_ui_apps.contains(&bundle_id);
+        if self.prepare_app(pid, listed) {
+            self.switched_at.insert(pid, Instant::now());
+        }
+        if let Ok(Some(AxValue::Element(window))) =
+            AxElement::application(pid).attribute("AXFocusedWindow")
+        {
+            // Reading the web area (its attributes and children) is what keeps it built.
+            let page = find_web_area(&mut LiveTree, window, self.desktop(), FIND_NODES);
+            tracing::trace!(
+                "kept the page of {bundle_id} warm: found {}",
+                page.is_some()
+            );
+        }
     }
 
     /// Asks Chromium and Electron apps to build their accessibility tree: Electron's switch
@@ -198,18 +235,23 @@ impl MacPlatform {
         now == Some(true)
     }
 
-    /// Walks the roots of `set` once, within `limits`.
+    /// Walks the roots of `set` once, within `limits`; with `page_first` (a browser's quick
+    /// pass) the page under the focused window goes before the window's own controls.
     fn walk_once(
         &self,
         set: RootSet,
         frontmost: Option<i32>,
         limits: Limits,
+        page_first: bool,
     ) -> Result<(bool, Walk<AxElement>), PlatformError> {
         let found_roots = roots(set, frontmost, self.desktop())?;
+        let walk_roots = if page_first && found_roots.has_window {
+            warm::page_first(&mut LiveTree, found_roots.roots)
+        } else {
+            found_roots.roots
+        };
         let started = Instant::now();
-        let result = walk(&mut LiveTree, found_roots.roots, limits, || {
-            started.elapsed()
-        })?;
+        let result = walk(&mut LiveTree, walk_roots, limits, || started.elapsed())?;
         Ok((found_roots.has_window, result))
     }
 
@@ -450,7 +492,12 @@ impl MacPlatform {
         } else {
             self.limits
         };
-        let (has_window, result) = self.walk_once(set, frontmost, limits)?;
+        // A browser's quick pass reads the page first, so its budget goes to the page.
+        let web = target
+            .as_ref()
+            .and_then(|(_, bundle_id, _)| bundle_id.as_deref())
+            .is_some_and(|id| is_web_app(id, &self.enhanced_ui_apps));
+        let (has_window, result) = self.walk_once(set, frontmost, limits, quick && web)?;
         if scope == Scope::FocusedWindow && !has_window && result.found.is_empty() {
             return Err(PlatformError::NoFocusedWindow);
         }
@@ -646,6 +693,7 @@ impl HotkeySource for MacPlatform {
             .ensure_enabled()
             .map_err(|error| PlatformError::PermissionDenied(error.to_string()))?;
         self.follow_layout();
+        self.keep_page_warm();
         let deadline = Instant::now() + timeout;
         loop {
             while let Some(event) = self.tap.pop() {

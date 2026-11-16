@@ -13,6 +13,7 @@
 //! - [`style`]: the overlay look from the configuration.
 //! - [`setup`]: the guided first run's permission and its texts.
 //! - [`shortcuts`]: recorded shortcuts, their `⌃⌥⇧⌘` spelling and macOS's own shortcuts.
+//! - [`warm`]: keeping a frontmost browser's page tree built for the next activation.
 //! - `menubar` (macOS): the menu bar app, its settings window and the first run's window.
 #![forbid(unsafe_code)]
 
@@ -26,6 +27,7 @@ pub mod setup;
 pub mod shortcuts;
 pub mod style;
 pub mod walk;
+pub mod warm;
 
 #[cfg(target_os = "macos")]
 mod ax_tree;
