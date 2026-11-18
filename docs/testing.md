@@ -283,6 +283,17 @@ pointer's own Window Server window is not counted, and a covering window gets th
 to go); either ends the run with a `FAIL:` naming the cause instead of failing every later
 check.
 
+## Benchmark on Linux
+
+`scripts/bench/linux.sh` measures the release daemon on the same private sessions as the end
+to end tests (Xvfb with i3, and headless Sway; `--x11` or `--wayland` for one of them) against
+the GTK test window: idle CPU and RSS, hint show latency over `--runs` (40) activations of
+Ctrl+space (the daemon's own "labels shown" time, and end to end from the key press, both as
+min, p50, p95, max and mean), click accuracy over `--rounds` (3) passes of the ten buttons,
+and active CPU and peak RSS. It prints `key=value` lines (`--out FILE` keeps them). It is not
+a gate: the figures depend on the machine and its load, so compare runs on one machine, and
+note the load lines it prints.
+
 ## Coverage
 
 `scripts/coverage.sh` (`just coverage`, `--html` for a report in `target/llvm-cov/html`) runs
