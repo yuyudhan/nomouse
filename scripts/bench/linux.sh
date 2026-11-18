@@ -24,6 +24,9 @@
 #   Neither --x11 nor --wayland runs both. Defaults: --runs 40 --rounds 3 --idle 30.
 #   --out writes the summary (key=value lines) to FILE as well as stdout.
 # Needs: as scripts/e2e-linux.sh (X11) and scripts/e2e-wayland.sh (Wayland).
+# The session's hooks (x11_press, wl_up, ...) and the wait_for/trap targets are called by
+# name through measure, wait_for and trap, which shellcheck cannot follow.
+# shellcheck disable=SC2329
 set -euo pipefail
 
 x11=0
